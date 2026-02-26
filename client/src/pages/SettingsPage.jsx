@@ -3,7 +3,7 @@ import { useAuth } from '../contexts/AuthContext';
 import api from '../utils/api';
 import toast from 'react-hot-toast';
 import {
-  User, Lock, Shield, Loader2, Save, Users, ToggleLeft, ToggleRight
+  User, Lock, Shield, Loader2, Save, Users, ToggleLeft, ToggleRight, Clock, CheckCircle, XCircle
 } from 'lucide-react';
 
 export default function SettingsPage() {
@@ -163,41 +163,77 @@ export default function SettingsPage() {
 
           {/* User management (admin only) */}
           {tab === 'users' && user?.role === 'admin' && (
-            <div className="card">
-              <div className="px-6 py-4 border-b border-gray-100 flex items-center gap-2">
-                <Users className="h-5 w-5 text-gray-600" />
-                <h2 className="text-lg font-bold text-gray-900">User Management</h2>
-              </div>
-
-              {loadingUsers ? (
-                <div className="flex items-center justify-center py-12">
-                  <Loader2 className="h-6 w-6 animate-spin text-green-600" />
-                </div>
-              ) : (
-                <div className="divide-y divide-gray-100">
-                  {users.map(u => (
-                    <div key={u.id} className="px-6 py-4 flex items-center gap-4">
-                      <div className="h-10 w-10 rounded-full bg-gray-100 flex items-center justify-center shrink-0">
-                        <User className="h-5 w-5 text-gray-500" />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="text-sm font-medium text-gray-900">{u.name}</div>
-                        <div className="text-xs text-gray-500">{u.email} &middot; {u.department || 'No department'}</div>
-                      </div>
-                      <span className={u.role === 'admin' ? 'badge-green' : 'badge-blue'}>{u.role}</span>
-                      <span className={u.is_active ? 'badge-green' : 'badge-red'}>{u.is_active ? 'Active' : 'Inactive'}</span>
-                      {u.id !== user.id && (
-                        <button onClick={() => toggleUserStatus(u.id)} className="btn-ghost p-1.5" title={u.is_active ? 'Deactivate' : 'Activate'}>
-                          {u.is_active ? <ToggleRight className="h-5 w-5 text-green-600" /> : <ToggleLeft className="h-5 w-5 text-gray-400" />}
+            <div className="space-y-4">
+              {/* Pending approvals */}
+              {!loadingUsers && users.filter(u => !u.is_active).length > 0 && (
+                <div className="card border-amber-200 bg-amber-50/50">
+                  <div className="px-6 py-4 border-b border-amber-200 flex items-center gap-2">
+                    <Clock className="h-5 w-5 text-amber-600" />
+                    <h2 className="text-lg font-bold text-amber-800">Pending Approval ({users.filter(u => !u.is_active).length})</h2>
+                  </div>
+                  <div className="divide-y divide-amber-100">
+                    {users.filter(u => !u.is_active).map(u => (
+                      <div key={u.id} className="px-6 py-4 flex items-center gap-4">
+                        <div className="h-10 w-10 rounded-full bg-amber-100 flex items-center justify-center shrink-0">
+                          <Clock className="h-5 w-5 text-amber-500" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="text-sm font-medium text-gray-900">{u.name}</div>
+                          <div className="text-xs text-gray-500">{u.email} &middot; {u.department || 'No department'}</div>
+                          <div className="text-xs text-gray-400 mt-0.5">Registered {new Date(u.created_at).toLocaleDateString()}</div>
+                        </div>
+                        <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-amber-100 text-amber-700">
+                          <Clock className="h-3 w-3" /> Pending
+                        </span>
+                        <button
+                          onClick={() => toggleUserStatus(u.id)}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-green-600 text-white hover:bg-green-700 transition-colors"
+                        >
+                          <CheckCircle className="h-4 w-4" /> Approve
                         </button>
-                      )}
-                    </div>
-                  ))}
-                  {users.length === 0 && (
-                    <div className="px-6 py-12 text-center text-sm text-gray-400">No users found</div>
-                  )}
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
+
+              {/* All users */}
+              <div className="card">
+                <div className="px-6 py-4 border-b border-gray-100 flex items-center gap-2">
+                  <Users className="h-5 w-5 text-gray-600" />
+                  <h2 className="text-lg font-bold text-gray-900">All Users</h2>
+                </div>
+
+                {loadingUsers ? (
+                  <div className="flex items-center justify-center py-12">
+                    <Loader2 className="h-6 w-6 animate-spin text-green-600" />
+                  </div>
+                ) : (
+                  <div className="divide-y divide-gray-100">
+                    {users.filter(u => u.is_active).map(u => (
+                      <div key={u.id} className="px-6 py-4 flex items-center gap-4">
+                        <div className="h-10 w-10 rounded-full bg-gray-100 flex items-center justify-center shrink-0">
+                          <User className="h-5 w-5 text-gray-500" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="text-sm font-medium text-gray-900">{u.name}</div>
+                          <div className="text-xs text-gray-500">{u.email} &middot; {u.department || 'No department'}</div>
+                        </div>
+                        <span className={u.role === 'admin' ? 'badge-green' : 'badge-blue'}>{u.role}</span>
+                        <span className="badge-green">Active</span>
+                        {u.id !== user.id && (
+                          <button onClick={() => toggleUserStatus(u.id)} className="btn-ghost p-1.5" title="Deactivate">
+                            <ToggleRight className="h-5 w-5 text-green-600" />
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                    {users.filter(u => u.is_active).length === 0 && (
+                      <div className="px-6 py-12 text-center text-sm text-gray-400">No active users</div>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
           )}
         </div>

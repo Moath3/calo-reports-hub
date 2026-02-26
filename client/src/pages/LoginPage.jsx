@@ -1,13 +1,14 @@
 import { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import toast from 'react-hot-toast';
-import { Eye, EyeOff, Loader2 } from 'lucide-react';
+import { Eye, EyeOff, Loader2, Clock } from 'lucide-react';
 
 export default function LoginPage() {
   const { login, register } = useAuth();
   const [mode, setMode] = useState('login');
   const [loading, setLoading] = useState(false);
   const [showPw, setShowPw] = useState(false);
+  const [pendingApproval, setPendingApproval] = useState(false);
   const [form, setForm] = useState({ email: '', password: '', name: '', department: '', companyCode: '' });
 
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
@@ -22,11 +23,20 @@ export default function LoginPage() {
       } else {
         if (!form.name.trim()) { toast.error('Name is required'); setLoading(false); return; }
         if (form.password.length < 8) { toast.error('Password must be 8+ characters'); setLoading(false); return; }
-        await register(form);
-        toast.success('Account created!');
+        const result = await register(form);
+        if (result.pending) {
+          setPendingApproval(true);
+          toast.success('Registration submitted!');
+        } else {
+          toast.success('Account created!');
+        }
       }
     } catch (err) {
-      toast.error(err.message || 'Something went wrong');
+      if (err.message?.includes('pending')) {
+        setPendingApproval(true);
+      } else {
+        toast.error(err.message || 'Something went wrong');
+      }
     } finally {
       setLoading(false);
     }
@@ -74,6 +84,25 @@ export default function LoginPage() {
           </div>
 
           <div className="card p-8">
+            {pendingApproval ? (
+              <div className="text-center py-4">
+                <div className="mx-auto h-14 w-14 rounded-full bg-amber-100 flex items-center justify-center mb-4">
+                  <Clock className="h-7 w-7 text-amber-600" />
+                </div>
+                <h2 className="text-xl font-bold text-gray-900">Pending Approval</h2>
+                <p className="text-sm text-gray-500 mt-2 leading-relaxed">
+                  Your account is awaiting admin approval.<br/>
+                  You&apos;ll be able to sign in once your account is activated.
+                </p>
+                <button
+                  onClick={() => { setPendingApproval(false); setMode('login'); }}
+                  className="btn-primary mt-6"
+                >
+                  Back to Sign In
+                </button>
+              </div>
+            ) : (
+            <>
             <h1 className="text-2xl font-bold text-gray-900">
               {mode === 'login' ? 'Welcome back' : 'Create account'}
             </h1>
@@ -142,6 +171,8 @@ export default function LoginPage() {
                 </>
               )}
             </div>
+            </>
+            )}
           </div>
         </div>
       </div>

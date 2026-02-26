@@ -69,7 +69,7 @@ class ApiClient {
       method: 'POST',
       body: JSON.stringify(fields),
     });
-    this.setToken(data.token);
+    if (data.token) this.setToken(data.token);
     return data;
   }
 

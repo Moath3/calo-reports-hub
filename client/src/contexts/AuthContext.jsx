@@ -36,6 +36,10 @@ export function AuthProvider({ children }) {
 
   const register = async (fields) => {
     const data = await api.register(fields);
+    if (data.pending) {
+      // User created but pending admin approval — don't set user/token
+      return { pending: true, message: data.message };
+    }
     setUser(data.user);
     return data;
   };

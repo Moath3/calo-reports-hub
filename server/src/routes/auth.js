@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs';
 import { v4 as uuid } from 'uuid';
 import { getDb } from '../db/database.js';
 import { generateToken, requireAuth, requireAdmin } from '../middleware/auth.js';
+import { notifyAdminNewRegistration } from '../services/emailService.js';
 
 const router = Router();
 
@@ -41,23 +42,35 @@ router.post('/register', async (req, res) => {
     const salt = await bcrypt.genSalt(12);
     const passwordHash = await bcrypt.hash(password, salt);
 
-    // Determine role - first user is admin
+    // Determine role - first user is admin (and auto-approved)
     const userCount = db.prepare('SELECT COUNT(*) as count FROM users').get();
-    const role = userCount.count === 0 ? 'admin' : 'employee';
+    const isFirstUser = userCount.count === 0;
+    const role = isFirstUser ? 'admin' : 'employee';
+    const isActive = isFirstUser ? 1 : 0; // New users are pending approval
 
     const id = uuid();
     db.prepare(`
-      INSERT INTO users (id, email, name, password_hash, role, department)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run(id, email.toLowerCase(), name, passwordHash, role, department || null);
+      INSERT INTO users (id, email, name, password_hash, role, department, is_active)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(id, email.toLowerCase(), name, passwordHash, role, department || null, isActive);
 
-    const user = { id, email: email.toLowerCase(), name, role, department };
-    const token = generateToken(user);
+    // First user (admin) gets immediate access
+    if (isFirstUser) {
+      const user = { id, email: email.toLowerCase(), name, role, department };
+      const token = generateToken(user);
+      return res.status(201).json({
+        message: 'Account created successfully',
+        user: { id, email: email.toLowerCase(), name, role, department },
+        token
+      });
+    }
+
+    // All other users: pending approval — notify admin
+    notifyAdminNewRegistration({ name, email: email.toLowerCase(), department }).catch(() => {});
 
     res.status(201).json({
-      message: 'Account created successfully',
-      user: { id, email: email.toLowerCase(), name, role, department },
-      token
+      message: 'Registration submitted. Awaiting admin approval.',
+      pending: true
     });
   } catch (err) {
     console.error('Register error:', err);
@@ -75,6 +88,13 @@ router.post('/login', async (req, res) => {
     }
 
     const db = getDb();
+
+    // Check if user exists but is pending approval
+    const anyUser = db.prepare('SELECT id, is_active FROM users WHERE email = ?').get(email.toLowerCase());
+    if (anyUser && !anyUser.is_active) {
+      return res.status(403).json({ error: 'Your account is pending admin approval. Please wait for activation.', pending: true });
+    }
+
     const user = db.prepare('SELECT * FROM users WHERE email = ? AND is_active = 1').get(email.toLowerCase());
 
     if (!user) {

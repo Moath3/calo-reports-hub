@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: calo-reports
+    runtime: node
+    plan: free
+    buildCommand: npm run render:build
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: JWT_SECRET
+        generateValue: true
+      - key: COMPANY_REG_CODE
+        value: CALO2026
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: CLAUDE_API_KEY
+        sync: false
+      - key: PERPLEXITY_API_KEY
+        sync: false
+      - key: DEFAULT_AI_PROVIDER
+        value: gemini

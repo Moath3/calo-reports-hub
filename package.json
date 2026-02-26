@@ -1,0 +1,18 @@
+{
+  "name": "calo-report-platform",
+  "version": "1.0.0",
+  "private": true,
+  "description": "CALO Report AI Platform - Upload data, AI generates professional reports",
+  "scripts": {
+    "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
+    "dev:server": "cd server && npm run dev",
+    "dev:client": "cd client && npm run dev",
+    "build": "cd client && npm install && npm run build",
+    "start": "cd server && node src/index.js",
+    "setup": "npm install && cd server && npm install && cd ../client && npm install",
+    "render:build": "cd server && npm install && cd ../client && npm install && npm run build"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}

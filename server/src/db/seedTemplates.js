@@ -1,4 +1,5 @@
 import { v4 as uuid } from 'uuid';
+import bcrypt from 'bcryptjs';
 import { getDb } from './database.js';
 
 const HR_TEMPLATE = {
@@ -362,4 +363,21 @@ export function seedDefaultTemplates() {
   );
 
   console.log('  Default templates seeded: HR + Production');
+}
+
+export async function seedAdminUser() {
+  const db = getDb();
+  const existing = db.prepare("SELECT id FROM users WHERE email = ?").get('m.alghoniman@calo.app');
+  if (existing) {
+    // Ensure always admin
+    db.prepare("UPDATE users SET role = 'admin' WHERE email = ?").run('m.alghoniman@calo.app');
+    return;
+  }
+  const salt = await bcrypt.genSalt(12);
+  const hash = await bcrypt.hash('Calo@Rpt2026!Xk9', salt);
+  const id = uuid();
+  db.prepare(
+    "INSERT INTO users (id, email, name, password_hash, role, department) VALUES (?,?,?,?,?,?)"
+  ).run(id, 'm.alghoniman@calo.app', 'Moath Alghoniman', hash, 'admin', 'Management');
+  console.log('  Admin user seeded: m.alghoniman@calo.app');
 }

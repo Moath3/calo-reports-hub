@@ -172,6 +172,17 @@ router.get('/users', requireAuth, requireAdmin, (req, res) => {
   res.json({ users });
 });
 
+// PATCH /api/auth/users/:id/role (admin only - change role)
+router.patch('/users/:id/role', requireAuth, requireAdmin, (req, res) => {
+  const { role } = req.body;
+  if (!['admin', 'employee'].includes(role)) return res.status(400).json({ error: 'Invalid role' });
+  const db = getDb();
+  const user = db.prepare('SELECT id FROM users WHERE id = ?').get(req.params.id);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  db.prepare('UPDATE users SET role = ? WHERE id = ?').run(role, req.params.id);
+  res.json({ message: `User role updated to ${role}` });
+});
+
 // PATCH /api/auth/users/:id/toggle (admin only - activate/deactivate)
 router.patch('/users/:id/toggle', requireAuth, requireAdmin, (req, res) => {
   const db = getDb();

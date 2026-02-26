@@ -2,7 +2,7 @@ import initSqlJs from 'sql.js';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { mkdirSync, existsSync, readFileSync, writeFileSync } from 'fs';
-import { seedDefaultTemplates } from './seedTemplates.js';
+import { seedDefaultTemplates, seedAdminUser } from './seedTemplates.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -105,8 +105,9 @@ export async function initDb() {
 
   initSchema();
 
-  // Seed default templates
+  // Seed default templates and admin user
   try { seedDefaultTemplates(); } catch (e) { console.error('Template seed error:', e.message); }
+  try { await seedAdminUser(); } catch (e) { console.error('Admin seed error:', e.message); }
 
   saveToDisk();
 

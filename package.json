@@ -10,7 +10,7 @@
     "build": "cd client && npm install && npm run build",
     "start": "cd server && node src/index.js",
     "setup": "npm install && cd server && npm install && cd ../client && npm install",
-    "render:build": "cd server && npm install && cd ../client && npm install && npm run build"
+    "render:build": "cd server && npm install && cd ../client && npm install --include=dev && npm run build"
   },
   "devDependencies": {
     "concurrently": "^8.2.2"

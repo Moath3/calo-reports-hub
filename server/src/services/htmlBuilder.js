@@ -10,7 +10,10 @@ export function buildStandaloneHTML(reportData, brandColor, title) {
       var cs = {green:"#dcfce7;color:#166534",amber:"#fef3c7;color:#92400e",red:"#fee2e2;color:#991b1b",blue:"#dbeafe;color:#1e40af"};
       return "<span style=\"display:inline-block;padding:4px 14px;border-radius:99px;font-size:13px;font-weight:600;background:"+(cs[b.style]||cs.blue)+"\">"+(b.label||"")+"</span>";
     }
-    if (b.type === "notes") return "<div style=\"color:#374151;line-height:1.7;font-size:14px\">"+(b.content||"").replace(/\n/g,"<br>")+"</div>";
+    if (b.type === "notes") {
+      var nc = b.items ? b.items.map(function(it){return "<li>"+it+"</li>";}).join("") : (b.content||b.text||"").replace(/\n/g,"<br>");
+      return b.items ? "<ul style=\"color:#374151;line-height:1.7;font-size:14px;padding-left:20px\">"+nc+"</ul>" : "<div style=\"color:#374151;line-height:1.7;font-size:14px\">"+nc+"</div>";
+    }
     if (b.type === "metrics") {
       h = "<div style=\"display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px\">";
       (b.items||[]).forEach(function(m){

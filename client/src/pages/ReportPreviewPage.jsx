@@ -18,17 +18,23 @@ function renderReportHTML(data) {
 
   const renderBlock = (b) => {
     switch (b.type) {
-      case 'badge':
-        return `<div style="background:${brand};color:white;padding:16px 20px;border-radius:12px;margin-bottom:12px">
-          <div style="font-size:18px;font-weight:700">${b.title||''}</div>
+      case 'badge': {
+        const badgeColors = {green:'#22c55e',amber:'#f59e0b',red:'#ef4444',blue:'#3b82f6'};
+        const bgCol = b.style ? (badgeColors[b.style] || brand) : brand;
+        const badgeText = b.title || b.label || '';
+        return `<div style="background:${bgCol};color:white;padding:16px 20px;border-radius:12px;margin-bottom:12px">
+          <div style="font-size:18px;font-weight:700">${badgeText}</div>
           ${b.subtitle?`<div style="font-size:13px;opacity:0.9;margin-top:2px">${b.subtitle}</div>`:''}
           ${b.period?`<div style="font-size:12px;opacity:0.7;margin-top:4px">${b.period}</div>`:''}
         </div>`;
-      case 'notes':
+      }
+      case 'notes': {
+        const noteItems = b.items || (b.content ? b.content.split('\n').filter(Boolean) : (b.text ? [b.text] : ['']));
         return `<div style="margin-bottom:12px">${b.label?`<div style="font-weight:600;margin-bottom:6px;color:#374151">${b.label}</div>`:''}
           <ul style="margin:0;padding-left:20px;color:#4b5563;font-size:14px;line-height:1.8">
-            ${(b.items||[b.text||'']).map(it => `<li>${it}</li>`).join('')}
+            ${noteItems.map(it => `<li>${it}</li>`).join('')}
           </ul></div>`;
+      }
       case 'metrics':
         return `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px;margin-bottom:12px">
           ${(b.items||[]).map(m => `<div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:10px;padding:14px">

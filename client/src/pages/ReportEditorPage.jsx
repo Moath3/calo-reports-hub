@@ -179,12 +179,20 @@ export default function ReportEditorPage() {
   const [aiChat, setAiChat] = useState([]);
   const [aiLoading, setAiLoading] = useState(false);
   const [showAddBlock, setShowAddBlock] = useState(false);
+  const [aiProvider, setAiProvider] = useState('gemini');
+  const [aiProviders, setAiProviders] = useState([]);
 
   useEffect(() => {
     api.getReport(id)
       .then(res => setReport(res.report))
       .catch(() => { toast.error('Report not found'); navigate('/reports'); })
       .finally(() => setLoading(false));
+    api.getProviders()
+      .then(res => {
+        setAiProviders(res.providers || []);
+        if (res.providers?.length) setAiProvider(res.providers[0].id);
+      })
+      .catch(() => {});
   }, [id, navigate]);
 
   const reportData = report?.report_data || { generalInfo: {}, sections: [] };
@@ -263,10 +271,10 @@ export default function ReportEditorPage() {
     setAiChat(prev => [...prev, { role: 'user', content: msg }]);
     setAiLoading(true);
     try {
-      const res = await api.chatAI(msg, reportData, 'gemini', aiChat.slice(-6));
-      setAiChat(prev => [...prev, { role: 'assistant', content: res.message }]);
+      const res = await api.chatAI(msg, reportData, aiProvider, aiChat.slice(-6));
+      const aiText = res.message || res.response || '';
+      setAiChat(prev => [...prev, { role: 'assistant', content: aiText }]);
       if (res.updates) {
-        // Apply updates to report data
         updateData(rd => {
           if (res.updates.generalInfo) {
             rd.generalInfo = { ...rd.generalInfo, ...res.updates.generalInfo };
@@ -293,9 +301,10 @@ export default function ReportEditorPage() {
     if (!instruction?.trim()) return;
     setAiLoading(true);
     try {
-      const res = await api.refineSection(reportData, sIdx, instruction, 'gemini');
-      if (res.section) {
-        updateSection(sIdx, (s) => { s[sIdx] = res.section; });
+      const res = await api.refineSection(reportData, sIdx, instruction, aiProvider);
+      const updated = res.section || res.updatedSection;
+      if (updated) {
+        updateSection(sIdx, (s) => { s[sIdx] = updated; });
         toast.success('Section refined');
       }
     } catch (err) {
@@ -462,7 +471,13 @@ export default function ReportEditorPage() {
           <div className="px-5 py-3 border-b border-gray-100 flex items-center gap-2">
             <Brain className="h-5 w-5 text-purple-600" />
             <span className="font-semibold text-gray-900">AI Assistant</span>
-            <span className="text-xs text-gray-400 ml-2">Ask AI to modify your report</span>
+            <select className="ml-auto text-xs border border-gray-200 rounded-lg px-2 py-1 bg-white" value={aiProvider} onChange={e => setAiProvider(e.target.value)}>
+              {aiProviders.length > 0 ? aiProviders.map(p => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              )) : (
+                <option value="gemini">Google Gemini</option>
+              )}
+            </select>
           </div>
 
           {/* Messages */}

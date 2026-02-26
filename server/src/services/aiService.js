@@ -24,6 +24,8 @@ async function callGemini(systemPrompt, userMessage, options = {}) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), options.timeout || TIMEOUT_MS);
   try {
+    const genConfig = { temperature: options.temperature || 0.3, maxOutputTokens: options.maxTokens || 8192 };
+    if (options.jsonMode) genConfig.responseMimeType = "application/json";
     const res = await fetch(
       "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=" + apiKey,
       {
@@ -32,7 +34,7 @@ async function callGemini(systemPrompt, userMessage, options = {}) {
         body: JSON.stringify({
           contents: [{ parts: [{ text: userMessage }] }],
           systemInstruction: { parts: [{ text: systemPrompt }] },
-          generationConfig: { temperature: options.temperature || 0.3, maxOutputTokens: options.maxTokens || 8192, responseMimeType: "application/json" }
+          generationConfig: genConfig
         }),
         signal: controller.signal
       }

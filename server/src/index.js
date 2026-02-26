@@ -28,10 +28,10 @@ app.use(helmet({
   contentSecurityPolicy: false // We handle CSP in frontend
 }));
 
-// CORS - allow frontend dev server
+// CORS - allow frontend dev server and production origin
 app.use(cors({
-  origin: process.env.NODE_ENV === 'production' 
-    ? process.env.FRONTEND_URL || 'http://localhost:3001'
+  origin: process.env.NODE_ENV === 'production'
+    ? (process.env.FRONTEND_URL || true)  // true = allow same-origin / reflect origin
     : ['http://localhost:5173', 'http://localhost:3000', 'http://localhost:3001'],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],

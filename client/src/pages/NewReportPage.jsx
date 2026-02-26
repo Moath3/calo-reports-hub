@@ -66,10 +66,11 @@ export default function NewReportPage() {
     try {
       const res = await api.analyzeData(dataSummary, provider, customPrompt || undefined);
       // Create report with AI-generated data
+      const aiReport = res.reportData || res.report || {};
       const createRes = await api.createReport({
         title: title.trim(),
         description: description.trim(),
-        reportData: res.reportData,
+        reportData: aiReport,
         sourceFilename: file?.name || '',
         sourceData: dataSummary,
         aiProvider: provider,

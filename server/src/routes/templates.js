@@ -28,7 +28,7 @@ router.get("/", requireAuth, (req, res) => {
       sql += "t.user_id = ?";
       params.push(req.user.id);
     } else {
-      sql += "(t.is_shared = 1 OR t.user_id = ?)";
+      sql += "(t.is_shared = 1 OR t.is_default = 1 OR t.user_id = ?)";
       params.push(req.user.id);
     }
     if (category) {
@@ -100,9 +100,10 @@ router.put("/:id", requireAuth, (req, res) => {
 router.delete("/:id", requireAuth, (req, res) => {
   try {
     const db = getDb();
-    const t = db.prepare("SELECT user_id FROM templates WHERE id = ?").get(req.params.id);
+    const t = db.prepare("SELECT user_id, is_default FROM templates WHERE id = ?").get(req.params.id);
     if (!t) return res.status(404).json({ error: "Template not found" });
-    if (t.user_id !== req.user.id && req.user.role !== "admin") return res.status(403).json({ error: "Access denied" });
+    if (t.is_default && req.user.role !== "admin") return res.status(403).json({ error: "Cannot delete default templates" });
+    if (t.user_id && t.user_id !== req.user.id && req.user.role !== "admin") return res.status(403).json({ error: "Access denied" });
 
     db.prepare("DELETE FROM templates WHERE id = ?").run(req.params.id);
     res.json({ message: "Template deleted" });

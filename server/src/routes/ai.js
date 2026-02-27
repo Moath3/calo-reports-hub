@@ -51,7 +51,21 @@ router.post("/chat", requireAuth, async (req, res) => {
       userMessage = "Previous conversation:\n" + contextMsgs + "\n\nUser: " + message;
     }
 
-    const result = await callAI(provider, systemPrompt, userMessage);
+    const result = await callAI(provider, systemPrompt, userMessage, { jsonMode: provider === "gemini" });
+
+    // Parse structured response: { message, updates }
+    const parsed = extractJSON(result.text);
+    let responseMessage;
+    let updates = null;
+
+    if (parsed && typeof parsed === "object") {
+      responseMessage = parsed.message || parsed.response || result.text;
+      if (parsed.updates && typeof parsed.updates === "object") {
+        updates = parsed.updates;
+      }
+    } else {
+      responseMessage = result.text;
+    }
 
     try {
       const db = getDb();
@@ -59,7 +73,7 @@ router.post("/chat", requireAuth, async (req, res) => {
         .run(req.user.id, provider || "gemini", result.tokensIn || 0, result.tokensOut || 0, "chat");
     } catch (e) {}
 
-    res.json({ response: result.text, message: result.text, provider: provider || "gemini" });
+    res.json({ response: responseMessage, message: responseMessage, updates, provider: provider || "gemini" });
   } catch (err) {
     console.error("AI chat error:", err);
     res.status(500).json({ error: "AI chat failed: " + err.message });

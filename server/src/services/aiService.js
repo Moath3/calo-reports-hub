@@ -56,7 +56,7 @@ async function callClaude(systemPrompt, userMessage, options = {}) {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
       body: JSON.stringify({
-        model: options.model || "claude-sonnet-4-5-20250514",
+        model: options.model || "claude-sonnet-4-5-20241022",
         max_tokens: options.maxTokens || 8192,
         system: systemPrompt,
         messages: [{ role: "user", content: userMessage }]

@@ -2,8 +2,8 @@ const TIMEOUT_MS = 90000;
 
 export function getAvailableProviders() {
   const providers = [];
-  if (process.env.GEMINI_API_KEY) providers.push({ id: "gemini", name: "Google Gemini 2.0 Flash", available: true });
   if (process.env.CLAUDE_API_KEY) providers.push({ id: "claude", name: "Anthropic Claude", available: true });
+  if (process.env.GEMINI_API_KEY) providers.push({ id: "gemini", name: "Google Gemini 2.0 Flash", available: true });
   if (process.env.PERPLEXITY_API_KEY) providers.push({ id: "perplexity", name: "Perplexity AI", available: true });
   return providers;
 }
@@ -119,7 +119,9 @@ export function buildReportSystemPrompt(dataSummary) {
     "5. keyvalue: {\"type\":\"keyvalue\",\"items\":[{\"key\":\"K\",\"value\":\"V\"}]}\n" +
     "6. comparison: {\"type\":\"comparison\",\"leftTitle\":\"A\",\"rightTitle\":\"B\",\"leftRows\":[{\"key\":\"k\",\"value\":\"v\"}],\"rightRows\":[{\"key\":\"k\",\"value\":\"v\"}]}\n" +
     "7. callout: {\"type\":\"callout\",\"title\":\"T\",\"value\":\"V\",\"icon\":\"emoji\"}\n" +
-    "8. chart: {\"type\":\"chart\",\"chartType\":\"bar|line|pie|doughnut\",\"title\":\"T\",\"labels\":[\"A\"],\"datasets\":[{\"label\":\"S\",\"data\":[10]}]}\n\n" +
+    "8. chart: {\"type\":\"chart\",\"chartType\":\"bar|line|pie|doughnut\",\"title\":\"T\",\"labels\":[\"A\"],\"datasets\":[{\"label\":\"S\",\"data\":[10]}]}\n" +
+    "9. link: {\"type\":\"link\",\"text\":\"Link text\",\"url\":\"https://...\",\"description\":\"optional desc\"}\n" +
+    "10. image: {\"type\":\"image\",\"url\":\"image-url\",\"caption\":\"optional caption\"}\n\n" +
     "GUIDELINES:\n- Identify 4-6 KPIs\n- Create 4-8 sections\n- Use charts for numerical data\n- Use comparisons for paired data\n" +
     "- Write insightful analysis\n- Generate 3-5 actionable insights\n- ALL values as strings\n\n" +
     "DATA:\n" + JSON.stringify(dataSummary, null, 2);
@@ -155,6 +157,8 @@ BLOCK TYPE SCHEMAS (ALL values MUST be strings):
 - keyvalue: { "type":"keyvalue", "label":"L", "items":[{"key":"K","value":"V"}] }
 - comparison: { "type":"comparison", "label":"L", "leftTitle":"A", "rightTitle":"B", "leftRows":[{"key":"k","value":"v"}], "rightRows":[{"key":"k","value":"v"}] }
 - callout: { "type":"callout", "title":"T", "value":"V", "icon":"emoji", "bgColor":"#hex", "borderColor":"#hex", "textColor":"#hex" }
+- link: { "type":"link", "text":"Link text", "url":"https://...", "description":"optional desc" }
+- image: { "type":"image", "url":"image-url", "caption":"optional caption" }
 - kpiStrip: [{"label":"Name","value":"123","unit":"meals","trend":"up|down|stable"}]
 
 RULES:

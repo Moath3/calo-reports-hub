@@ -2,7 +2,7 @@ export function buildStandaloneHTML(reportData, brandColor, title) {
   const r = reportData || {};
   const color = brandColor || r.brandColor || "#22c55e";
   const rt = title || r.title || "Report";
-  
+
   function rb(b) {
     if (!b) return "";
     var h = "";
@@ -69,8 +69,21 @@ export function buildStandaloneHTML(reportData, brandColor, title) {
       var cd=JSON.stringify({type:b.chartType||"bar",data:{labels:b.labels||[],datasets:b.datasets||[]}}).replace(/"/g,"&quot;");
       return "<div style=\"background:#f9fafb;padding:20px;border-radius:10px\"><div style=\"font-weight:600;margin-bottom:8px\">"+(b.title||"Chart")+"</div><canvas id=\""+cid+"\" data-chartcfg=\""+cd+"\"></canvas></div>";
     }
+    if (b.type === "link") {
+      return "<div style=\"margin-bottom:8px;padding:10px 16px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;display:flex;align-items:center;gap:10px\">" +
+        "<span style=\"font-size:18px\">&#128279;</span>" +
+        "<div><a href=\""+(b.url||"#")+"\" target=\"_blank\" rel=\"noopener noreferrer\" style=\"color:"+color+";font-weight:600;font-size:14px;text-decoration:none\">"+(b.text||b.url||"Link")+"</a>" +
+        (b.description ? "<div style=\"font-size:12px;color:#6b7280;margin-top:2px\">"+b.description+"</div>" : "") +
+        "</div></div>";
+    }
+    if (b.type === "image") {
+      return "<div style=\"margin-bottom:8px;text-align:center\"><img src=\""+(b.url||"")+"\" style=\"max-width:100%;border-radius:8px\" alt=\""+(b.caption||"")+"\" />" +
+        (b.caption ? "<div style=\"font-size:12px;color:#6b7280;margin-top:6px\">"+b.caption+"</div>" : "") + "</div>";
+    }
     return "";
   }
+
+  var logoSvg = '<svg viewBox="0 0 120 36" xmlns="http://www.w3.org/2000/svg" style="height:28px;width:auto;margin-bottom:8px"><text x="2" y="30" font-family="Inter,system-ui,sans-serif" font-weight="900" font-size="34" fill="white" letter-spacing="-1">CALO</text></svg>';
 
   var css = "*{margin:0;padding:0;box-sizing:border-box}body{font-family:Inter,system-ui,sans-serif;background:#f8fafc;color:#111827;line-height:1.5}";
   css+=".ctr{max-width:1000px;margin:0 auto;padding:24px}";
@@ -79,20 +92,28 @@ export function buildStandaloneHTML(reportData, brandColor, title) {
   css+=".ks{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-bottom:24px}";
   css+=".kc{background:#fff;padding:18px;border-radius:12px;border:1px solid #e5e7eb}";
   css+=".kl{font-size:11px;color:#6b7280;text-transform:uppercase}.kv{font-size:26px;font-weight:800}";
-  css+=".sec{background:#fff;border-radius:12px;border:1px solid #e5e7eb;padding:24px;margin-bottom:16px}";
-  css+=".st{font-size:18px;font-weight:700;margin-bottom:16px}.blk{margin-bottom:16px}";
+  css+=".sec{background:#fff;border-radius:12px;border:1px solid #e5e7eb;overflow:hidden;margin-bottom:16px}";
+  css+=".st{font-size:18px;font-weight:700;padding:16px 20px;border-bottom:2px solid "+color+";background:#fafafa;cursor:pointer;user-select:none;position:relative;padding-right:36px}";
+  css+=".st::after{content:'\\25BC';position:absolute;right:16px;top:50%;transform:translateY(-50%);font-size:12px;color:#9ca3af;transition:transform .2s}";
+  css+=".st.collapsed::after{transform:translateY(-50%) rotate(-90deg)}";
+  css+=".sec-body{padding:20px;transition:max-height .3s ease,opacity .2s}";
+  css+=".sec-body.hidden{max-height:0!important;opacity:0;padding:0 20px;overflow:hidden}";
+  css+=".blk{margin-bottom:16px}";
   css+=".sb{background:#fff;border-radius:12px;border:1px solid #e5e7eb;padding:24px;margin-bottom:16px}";
   css+=".ii{padding:10px 16px;background:#f0fdf4;border-left:3px solid "+color+";margin-bottom:8px;border-radius:0 8px 8px 0;font-size:14px;color:#166534}";
+  css+="@media print{body{background:white}.ctr{padding:0;max-width:100%}.st::after{display:none}.sec-body.hidden{max-height:none!important;opacity:1;padding:20px}}";
 
-  var chartScript = 'document.addEventListener("DOMContentLoaded",function(){document.querySelectorAll("canvas[data-chartcfg]").forEach(function(c){try{var d=JSON.parse(c.getAttribute("data-chartcfg"));new Chart(c,{type:d.type,data:d.data,options:{responsive:true}});}catch(e){}});});';
+  var chartScript = 'document.addEventListener("DOMContentLoaded",function(){document.querySelectorAll("canvas[data-chartcfg]").forEach(function(c){try{var d=JSON.parse(c.getAttribute("data-chartcfg"));new Chart(c,{type:d.type,data:d.data,options:{responsive:true}});}catch(e){}});';
+  chartScript += 'document.querySelectorAll(".st").forEach(function(el){el.addEventListener("click",function(){this.classList.toggle("collapsed");var body=this.nextElementSibling;if(body)body.classList.toggle("hidden");});});';
+  chartScript += '});';
 
   var o = "";
   o+='<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">';
   o+="<title>"+rt+"<\/title>";
-  o+='<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">';
+  o+='<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">';
   o+='<script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"><\/script>';
   o+="<style>"+css+"<\/style><\/head><body><div class=\"ctr\">";
-  o+="<div class=\"hdr\"><h1>"+(r.title||rt)+"<\/h1>";
+  o+="<div class=\"hdr\">"+logoSvg+"<h1>"+(r.title||rt)+"<\/h1>";
   if(r.subtitle) o+="<div style=\"font-size:16px;opacity:.9\">"+r.subtitle+"<\/div>";
   if(r.reportDate) o+="<div style=\"font-size:13px;opacity:.7;margin-top:8px\">"+r.reportDate+"<\/div>";
   o+="<\/div>";
@@ -105,8 +126,9 @@ export function buildStandaloneHTML(reportData, brandColor, title) {
 
   (r.sections||[]).forEach(function(s){
     o+="<div class=\"sec\"><div class=\"st\">"+(s.icon||"")+" "+(s.title||"")+"<\/div>";
+    o+="<div class=\"sec-body\">";
     (s.blocks||[]).forEach(function(b){o+="<div class=\"blk\">"+rb(b)+"<\/div>";});
-    o+="<\/div>";
+    o+="<\/div><\/div>";
   });
 
   if(r.summary) o+="<div class=\"sb\"><h3 style=\"font-size:18px;font-weight:700;margin-bottom:12px\">Executive Summary<\/h3><p style=\"color:#4b5563;line-height:1.7;font-size:14px\">"+r.summary+"<\/p><\/div>";
@@ -115,6 +137,9 @@ export function buildStandaloneHTML(reportData, brandColor, title) {
     r.insights.forEach(function(i){o+="<div class=\"ii\">"+i+"<\/div>";});
     o+="<\/div>";
   }
+  o+='<div style="text-align:center;padding:24px;color:#9ca3af;font-size:12px;display:flex;align-items:center;justify-content:center;gap:8px">';
+  o+='<svg viewBox="0 0 120 36" xmlns="http://www.w3.org/2000/svg" style="height:16px;width:auto"><text x="2" y="30" font-family="Inter,system-ui,sans-serif" font-weight="900" font-size="34" fill="#9ca3af" letter-spacing="-1">CALO</text></svg>';
+  o+='Reports Platform</div>';
   o+="<\/div><script>"+chartScript+"<\/script><\/body><\/html>";
   return o;
 }

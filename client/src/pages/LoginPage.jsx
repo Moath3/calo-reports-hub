@@ -52,8 +52,10 @@ export default function LoginPage() {
         }} />
         <div className="relative z-10">
           <div className="flex items-center gap-3 mb-2">
-            <div className="h-12 w-12 rounded-xl bg-white/20 flex items-center justify-center text-2xl font-bold">C</div>
-            <span className="text-2xl font-bold">CALO Reports</span>
+            <svg viewBox="0 0 120 36" className="h-10 w-auto" xmlns="http://www.w3.org/2000/svg">
+              <text x="2" y="30" fontFamily="Inter, system-ui, sans-serif" fontWeight="900" fontSize="34" fill="white" letterSpacing="-1">CALO</text>
+            </svg>
+            <span className="text-2xl font-bold">Reports</span>
           </div>
           <p className="text-green-100 mt-1 text-sm">Enterprise Report Generation Platform</p>
         </div>
@@ -79,8 +81,10 @@ export default function LoginPage() {
         <div className="w-full max-w-md">
           {/* Mobile logo */}
           <div className="lg:hidden flex items-center gap-3 mb-8 justify-center">
-            <div className="h-10 w-10 rounded-lg gradient-header flex items-center justify-center text-white font-bold">C</div>
-            <span className="text-xl font-bold text-gray-900">CALO Reports</span>
+            <svg viewBox="0 0 120 36" className="h-9 w-auto" xmlns="http://www.w3.org/2000/svg">
+              <text x="2" y="30" fontFamily="Inter, system-ui, sans-serif" fontWeight="900" fontSize="34" fill="#3DAC6A" letterSpacing="-1">CALO</text>
+            </svg>
+            <span className="text-xl font-bold text-gray-900">Reports</span>
           </div>
 
           <div className="card p-8">

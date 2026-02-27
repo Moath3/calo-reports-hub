@@ -13,7 +13,7 @@ const UPLOAD_DIR = join(__dirname, "..", "..", "uploads");
 
 if (!existsSync(UPLOAD_DIR)) mkdirSync(UPLOAD_DIR, { recursive: true });
 
-const ALLOWED_EXTENSIONS = [".xlsx", ".xls", ".csv", ".json", ".txt", ".md"];
+const ALLOWED_EXTENSIONS = [".xlsx", ".xls", ".csv", ".json", ".txt", ".md", ".html", ".htm"];
 const MAX_SIZE = (parseInt(process.env.MAX_FILE_SIZE_MB) || 25) * 1024 * 1024;
 
 const storage = multer.diskStorage({

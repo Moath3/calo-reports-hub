@@ -9,6 +9,7 @@ import ReportEditorPage from "./pages/ReportEditorPage";
 import ReportPreviewPage from "./pages/ReportPreviewPage";
 import TemplatesPage from "./pages/TemplatesPage";
 import SettingsPage from "./pages/SettingsPage";
+import GuidePage from "./pages/GuidePage";
 
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth();
@@ -51,6 +52,7 @@ export default function App() {
         <Route path="reports/:id/preview" element={<ReportPreviewPage />} />
         <Route path="templates" element={<TemplatesPage />} />
         <Route path="settings" element={<SettingsPage />} />
+        <Route path="guide" element={<GuidePage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

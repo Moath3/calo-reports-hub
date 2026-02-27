@@ -5,7 +5,8 @@ import toast from 'react-hot-toast';
 import {
   Save, Eye, ArrowLeft, Plus, Trash2, GripVertical, ChevronDown, ChevronUp,
   Loader2, Sparkles, Send, Brain, Palette, Type, BarChart3, Table, Image,
-  MessageSquare, List, AlertTriangle, Copy, Paperclip, ClipboardPaste, CheckCircle2
+  MessageSquare, List, AlertTriangle, Copy, Paperclip, ClipboardPaste, CheckCircle2,
+  Link2, Upload, ArrowUp, ArrowDown
 } from 'lucide-react';
 
 const BLOCK_TYPES = [
@@ -17,6 +18,7 @@ const BLOCK_TYPES = [
   { type: 'comparison', label: 'Comparison', icon: Copy },
   { type: 'callout', label: 'Callout Box', icon: AlertTriangle },
   { type: 'image', label: 'Image', icon: Image },
+  { type: 'link', label: 'Link', icon: Link2 },
 ];
 
 /* ============ Visual Sub-Editors (no JSON exposed) ============ */
@@ -237,7 +239,7 @@ function KpiStripEditor({ kpis, onChange }) {
 
 /* ============ Block Editor ============ */
 
-function BlockEditor({ block, onChange, onRemove }) {
+function BlockEditor({ block, onChange, onRemove, onMoveUp, onMoveDown, isFirst, isLast }) {
   const [open, setOpen] = useState(true);
   const typeInfo = BLOCK_TYPES.find(b => b.type === block.type) || { label: block.type, icon: Type };
   const Icon = typeInfo.icon;
@@ -250,6 +252,12 @@ function BlockEditor({ block, onChange, onRemove }) {
         <Icon className="h-4 w-4 text-green-600 shrink-0" />
         <span className="text-sm font-medium text-gray-900 flex-1 truncate">{block.label || block.title || typeInfo.label}</span>
         <span className="badge-gray text-[10px]">{block.type}</span>
+        <button onClick={e => { e.stopPropagation(); onMoveUp?.(); }} disabled={isFirst} className="btn-ghost p-1 text-gray-400 hover:text-gray-600 disabled:opacity-30" title="Move up">
+          <ArrowUp className="h-3.5 w-3.5" />
+        </button>
+        <button onClick={e => { e.stopPropagation(); onMoveDown?.(); }} disabled={isLast} className="btn-ghost p-1 text-gray-400 hover:text-gray-600 disabled:opacity-30" title="Move down">
+          <ArrowDown className="h-3.5 w-3.5" />
+        </button>
         <button onClick={e => { e.stopPropagation(); onRemove(); }} className="btn-ghost p-1 text-red-400 hover:text-red-600">
           <Trash2 className="h-3.5 w-3.5" />
         </button>
@@ -330,7 +338,27 @@ function BlockEditor({ block, onChange, onRemove }) {
           {block.type === 'image' && (
             <>
               <Field label="Image URL" value={block.url || ''} onChange={v => set('url', v)} />
+              <div>
+                <label className="label">Or Upload Image</label>
+                <input type="file" accept="image/*" className="text-sm text-gray-600 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-green-50 file:text-green-700 hover:file:bg-green-100"
+                  onChange={e => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    if (file.size > 5 * 1024 * 1024) { toast.error('Image must be under 5MB'); return; }
+                    const reader = new FileReader();
+                    reader.onload = () => set('url', reader.result);
+                    reader.readAsDataURL(file);
+                  }} />
+              </div>
+              {block.url && <img src={block.url} alt={block.caption || ''} className="mt-2 max-h-40 rounded-lg border border-gray-200 object-contain" />}
               <Field label="Caption" value={block.caption || ''} onChange={v => set('caption', v)} />
+            </>
+          )}
+          {block.type === 'link' && (
+            <>
+              <Field label="Link Text" value={block.text || ''} onChange={v => set('text', v)} />
+              <Field label="URL" value={block.url || ''} onChange={v => set('url', v)} />
+              <Field label="Description (optional)" value={block.description || ''} onChange={v => set('description', v)} />
             </>
           )}
         </div>
@@ -368,7 +396,7 @@ export default function ReportEditorPage() {
   const [aiChat, setAiChat] = useState([]);
   const [aiLoading, setAiLoading] = useState(false);
   const [showAddBlock, setShowAddBlock] = useState(false);
-  const [aiProvider, setAiProvider] = useState('gemini');
+  const [aiProvider, setAiProvider] = useState('claude');
   const [aiProviders, setAiProviders] = useState([]);
   const [showPasteBox, setShowPasteBox] = useState(false);
   const [pasteText, setPasteText] = useState('');
@@ -415,6 +443,14 @@ export default function ReportEditorPage() {
     s[sIdx] = { ...s[sIdx], blocks: s[sIdx].blocks.filter((_, i) => i !== bIdx) };
   });
 
+  const moveBlock = (sIdx, bIdx, dir) => updateSection(sIdx, (s) => {
+    const blocks = [...s[sIdx].blocks];
+    const t = bIdx + dir;
+    if (t < 0 || t >= blocks.length) return;
+    [blocks[bIdx], blocks[t]] = [blocks[t], blocks[bIdx]];
+    s[sIdx] = { ...s[sIdx], blocks };
+  });
+
   const addBlock = (sIdx, type) => updateSection(sIdx, (s) => {
     const nb = { type };
     if (type === 'notes') nb.items = [''];
@@ -422,6 +458,7 @@ export default function ReportEditorPage() {
     if (type === 'table') { nb.headers = ['Column 1']; nb.rows = [['']]; }
     if (type === 'keyvalue') nb.items = [{ key: 'Key', value: 'Value' }];
     if (type === 'comparison') { nb.leftTitle = 'Left'; nb.rightTitle = 'Right'; nb.leftRows = [{ key: '', value: '' }]; nb.rightRows = [{ key: '', value: '' }]; }
+    if (type === 'link') { nb.text = 'Link text'; nb.url = 'https://'; nb.description = ''; }
     s[sIdx] = { ...s[sIdx], blocks: [...(s[sIdx].blocks || []), nb] };
   });
 
@@ -590,7 +627,13 @@ export default function ReportEditorPage() {
               </div>
               <div className="p-4 space-y-3">
                 {(section.blocks || []).map((block, bIdx) => (
-                  <BlockEditor key={bIdx} block={block} onChange={b => updateBlock(sIdx, bIdx, b)} onRemove={() => removeBlock(sIdx, bIdx)} />
+                  <BlockEditor key={bIdx} block={block}
+                    onChange={b => updateBlock(sIdx, bIdx, b)}
+                    onRemove={() => removeBlock(sIdx, bIdx)}
+                    onMoveUp={() => moveBlock(sIdx, bIdx, -1)}
+                    onMoveDown={() => moveBlock(sIdx, bIdx, 1)}
+                    isFirst={bIdx === 0}
+                    isLast={bIdx === (section.blocks || []).length - 1} />
                 ))}
                 <div className="relative">
                   <button onClick={() => setShowAddBlock(showAddBlock === sIdx ? false : sIdx)}
@@ -646,7 +689,11 @@ export default function ReportEditorPage() {
             <select className="ml-auto text-xs border border-gray-200 rounded-lg px-2 py-1 bg-white" value={aiProvider} onChange={e => setAiProvider(e.target.value)}>
               {aiProviders.length > 0 ? aiProviders.map(p => (
                 <option key={p.id} value={p.id}>{p.name}</option>
-              )) : <option value="gemini">Google Gemini</option>}
+              )) : <>
+                <option value="claude">Anthropic Claude</option>
+                <option value="gemini">Google Gemini</option>
+                <option value="perplexity">Perplexity AI</option>
+              </>}
             </select>
           </div>
 

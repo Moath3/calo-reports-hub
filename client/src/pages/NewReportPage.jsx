@@ -15,7 +15,7 @@ export default function NewReportPage() {
   const [dataSummary, setDataSummary] = useState(null);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
-  const [provider, setProvider] = useState('gemini');
+  const [provider, setProvider] = useState('claude');
   const [customPrompt, setCustomPrompt] = useState('');
   const [providers, setProviders] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -27,7 +27,7 @@ export default function NewReportPage() {
     setLoading(true);
     try {
       const res = await api.uploadFile(f);
-      setDataSummary(res.summary);
+      setDataSummary(res.parsedData || res.summary);
       setTitle(f.name.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' '));
       // Fetch available providers
       try {
@@ -53,6 +53,7 @@ export default function NewReportPage() {
       'text/csv': ['.csv'],
       'application/json': ['.json'],
       'text/plain': ['.txt', '.md'],
+      'text/html': ['.html', '.htm'],
     },
     maxFiles: 1,
     maxSize: 25 * 1024 * 1024,
@@ -176,7 +177,7 @@ export default function NewReportPage() {
                 </div>
                 <div>
                   <p className="font-semibold text-gray-900">Drop your file here or click to browse</p>
-                  <p className="text-sm text-gray-500 mt-1">Supports Excel, CSV, JSON, Text (max 25MB)</p>
+                  <p className="text-sm text-gray-500 mt-1">Supports Excel, CSV, JSON, HTML, Text (max 25MB)</p>
                 </div>
               </div>
             )}
@@ -236,8 +237,8 @@ export default function NewReportPage() {
                   <option key={p.id} value={p.id}>{p.name}</option>
                 )) : (
                   <>
-                    <option value="gemini">Google Gemini</option>
                     <option value="claude">Anthropic Claude</option>
+                    <option value="gemini">Google Gemini</option>
                     <option value="perplexity">Perplexity AI</option>
                   </>
                 )}

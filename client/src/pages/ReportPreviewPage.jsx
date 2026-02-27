@@ -4,10 +4,12 @@ import api from '../utils/api';
 import toast from 'react-hot-toast';
 import {
   ArrowLeft, Download, Globe, Edit, Loader2, Copy,
-  FileDown, ExternalLink, CheckCircle
+  FileDown, ExternalLink, CheckCircle, Printer
 } from 'lucide-react';
 
-function renderReportHTML(data) {
+const CALO_LOGO_SVG = `<svg viewBox="0 0 120 36" xmlns="http://www.w3.org/2000/svg"><text x="2" y="30" font-family="Inter,system-ui,-apple-system,sans-serif" font-weight="900" font-size="34" fill="#3DAC6A" letter-spacing="-1">CALO</text></svg>`;
+
+function renderReportHTML(data, { collapsible = false } = {}) {
   const gi = data?.generalInfo || {};
   const brand = gi.brandColor || '#22c55e';
   const sections = data?.sections || [];
@@ -74,29 +76,75 @@ function renderReportHTML(data) {
           <img src="${b.url||''}" style="max-width:100%;border-radius:8px" alt="${b.caption||''}" />
           ${b.caption?`<div style="font-size:12px;color:#6b7280;margin-top:6px">${b.caption}</div>`:''}
         </div>`;
+      case 'link':
+        return `<div style="margin-bottom:12px;padding:12px 16px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;display:flex;align-items:center;gap:10px">
+          <span style="font-size:18px">🔗</span>
+          <div>
+            <a href="${b.url||'#'}" target="_blank" rel="noopener noreferrer" style="color:${brand};font-weight:600;font-size:14px;text-decoration:none">${b.text||b.url||'Link'}</a>
+            ${b.description?`<div style="font-size:12px;color:#6b7280;margin-top:2px">${b.description}</div>`:''}
+          </div>
+        </div>`;
       default:
         return `<div style="padding:12px;background:#fef3c7;border-radius:8px;font-size:13px;margin-bottom:12px">Unknown block: ${b.type}</div>`;
     }
   };
 
+  const collapsibleCSS = collapsible ? `
+    .section-toggle{cursor:pointer;user-select:none;position:relative;padding-right:32px}
+    .section-toggle::after{content:'▼';position:absolute;right:0;top:50%;transform:translateY(-50%);font-size:12px;color:#9ca3af;transition:transform .2s}
+    .section-toggle.collapsed::after{transform:translateY(-50%) rotate(-90deg)}
+    .section-content{transition:max-height .3s ease,opacity .2s ease;overflow:hidden}
+    .section-content.hidden{max-height:0!important;opacity:0;padding:0}
+  ` : '';
+
+  const collapsibleJS = collapsible ? `
+    <script>
+    document.addEventListener('DOMContentLoaded',function(){
+      document.querySelectorAll('.section-toggle').forEach(function(el){
+        el.addEventListener('click',function(){
+          var content=this.parentElement.querySelector('.section-content');
+          if(content){
+            this.classList.toggle('collapsed');
+            content.classList.toggle('hidden');
+          }
+        });
+      });
+    });
+    </script>
+  ` : '';
+
+  const logoSvg = `<svg viewBox="0 0 120 36" xmlns="http://www.w3.org/2000/svg" style="height:28px;width:auto;margin-bottom:8px"><text x="2" y="30" font-family="Inter,system-ui,-apple-system,sans-serif" font-weight="900" font-size="34" fill="white" letter-spacing="-1">CALO</text></svg>`;
+
   return `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
     <title>${gi.title||'Report'}</title>
-    <style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f8fafc;color:#1f2937}
-    .container{max-width:900px;margin:0 auto;padding:24px}</style></head>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <style>
+      *{margin:0;padding:0;box-sizing:border-box}
+      body{font-family:Inter,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f8fafc;color:#1f2937}
+      .container{max-width:900px;margin:0 auto;padding:24px}
+      @media print{body{background:white}.container{padding:0;max-width:100%}.no-print{display:none!important}}
+      ${collapsibleCSS}
+    </style></head>
     <body><div class="container">
     ${gi.title?`<div style="background:linear-gradient(135deg,${brand},${brand}dd);color:white;padding:32px;border-radius:16px;margin-bottom:24px">
+      ${logoSvg}
       <h1 style="font-size:28px;font-weight:800">${gi.title}</h1>
       ${gi.reportDate?`<div style="margin-top:6px;opacity:0.9;font-size:14px">${gi.reportDate}</div>`:''}
       ${gi.prevMonth?`<div style="margin-top:4px;opacity:0.7;font-size:13px">${gi.prevMonth}</div>`:''}
       ${gi.companyName?`<div style="margin-top:8px;font-size:13px;opacity:0.8">${gi.companyName}</div>`:''}
     </div>`:''}
     ${kpiHTML?`<div style="background:${brand};color:white;border-radius:12px;display:flex;justify-content:space-around;padding:8px;margin-bottom:24px;flex-wrap:wrap">${kpiHTML}</div>`:''}
-    ${sections.map(s => `<div style="margin-bottom:28px">
-      ${s.title?`<h2 style="font-size:20px;font-weight:700;color:#111827;margin-bottom:14px;padding-bottom:8px;border-bottom:2px solid ${brand}">${s.title}</h2>`:''}
-      ${(s.blocks||[]).map(renderBlock).join('')}
+    ${sections.map(s => `<div style="margin-bottom:28px;background:white;border-radius:12px;border:1px solid #e5e7eb;overflow:hidden">
+      ${s.title?`<h2 class="${collapsible?'section-toggle':''}" style="font-size:18px;font-weight:700;color:#111827;padding:16px 20px;margin:0;border-bottom:2px solid ${brand};background:#fafafa">${s.title}</h2>`:''}
+      <div class="section-content" style="padding:16px 20px">
+        ${(s.blocks||[]).map(renderBlock).join('')}
+      </div>
     </div>`).join('')}
-    <div style="text-align:center;padding:24px;color:#9ca3af;font-size:12px">Generated by CALO Reports Platform</div>
-    </div></body></html>`;
+    <div style="text-align:center;padding:24px;color:#9ca3af;font-size:12px;display:flex;align-items:center;justify-content:center;gap:8px">
+      <svg viewBox="0 0 120 36" xmlns="http://www.w3.org/2000/svg" style="height:16px;width:auto"><text x="2" y="30" font-family="Inter,system-ui,sans-serif" font-weight="900" font-size="34" fill="#9ca3af" letter-spacing="-1">CALO</text></svg>
+      Reports Platform
+    </div>
+    </div>${collapsibleJS}</body></html>`;
 }
 
 export default function ReportPreviewPage() {
@@ -132,7 +180,7 @@ export default function ReportPreviewPage() {
   const handleExportHTML = async () => {
     setExporting(true);
     try {
-      const html = renderReportHTML(report.report_data);
+      const html = renderReportHTML(report.report_data, { collapsible: true });
       const blob = new Blob([html], { type: 'text/html' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -148,8 +196,26 @@ export default function ReportPreviewPage() {
     }
   };
 
+  const handleExportPDF = () => {
+    if (!iframeRef.current) return;
+    try {
+      const iframeWin = iframeRef.current.contentWindow;
+      iframeWin.focus();
+      iframeWin.print();
+    } catch {
+      // Fallback: open HTML in new tab for printing
+      const html = renderReportHTML(report.report_data);
+      const blob = new Blob([html], { type: 'text/html' });
+      const url = URL.createObjectURL(blob);
+      const w = window.open(url, '_blank');
+      if (w) {
+        w.onload = () => { w.print(); setTimeout(() => URL.revokeObjectURL(url), 5000); };
+      }
+    }
+  };
+
   const handleCopyHTML = () => {
-    const html = renderReportHTML(report.report_data);
+    const html = renderReportHTML(report.report_data, { collapsible: true });
     navigator.clipboard.writeText(html).then(() => toast.success('HTML copied!'));
   };
 
@@ -158,7 +224,7 @@ export default function ReportPreviewPage() {
     if (!token?.trim()) return;
     setPublishing(true);
     try {
-      const html = renderReportHTML(report.report_data);
+      const html = renderReportHTML(report.report_data, { collapsible: true });
       const slug = (report.title || 'report').toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 30);
       const res = await api.deployNetlify(html, slug, token.trim());
       const url = res.url || res.netlifyUrl;
@@ -197,8 +263,11 @@ export default function ReportPreviewPage() {
           <button onClick={handleCopyHTML} className="btn-secondary flex items-center gap-2 text-sm">
             <Copy className="h-4 w-4" /> Copy HTML
           </button>
+          <button onClick={handleExportPDF} className="btn-secondary flex items-center gap-2 text-sm">
+            <Printer className="h-4 w-4" /> PDF
+          </button>
           <button onClick={handleExportHTML} disabled={exporting} className="btn-secondary flex items-center gap-2 text-sm">
-            {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileDown className="h-4 w-4" />} Export
+            {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileDown className="h-4 w-4" />} HTML
           </button>
           <button onClick={handlePublish} disabled={publishing} className="btn-primary flex items-center gap-2 text-sm">
             {publishing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Globe className="h-4 w-4" />} Publish
@@ -228,7 +297,7 @@ export default function ReportPreviewPage() {
           ref={iframeRef}
           className="w-full h-full border-0"
           title="Report Preview"
-          sandbox="allow-same-origin"
+          sandbox="allow-same-origin allow-modals"
         />
       </div>
     </div>

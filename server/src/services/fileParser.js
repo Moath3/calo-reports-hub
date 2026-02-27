@@ -16,6 +16,9 @@ export function parseFile(filePath, originalName, mimeType) {
       return parseCSV(filePath);
     case 'json':
       return parseJSON(filePath);
+    case 'html':
+    case 'htm':
+      return parseHTML(filePath);
     case 'txt':
     case 'md':
       return parseText(filePath);
@@ -139,6 +142,36 @@ function parseJSON(filePath) {
   };
 }
 
+function parseHTML(filePath) {
+  const content = readFileSync(filePath, 'utf-8');
+  // Strip HTML tags for plain text extraction
+  const textContent = content
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  // Extract title from <title> or first <h1>
+  const titleMatch = content.match(/<title[^>]*>([\s\S]*?)<\/title>/i) || content.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i);
+  const title = titleMatch ? titleMatch[1].replace(/<[^>]+>/g, '').trim() : '';
+
+  return {
+    type: 'html',
+    content: content.slice(0, 100000),
+    textContent: textContent.slice(0, 50000),
+    title,
+    length: content.length,
+    lineCount: content.split('\n').length
+  };
+}
+
 function parseText(filePath) {
   const content = readFileSync(filePath, 'utf-8');
   return {
@@ -187,6 +220,12 @@ export function createDataSummary(parsedData, maxRows = 50) {
   } else if (parsedData.type === 'json-object') {
     summary.overview = { keys: parsedData.keys };
     summary.data = parsedData.data;
+  } else if (parsedData.type === 'html') {
+    summary.overview = { title: parsedData.title, length: parsedData.length, lineCount: parsedData.lineCount };
+    summary.data = {
+      htmlContent: parsedData.content?.slice(0, 15000),
+      textContent: parsedData.textContent?.slice(0, 10000)
+    };
   } else {
     summary.data = { content: parsedData.content?.slice(0, 10000) };
   }

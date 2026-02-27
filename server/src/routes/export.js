@@ -5,22 +5,25 @@ import { buildStandaloneHTML } from "../services/htmlBuilder.js";
 
 const router = Router();
 
+// HTML export — supports optional password protection
 router.post("/html", requireAuth, (req, res) => {
   try {
-    const { reportData, brandColor, title } = req.body;
+    const { reportData, brandColor, title, password } = req.body;
     if (!reportData) return res.status(400).json({ error: "reportData is required" });
-    res.json({ html: buildStandaloneHTML(reportData, brandColor, title) });
+    const options = password ? { password } : {};
+    res.json({ html: buildStandaloneHTML(reportData, brandColor, title, options) });
   } catch (err) {
     console.error("HTML export error:", err);
     res.status(500).json({ error: "HTML export failed" });
   }
 });
 
+// PDF generation is handled client-side via browser print
 router.post("/pdf", requireAuth, (req, res) => {
-  // PDF generation is handled client-side via browser print
   res.status(501).json({ error: "PDF export is available via browser Print (Ctrl+P) in the preview page." });
 });
 
+// Netlify publish — always password-protected for confidentiality
 router.post("/netlify", requireAuth, async (req, res) => {
   try {
     const { html, siteName, netlifyToken } = req.body;

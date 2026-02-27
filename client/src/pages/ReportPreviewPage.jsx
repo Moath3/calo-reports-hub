@@ -5,7 +5,7 @@ import api from '../utils/api';
 import toast from 'react-hot-toast';
 import {
   ArrowLeft, Globe, Edit, Loader2, Copy,
-  FileDown, ExternalLink, CheckCircle, Printer, ImageDown
+  FileDown, ExternalLink, CheckCircle, Printer, ImageDown, Lock, Shield
 } from 'lucide-react';
 
 function renderReportHTML(data, { collapsible = false } = {}) {
@@ -307,16 +307,31 @@ export default function ReportPreviewPage() {
   const handlePublish = async () => {
     const token = prompt('Enter your Netlify access token:');
     if (!token?.trim()) return;
+    // Always require access code for published reports (security)
+    const accessCode = prompt('Set an access code to protect this report (required for CALO confidentiality):');
+    if (!accessCode?.trim()) {
+      toast.error('Access code is required to publish. Reports must be protected.');
+      return;
+    }
     setPublishing(true);
     try {
-      const html = renderReportHTML(report.report_data, { collapsible: true });
+      // Use server-side HTML builder with password protection
+      const res1 = await api.request('/api/export/html', {
+        method: 'POST',
+        body: JSON.stringify({
+          reportData: report.report_data,
+          title: report.title,
+          password: accessCode.trim()
+        })
+      });
+      const html = res1.html;
       const slug = (report.title || 'report').toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 30);
       const res = await api.deployNetlify(html, slug, token.trim());
       const url = res.url || res.netlifyUrl;
       if (url) {
         setNetlifyUrl(url);
         await api.updateReport(id, { netlifyUrl: url, status: 'published' });
-        toast.success('Published to Netlify!');
+        toast.success('Published with password protection!');
       }
     } catch (err) {
       toast.error(err.message || 'Publish failed');
@@ -358,7 +373,7 @@ export default function ReportPreviewPage() {
             {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileDown className="h-4 w-4" />} HTML
           </button>
           <button onClick={handlePublish} disabled={publishing} className="btn-primary flex items-center gap-2 text-sm">
-            {publishing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Globe className="h-4 w-4" />} Publish
+            {publishing ? <Loader2 className="h-4 w-4 animate-spin" /> : <><Lock className="h-4 w-4" /><Globe className="h-4 w-4 -ml-1" /></>} Publish
           </button>
         </div>
       </div>
@@ -372,6 +387,9 @@ export default function ReportPreviewPage() {
             <a href={netlifyUrl} target="_blank" rel="noopener noreferrer" className="text-green-600 hover:underline truncate">
               {netlifyUrl}
             </a>
+            <span className="inline-flex items-center gap-1 ml-2 px-2 py-0.5 bg-green-100 text-green-700 rounded-full text-xs font-medium">
+              <Shield className="h-3 w-3" /> Password Protected
+            </span>
           </div>
           <a href={netlifyUrl} target="_blank" rel="noopener noreferrer" className="btn-ghost p-1.5 text-green-600">
             <ExternalLink className="h-4 w-4" />

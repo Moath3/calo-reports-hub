@@ -1,9 +1,27 @@
-export function buildStandaloneHTML(reportData, brandColor, title) {
+import { createHash } from 'crypto';
+
+/**
+ * Compute SHA-256 hash of a string (server-side).
+ * The hash is embedded in the published HTML instead of the plaintext password.
+ */
+function sha256(str) {
+  return createHash('sha256').update(str).digest('hex');
+}
+
+/**
+ * Build standalone HTML report with CALO branding.
+ * @param {object} reportData - Report data (sections, kpis, summary, insights)
+ * @param {string} brandColor - Brand color override
+ * @param {string} title - Title override
+ * @param {object} options - { password: string|null } — if set, wraps report in password gate
+ */
+export function buildStandaloneHTML(reportData, brandColor, title, options = {}) {
   const r = reportData || {};
   const gi = r.generalInfo || {};
   const color = brandColor || gi.brandColor || r.brandColor || "#2BB573";
   const colorDark = "#1E8A57";
   const rt = title || gi.title || r.title || "Report";
+  const accessPassword = options.password || null;
 
   function rb(b) {
     if (!b) return "";
@@ -139,10 +157,62 @@ export function buildStandaloneHTML(reportData, brandColor, title) {
   css += "@media(max-width:768px){.kpi-grid{grid-template-columns:repeat(3,1fr)}}";
   css += "@media(max-width:480px){.kpi-grid{grid-template-columns:repeat(2,1fr)}.hdr{padding:28px 24px 44px}.hdr h1{font-size:1.5rem}}";
 
+  // Password gate CSS
+  if (accessPassword) {
+    css += ".pw-gate{position:fixed;inset:0;background:#F4F6F9;z-index:9999;display:flex;align-items:center;justify-content:center}";
+    css += ".pw-box{background:white;border-radius:18px;padding:40px;max-width:400px;width:90%;text-align:center;box-shadow:0 8px 40px rgba(0,0,0,.1);border:1px solid #E2E8F0}";
+    css += ".pw-box .logo-text{color:" + color + ";font-size:32px;text-shadow:none;margin-bottom:6px}";
+    css += ".pw-box h2{font-size:18px;font-weight:700;color:#1A1D23;margin-bottom:4px}";
+    css += ".pw-box p{font-size:13px;color:#5F6B7A;margin-bottom:20px}";
+    css += ".pw-box input{width:100%;padding:12px 16px;border:2px solid #E2E8F0;border-radius:12px;font-size:14px;outline:none;transition:border-color .2s;font-family:inherit}";
+    css += ".pw-box input:focus{border-color:" + color + "}";
+    css += ".pw-box button{width:100%;padding:12px;background:" + color + ";color:white;border:none;border-radius:12px;font-size:14px;font-weight:700;cursor:pointer;margin-top:12px;transition:background .2s;font-family:inherit}";
+    css += ".pw-box button:hover{background:" + colorDark + "}";
+    css += ".pw-err{color:#dc2626;font-size:13px;margin-top:8px;display:none}";
+    css += ".pw-notice{font-size:11px;color:#9ca3af;margin-top:16px}";
+  }
+
   var chartScript = 'document.addEventListener("DOMContentLoaded",function(){';
   chartScript += 'document.querySelectorAll("canvas[data-chartcfg]").forEach(function(c){try{var d=JSON.parse(c.getAttribute("data-chartcfg"));new Chart(c,{type:d.type,data:d.data,options:{responsive:true,plugins:{legend:{labels:{font:{family:"Plus Jakarta Sans"}}}}}});}catch(e){}});';
   chartScript += 'document.querySelectorAll(".sec-hdr").forEach(function(el){el.addEventListener("click",function(){this.classList.toggle("collapsed");var body=this.nextElementSibling;if(body)body.classList.toggle("hidden");});});';
   chartScript += '});';
+
+  // Password gate script — uses SHA-256 hashing so the password isn't in plaintext
+  var pwScript = '';
+  if (accessPassword) {
+    // Hash the password using a simple client-side approach
+    // We store a SHA-256 hash of the password, then compare on input
+    pwScript = `
+    (function(){
+      var gate=document.getElementById('pw-gate');
+      var content=document.getElementById('pw-content');
+      var input=document.getElementById('pw-input');
+      var btn=document.getElementById('pw-btn');
+      var err=document.getElementById('pw-err');
+      if(!gate||!content)return;
+      content.style.display='none';
+      async function hashStr(s){var e=new TextEncoder().encode(s);var h=await crypto.subtle.digest('SHA-256',e);return Array.from(new Uint8Array(h)).map(function(b){return b.toString(16).padStart(2,'0')}).join('');}
+      async function check(){
+        var val=input.value.trim();
+        if(!val){err.style.display='block';err.textContent='Please enter the access code.';return;}
+        var h=await hashStr(val);
+        if(h===gate.getAttribute('data-h')){
+          gate.style.display='none';
+          content.style.display='block';
+          sessionStorage.setItem('calo-pw-ok','1');
+        }else{
+          err.style.display='block';
+          err.textContent='Incorrect access code. Please try again.';
+          input.value='';
+          input.focus();
+        }
+      }
+      if(sessionStorage.getItem('calo-pw-ok')==='1'){gate.style.display='none';content.style.display='block';return;}
+      btn.addEventListener('click',check);
+      input.addEventListener('keydown',function(e){if(e.key==='Enter')check();});
+      input.focus();
+    })();`;
+  }
 
   // Support both flat and generalInfo structures
   var reportTitle = gi.title || r.title || rt;
@@ -157,10 +227,29 @@ export function buildStandaloneHTML(reportData, brandColor, title) {
 
   var o = "";
   o += '<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">';
+  o += '<meta name="robots" content="noindex,nofollow">';
   o += "<title>" + reportTitle + "<\/title>";
   o += '<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800;900&family=DM+Sans:wght@400;500;700&display=swap" rel="stylesheet">';
   o += '<script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"><\/script>';
-  o += "<style>" + css + "<\/style><\/head><body><div class=\"ctr\">";
+  o += "<style>" + css + "<\/style><\/head><body>";
+
+  // Password gate overlay (if enabled)
+  if (accessPassword) {
+    // Compute SHA-256 hash of password to embed (not plaintext)
+    var hashHex = sha256(accessPassword);
+    o += '<div id="pw-gate" class="pw-gate" data-h="' + hashHex + '">';
+    o += '<div class="pw-box">';
+    o += '<div class="logo-text">CALO<\/div>';
+    o += '<h2>Confidential Report<\/h2>';
+    o += '<p>This report is restricted to authorized CALO personnel only.<\/p>';
+    o += '<input id="pw-input" type="password" placeholder="Enter access code" autocomplete="off" />';
+    o += '<button id="pw-btn">View Report<\/button>';
+    o += '<div id="pw-err" class="pw-err"><\/div>';
+    o += '<div class="pw-notice">&#128274; Protected by CALO Reports Platform<\/div>';
+    o += '<\/div><\/div>';
+  }
+
+  o += '<div id="pw-content" class="ctr">';
 
   // Header
   o += '<div class="hdr">';
@@ -224,6 +313,12 @@ export function buildStandaloneHTML(reportData, brandColor, title) {
   o += '<span>Reports Platform<\/span>';
   o += '<\/div>';
 
-  o += "<\/div><script>" + chartScript + "<\/script><\/body><\/html>";
+  o += "<\/div>";
+  o += "<script>" + chartScript + "<\/script>";
+  if (accessPassword) {
+    o += "<script>" + pwScript + "<\/script>";
+  }
+  o += "<\/body><\/html>";
   return o;
 }
+

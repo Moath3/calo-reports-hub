@@ -224,6 +224,17 @@ function initSchema() {
   for (const idx of indexes) {
     try { wrapper._db.run(idx); } catch { /* ignore if exists */ }
   }
+
+  // Migrations — add columns that may not exist in older databases
+  const migrations = [
+    "ALTER TABLE reports ADD COLUMN visibility TEXT DEFAULT 'private'",
+  ];
+  for (const m of migrations) {
+    try { wrapper._db.run(m); } catch { /* column already exists, ignore */ }
+  }
+
+  // Index for visibility queries
+  try { wrapper._db.run('CREATE INDEX IF NOT EXISTS idx_reports_visibility ON reports(visibility)'); } catch {}
 }
 
 export function closeDb() {

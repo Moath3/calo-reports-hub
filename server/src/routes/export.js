@@ -27,10 +27,12 @@ router.post("/pdf", requireAuth, (req, res) => {
 router.post("/netlify", requireAuth, async (req, res) => {
   try {
     const { html, siteName, netlifyToken } = req.body;
-    if (!html || !netlifyToken) return res.status(400).json({ error: "html and netlifyToken required" });
+    const token = netlifyToken || process.env.NETLIFY_ACCESS_TOKEN;
+    if (!html) return res.status(400).json({ error: "html is required" });
+    if (!token) return res.status(400).json({ error: "Netlify token not configured. Set NETLIFY_ACCESS_TOKEN in server environment." });
     const slug = (siteName || "calo-report-" + Date.now()).toLowerCase().replace(/[^a-z0-9-]/g, "-").slice(0, 60);
     const sha1 = createHash("sha1").update(html).digest("hex");
-    const hdrs = { "Authorization": "Bearer " + netlifyToken, "Content-Type": "application/json" };
+    const hdrs = { "Authorization": "Bearer " + token, "Content-Type": "application/json" };
 
     const siteRes = await fetch("https://api.netlify.com/api/v1/sites", { method: "POST", headers: hdrs, body: JSON.stringify({ name: slug }) });
     if (!siteRes.ok) {
@@ -49,7 +51,7 @@ router.post("/netlify", requireAuth, async (req, res) => {
 
     const uploadRes = await fetch("https://api.netlify.com/api/v1/deploys/" + deploy.id + "/files/index.html", {
       method: "PUT",
-      headers: { "Authorization": "Bearer " + netlifyToken, "Content-Type": "application/octet-stream" },
+      headers: { "Authorization": "Bearer " + token, "Content-Type": "application/octet-stream" },
       body: html
     });
     if (!uploadRes.ok) {

@@ -230,9 +230,18 @@ class ApiClient {
   }
 
   async deployNetlify(html, siteName, netlifyToken) {
+    const payload = { html, siteName };
+    if (netlifyToken) payload.netlifyToken = netlifyToken;
     return this.request('/export/netlify', {
       method: 'POST',
-      body: JSON.stringify({ html, siteName, netlifyToken }),
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async toggleVisibility(id, visibility) {
+    return this.request(`/reports/${id}/visibility`, {
+      method: 'PATCH',
+      body: JSON.stringify({ visibility }),
     });
   }
 

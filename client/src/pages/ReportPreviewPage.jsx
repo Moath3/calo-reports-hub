@@ -5,7 +5,7 @@ import api from '../utils/api';
 import toast from 'react-hot-toast';
 import {
   ArrowLeft, Globe, Edit, Loader2, Copy,
-  FileDown, ExternalLink, CheckCircle, Printer, ImageDown, Lock, Shield
+  FileDown, ExternalLink, CheckCircle, Printer, ImageDown, Lock, Shield, Users, LockKeyhole
 } from 'lucide-react';
 
 function renderReportHTML(data, { collapsible = false } = {}) {
@@ -197,12 +197,16 @@ export default function ReportPreviewPage() {
   const [exportingImg, setExportingImg] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [netlifyUrl, setNetlifyUrl] = useState('');
+  const [visibility, setVisibility] = useState('private');
+  const [isOwner, setIsOwner] = useState(true);
 
   useEffect(() => {
     api.getReport(id)
       .then(res => {
         setReport(res.report);
         setNetlifyUrl(res.report.netlify_url || '');
+        setVisibility(res.report.visibility || 'private');
+        setIsOwner(res.report.is_owner !== false);
       })
       .catch(() => { toast.error('Report not found'); navigate('/reports'); })
       .finally(() => setLoading(false));
@@ -305,8 +309,6 @@ export default function ReportPreviewPage() {
   };
 
   const handlePublish = async () => {
-    const token = prompt('Enter your Netlify access token:');
-    if (!token?.trim()) return;
     // Always require access code for published reports (security)
     const accessCode = prompt('Set an access code to protect this report (required for CALO confidentiality):');
     if (!accessCode?.trim()) {
@@ -316,17 +318,10 @@ export default function ReportPreviewPage() {
     setPublishing(true);
     try {
       // Use server-side HTML builder with password protection
-      const res1 = await api.request('/export/html', {
-        method: 'POST',
-        body: JSON.stringify({
-          reportData: report.report_data,
-          title: report.title,
-          password: accessCode.trim()
-        })
-      });
+      const res1 = await api.exportHTML(report.report_data, null, report.title, accessCode.trim());
       const html = res1.html;
       const slug = (report.title || 'report').toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 30);
-      const res = await api.deployNetlify(html, slug, token.trim());
+      const res = await api.deployNetlify(html, slug);
       const url = res.url || res.netlifyUrl;
       if (url) {
         setNetlifyUrl(url);
@@ -337,6 +332,17 @@ export default function ReportPreviewPage() {
       toast.error(err.message || 'Publish failed');
     } finally {
       setPublishing(false);
+    }
+  };
+
+  const handleToggleVisibility = async () => {
+    const newVis = visibility === 'private' ? 'shared' : 'private';
+    try {
+      await api.toggleVisibility(id, newVis);
+      setVisibility(newVis);
+      toast.success(newVis === 'shared' ? 'Report shared with team' : 'Report set to private');
+    } catch (err) {
+      toast.error(err.message || 'Failed to update visibility');
     }
   };
 
@@ -353,7 +359,28 @@ export default function ReportPreviewPage() {
           <ArrowLeft className="h-5 w-5" />
         </button>
         <div className="flex-1 min-w-0">
-          <h1 className="text-xl font-bold text-gray-900 truncate">{report.title}</h1>
+          <div className="flex items-center gap-2">
+            <h1 className="text-xl font-bold text-gray-900 truncate">{report.title}</h1>
+            {isOwner && (
+              <button
+                onClick={handleToggleVisibility}
+                className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
+                  visibility === 'shared'
+                    ? 'bg-blue-100 text-blue-700 hover:bg-blue-200'
+                    : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+                }`}
+                title={visibility === 'shared' ? 'Shared with team — click to make private' : 'Private — click to share with team'}
+              >
+                {visibility === 'shared' ? <Users className="h-3 w-3" /> : <LockKeyhole className="h-3 w-3" />}
+                {visibility === 'shared' ? 'Shared' : 'Private'}
+              </button>
+            )}
+            {!isOwner && (
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-blue-50 text-blue-600">
+                <Users className="h-3 w-3" /> Shared by {report.author_name}
+              </span>
+            )}
+          </div>
           <p className="text-sm text-gray-500">Preview & Export</p>
         </div>
         <div className="flex items-center gap-2 shrink-0 flex-wrap">

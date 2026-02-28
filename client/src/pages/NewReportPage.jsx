@@ -1,11 +1,11 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useDropzone } from 'react-dropzone';
 import api from '../utils/api';
 import toast from 'react-hot-toast';
 import {
   Upload, FileSpreadsheet, Brain, Loader2, Sparkles,
-  ChevronRight, X, FileText, Settings2
+  ChevronRight, X, FileText, Settings2, LayoutTemplate
 } from 'lucide-react';
 
 export default function NewReportPage() {
@@ -19,6 +19,8 @@ export default function NewReportPage() {
   const [customPrompt, setCustomPrompt] = useState('');
   const [providers, setProviders] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [templates, setTemplates] = useState([]);
+  const [selectedTemplateId, setSelectedTemplateId] = useState('');
 
   const onDrop = useCallback(async (accepted) => {
     if (!accepted.length) return;
@@ -29,11 +31,15 @@ export default function NewReportPage() {
       const res = await api.uploadFile(f);
       setDataSummary(res.parsedData || res.summary);
       setTitle(f.name.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' '));
-      // Fetch available providers
+      // Fetch available providers and templates
       try {
         const pRes = await api.getProviders();
         setProviders(pRes.providers || []);
         if (pRes.providers?.length) setProvider(pRes.providers[0].id);
+      } catch { /* ignore */ }
+      try {
+        const tRes = await api.getTemplates();
+        setTemplates(tRes.templates || []);
       } catch { /* ignore */ }
       setStep(2);
       toast.success('File processed successfully');
@@ -65,7 +71,7 @@ export default function NewReportPage() {
     setStep(3);
     setLoading(true);
     try {
-      const res = await api.analyzeData(dataSummary, provider, customPrompt || undefined);
+      const res = await api.analyzeData(dataSummary, provider, customPrompt || undefined, selectedTemplateId || undefined);
       // Create report with AI-generated data
       const aiReport = res.reportData || res.report || {};
       const createRes = await api.createReport({
@@ -244,6 +250,25 @@ export default function NewReportPage() {
                 )}
               </select>
             </div>
+
+            {templates.length > 0 && (
+              <div>
+                <label className="label">Report Template</label>
+                <select
+                  className="input-field"
+                  value={selectedTemplateId}
+                  onChange={e => setSelectedTemplateId(e.target.value)}
+                >
+                  <option value="">None — AI decides structure</option>
+                  {templates.map(t => (
+                    <option key={t.id} value={t.id}>
+                      {t.name} ({t.category || 'general'})
+                    </option>
+                  ))}
+                </select>
+                <p className="text-xs text-gray-400 mt-1">Select a template to guide the AI's report structure</p>
+              </div>
+            )}
 
             <div>
               <label className="label">Custom Instructions (optional)</label>

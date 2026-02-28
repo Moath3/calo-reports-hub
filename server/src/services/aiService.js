@@ -56,7 +56,7 @@ async function callClaude(systemPrompt, userMessage, options = {}) {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
       body: JSON.stringify({
-        model: options.model || "claude-sonnet-4-5-20241022",
+        model: options.model || "claude-sonnet-4-5-20250929",
         max_tokens: options.maxTokens || 8192,
         system: systemPrompt,
         messages: [{ role: "user", content: userMessage }]
@@ -103,9 +103,9 @@ export async function callAI(provider, systemPrompt, userMessage, options = {}) 
   }
 }
 
-export function buildReportSystemPrompt(dataSummary) {
+export function buildReportSystemPrompt(dataSummary, templateData) {
   const today = new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
-  return "You are CALO Report AI, an expert data analyst. Analyze the data and produce a professional report.\n\n" +
+  let prompt = "You are CALO Report AI, an expert data analyst. Analyze the data and produce a professional report.\n\n" +
     "Return ONLY valid JSON (no markdown, no code blocks):\n" +
     "{ \"title\": \"Report Title\", \"subtitle\": \"Subtitle\", \"reportDate\": \"" + today + "\", \"brandColor\": \"#22c55e\",\n" +
     "  \"kpis\": [{ \"label\": \"Name\", \"value\": \"123\", \"unit\": \"opt\", \"trend\": \"up|down|stable\" }],\n" +
@@ -121,10 +121,26 @@ export function buildReportSystemPrompt(dataSummary) {
     "7. callout: {\"type\":\"callout\",\"title\":\"T\",\"value\":\"V\",\"icon\":\"emoji\"}\n" +
     "8. chart: {\"type\":\"chart\",\"chartType\":\"bar|line|pie|doughnut\",\"title\":\"T\",\"labels\":[\"A\"],\"datasets\":[{\"label\":\"S\",\"data\":[10]}]}\n" +
     "9. link: {\"type\":\"link\",\"text\":\"Link text\",\"url\":\"https://...\",\"description\":\"optional desc\"}\n" +
-    "10. image: {\"type\":\"image\",\"url\":\"image-url\",\"caption\":\"optional caption\"}\n\n" +
-    "GUIDELINES:\n- Identify 4-6 KPIs\n- Create 4-8 sections\n- Use charts for numerical data\n- Use comparisons for paired data\n" +
-    "- Write insightful analysis\n- Generate 3-5 actionable insights\n- ALL values as strings\n\n" +
-    "DATA:\n" + JSON.stringify(dataSummary, null, 2);
+    "10. image: {\"type\":\"image\",\"url\":\"image-url\",\"caption\":\"optional caption\"}\n\n";
+
+  if (templateData) {
+    prompt += "TEMPLATE STRUCTURE (USE THIS AS YOUR GUIDE):\n" +
+      "You MUST follow this template's structure closely. " +
+      "Keep the same section titles, section order, icons, block types, and field layout. " +
+      "Replace ALL placeholder values (\"0\", empty strings, placeholder text like \"Add ... here\") with REAL data from the analysis below. " +
+      "If the data contains information that fits a template section, populate it fully with actual numbers, names, and insights. " +
+      "If the data does not contain information for a section, provide reasonable analysis or mark values as \"N/A\". " +
+      "You MAY add 1-2 extra sections if the data contains important information not covered by the template. " +
+      "Preserve the template's KPI strip labels and structure, updating only the values and trends based on real data.\n" +
+      "ALL values MUST be strings (even numbers: \"1234\" not 1234).\n\n" +
+      "TEMPLATE JSON:\n" + JSON.stringify(templateData, null, 2) + "\n\n";
+  } else {
+    prompt += "GUIDELINES:\n- Identify 4-6 KPIs\n- Create 4-8 sections\n- Use charts for numerical data\n- Use comparisons for paired data\n" +
+      "- Write insightful analysis\n- Generate 3-5 actionable insights\n- ALL values as strings\n\n";
+  }
+
+  prompt += "DATA:\n" + JSON.stringify(dataSummary, null, 2);
+  return prompt;
 }
 
 export function buildChatSystemPrompt(reportContext) {

@@ -8,10 +8,24 @@ const router = Router();
 // POST /analyze
 router.post("/analyze", requireAuth, async (req, res) => {
   try {
-    const { dataSummary, provider, customPrompt } = req.body;
+    const { dataSummary, provider, customPrompt, templateId } = req.body;
     if (!dataSummary) return res.status(400).json({ error: "dataSummary is required" });
 
-    const systemPrompt = buildReportSystemPrompt(dataSummary);
+    // Fetch template data if a template was selected
+    let templateData = null;
+    if (templateId) {
+      try {
+        const db = getDb();
+        const tmpl = db.prepare("SELECT template_data FROM templates WHERE id = ?").get(templateId);
+        if (tmpl && tmpl.template_data) {
+          templateData = JSON.parse(tmpl.template_data);
+        }
+      } catch (e) {
+        console.error("Template fetch error:", e.message);
+      }
+    }
+
+    const systemPrompt = buildReportSystemPrompt(dataSummary, templateData);
     let userMessage = "Please analyze this data and generate a comprehensive report. Return ONLY valid JSON.";
     if (customPrompt) userMessage += "\n\nAdditional instructions: " + customPrompt;
 

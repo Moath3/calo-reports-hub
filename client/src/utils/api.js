@@ -110,10 +110,12 @@ class ApiClient {
   }
 
   // AI
-  async analyzeData(dataSummary, provider, customPrompt) {
+  async analyzeData(dataSummary, provider, customPrompt, templateId) {
+    const payload = { dataSummary, provider, customPrompt };
+    if (templateId) payload.templateId = templateId;
     return this.request('/ai/analyze', {
       method: 'POST',
-      body: JSON.stringify({ dataSummary, provider, customPrompt }),
+      body: JSON.stringify(payload),
     });
   }
 

@@ -159,7 +159,7 @@ function renderReportHTML(data, { collapsible = false } = {}) {
     </div>
     ${kpiCards ? `<div class="kpi-grid">${kpiCards}</div>` : ''}
     ${sections.map(s => `<div class="sec">
-      <div class="sec-hdr${collapsible ? '' : ''}">
+      <div class="sec-hdr">
         <div class="sec-icon">${s.icon || '📊'}</div>
         <div class="sec-title">${s.title || ''}</div>
       </div>
@@ -316,7 +316,7 @@ export default function ReportPreviewPage() {
     setPublishing(true);
     try {
       // Use server-side HTML builder with password protection
-      const res1 = await api.request('/api/export/html', {
+      const res1 = await api.request('/export/html', {
         method: 'POST',
         body: JSON.stringify({
           reportData: report.report_data,
@@ -403,7 +403,7 @@ export default function ReportPreviewPage() {
           ref={iframeRef}
           className="w-full h-full border-0"
           title="Report Preview"
-          sandbox="allow-same-origin allow-modals"
+          sandbox="allow-same-origin allow-modals allow-scripts"
         />
       </div>
     </div>

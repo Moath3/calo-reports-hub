@@ -211,10 +211,12 @@ class ApiClient {
   }
 
   // Export
-  async exportHTML(reportData, brandColor, title) {
+  async exportHTML(reportData, brandColor, title, password) {
+    const payload = { reportData, brandColor, title };
+    if (password) payload.password = password;
     return this.request('/export/html', {
       method: 'POST',
-      body: JSON.stringify({ reportData, brandColor, title }),
+      body: JSON.stringify(payload),
     });
   }
 

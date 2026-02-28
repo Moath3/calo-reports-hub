@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "intercept",
-            "command": "bash -c \"FILE=$(echo \\\"$TOOL_INPUT\\\" | grep -oP '\\\"file_path\\\":\\s*\\\"\\K[^\\\"]+' || echo \\\"$TOOL_INPUT\\\" | grep -oP '\\\"filePath\\\":\\s*\\\"\\K[^\\\"]+' || echo ''); [[ \\\"$FILE\\\" =~ (\\.env|\\.db$|credentials|secrets\\.|\\.key$) ]] && echo 'BLOCK: Cannot edit sensitive files (.env, .db, credentials, secrets, .key)' && exit 1 || exit 0\""
+            "command": "node -e \"const t=process.env.TOOL_INPUT||'{}';try{const o=JSON.parse(t);const f=o.file_path||o.filePath||'';if(/(\\.env|\\.db$|credentials|secrets\\.|\\.key$)/.test(f)){console.log('BLOCK: Cannot edit sensitive files (.env, .db, credentials, secrets, .key)');process.exit(1)}}catch(e){}\""
           }
         ]
       }
@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash -c \"FILE=$(echo \\\"$TOOL_INPUT\\\" | grep -oP '\\\"file_path\\\":\\s*\\\"\\K[^\\\"]+' || echo \\\"$TOOL_INPUT\\\" | grep -oP '\\\"filePath\\\":\\s*\\\"\\K[^\\\"]+' || echo ''); [[ \\\"$FILE\\\" =~ \\\\.(js|jsx|ts|tsx|json|css|md)$ ]] && npx prettier --write \\\"$FILE\\\" 2>/dev/null; exit 0\""
+            "command": "node -e \"const t=process.env.TOOL_INPUT||'{}';try{const o=JSON.parse(t);const f=o.file_path||o.filePath||'';if(/\\.(js|jsx|ts|tsx|json|css|md)$/.test(f)){require('child_process').execSync('npx prettier --write '+JSON.stringify(f),{stdio:'ignore'})};}catch(e){}\""
           }
         ]
       }

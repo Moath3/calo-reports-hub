@@ -33,17 +33,28 @@ router.post("/netlify", requireAuth, async (req, res) => {
     const hdrs = { "Authorization": "Bearer " + netlifyToken, "Content-Type": "application/json" };
 
     const siteRes = await fetch("https://api.netlify.com/api/v1/sites", { method: "POST", headers: hdrs, body: JSON.stringify({ name: slug }) });
+    if (!siteRes.ok) {
+      const err = await siteRes.json().catch(() => ({}));
+      throw new Error("Netlify site creation failed: " + (err.message || err.error || siteRes.statusText));
+    }
     const site = await siteRes.json();
     const siteId = site.id || site.site_id;
 
     const deployRes = await fetch("https://api.netlify.com/api/v1/sites/" + siteId + "/deploys", { method: "POST", headers: hdrs, body: JSON.stringify({ files: { "/index.html": sha1 } }) });
+    if (!deployRes.ok) {
+      const err = await deployRes.json().catch(() => ({}));
+      throw new Error("Netlify deploy creation failed: " + (err.message || err.error || deployRes.statusText));
+    }
     const deploy = await deployRes.json();
 
-    await fetch("https://api.netlify.com/api/v1/deploys/" + deploy.id + "/files/index.html", {
+    const uploadRes = await fetch("https://api.netlify.com/api/v1/deploys/" + deploy.id + "/files/index.html", {
       method: "PUT",
       headers: { "Authorization": "Bearer " + netlifyToken, "Content-Type": "application/octet-stream" },
       body: html
     });
+    if (!uploadRes.ok) {
+      throw new Error("Netlify file upload failed: " + uploadRes.statusText);
+    }
 
     res.json({ url: "https://" + slug + ".netlify.app", siteId, deployId: deploy.id });
   } catch (err) {

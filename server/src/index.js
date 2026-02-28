@@ -145,7 +145,7 @@ if (existsSync(clientDist)) {
 app.use((err, req, res, next) => {
   console.error('[Error]', err.message);
   if (err.type === 'entity.too.large') {
-    return res.status(413).json({ error: 'File too large. Maximum size is 25MB.' });
+    return res.status(413).json({ error: 'File too large. Maximum size is 50MB.' });
   }
   res.status(err.status || 500).json({
     error: process.env.NODE_ENV === 'production'

@@ -6,7 +6,8 @@ import { seedDefaultTemplates, seedAdminUser } from './seedTemplates.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-const DATA_DIR = join(__dirname, '..', '..', 'data');
+// Use DB_DIR env var for persistent storage (Render Disk), fallback to local for dev
+const DATA_DIR = process.env.DB_DIR || join(__dirname, '..', '..', 'data');
 const DB_PATH = join(DATA_DIR, 'calo-reports.db');
 
 let wrapper = null;

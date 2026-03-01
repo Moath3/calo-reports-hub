@@ -2,9 +2,13 @@ services:
   - type: web
     name: calo-reports
     runtime: node
-    plan: free
+    plan: starter
     buildCommand: npm run render:build
     startCommand: npm start
+    disk:
+      name: calo-data
+      mountPath: /data
+      sizeGB: 1
     envVars:
       - key: NODE_ENV
         value: production
@@ -12,6 +16,8 @@ services:
         generateValue: true
       - key: COMPANY_REG_CODE
         value: CALO2026
+      - key: DB_DIR
+        value: /data
       - key: GEMINI_API_KEY
         sync: false
       - key: CLAUDE_API_KEY
@@ -20,3 +26,5 @@ services:
         sync: false
       - key: DEFAULT_AI_PROVIDER
         value: gemini
+      - key: NETLIFY_ACCESS_TOKEN
+        sync: false

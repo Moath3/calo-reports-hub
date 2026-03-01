@@ -228,6 +228,7 @@ function initSchema() {
   // Migrations — add columns that may not exist in older databases
   const migrations = [
     "ALTER TABLE reports ADD COLUMN visibility TEXT DEFAULT 'private'",
+    "ALTER TABLE reports ADD COLUMN netlify_site_id TEXT",
   ];
   for (const m of migrations) {
     try { wrapper._db.run(m); } catch { /* column already exists, ignore */ }

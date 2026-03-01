@@ -229,9 +229,9 @@ class ApiClient {
     });
   }
 
-  async deployNetlify(html, siteName, netlifyToken) {
+  async deployNetlify(html, siteName, reportId) {
     const payload = { html, siteName };
-    if (netlifyToken) payload.netlifyToken = netlifyToken;
+    if (reportId) payload.reportId = reportId;
     return this.request('/export/netlify', {
       method: 'POST',
       body: JSON.stringify(payload),

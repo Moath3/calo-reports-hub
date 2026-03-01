@@ -316,20 +316,19 @@ export default function ReportPreviewPage() {
     setPublishing(true);
     try {
       // Build HTML with optional password protection
-      const exportOpts = accessCode.trim()
-        ? { reportData: report.report_data, brandColor: null, title: report.title, password: accessCode.trim() }
-        : { reportData: report.report_data, brandColor: null, title: report.title };
-      const res1 = await api.exportHTML(exportOpts.reportData, exportOpts.brandColor, exportOpts.title, exportOpts.password);
+      const password = accessCode.trim() || undefined;
+      const res1 = await api.exportHTML(report.report_data, null, report.title, password);
       const html = res1.html;
       const slug = (report.title || 'report').toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 30);
-      const res = await api.deployNetlify(html, slug);
+      // Pass reportId so backend reuses existing Netlify site on republish
+      const res = await api.deployNetlify(html, slug, id);
       const url = res.url || res.netlifyUrl;
       if (url) {
         setNetlifyUrl(url);
-        await api.updateReport(id, { netlifyUrl: url, status: 'published' });
+        setStatus('published');
         setShowPublishPanel(false);
         setAccessCode('');
-        toast.success(accessCode.trim() ? 'Published with password protection!' : 'Published successfully!');
+        toast.success(password ? 'Published with password protection!' : 'Published successfully!');
       }
     } catch (err) {
       toast.error(err.message || 'Publish failed');

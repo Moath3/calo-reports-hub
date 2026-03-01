@@ -5,7 +5,7 @@ import api from '../utils/api';
 import toast from 'react-hot-toast';
 import {
   ArrowLeft, Globe, Edit, Loader2, Copy,
-  FileDown, ExternalLink, CheckCircle, Printer, ImageDown, Lock, Shield, Users, LockKeyhole
+  FileDown, ExternalLink, CheckCircle, CheckCircle2, Printer, ImageDown, Lock, Shield, Users, LockKeyhole, CircleDot
 } from 'lucide-react';
 
 function renderReportHTML(data, { collapsible = false } = {}) {
@@ -197,8 +197,11 @@ export default function ReportPreviewPage() {
   const [exportingImg, setExportingImg] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [netlifyUrl, setNetlifyUrl] = useState('');
+  const [showPublishPanel, setShowPublishPanel] = useState(false);
+  const [accessCode, setAccessCode] = useState('');
   const [visibility, setVisibility] = useState('private');
   const [isOwner, setIsOwner] = useState(true);
+  const [status, setStatus] = useState('draft');
 
   useEffect(() => {
     api.getReport(id)
@@ -207,6 +210,7 @@ export default function ReportPreviewPage() {
         setNetlifyUrl(res.report.netlify_url || '');
         setVisibility(res.report.visibility || 'private');
         setIsOwner(res.report.is_owner !== false);
+        setStatus(res.report.status || 'draft');
       })
       .catch(() => { toast.error('Report not found'); navigate('/reports'); })
       .finally(() => setLoading(false));
@@ -309,16 +313,13 @@ export default function ReportPreviewPage() {
   };
 
   const handlePublish = async () => {
-    // Always require access code for published reports (security)
-    const accessCode = prompt('Set an access code to protect this report (required for CALO confidentiality):');
-    if (!accessCode?.trim()) {
-      toast.error('Access code is required to publish. Reports must be protected.');
-      return;
-    }
     setPublishing(true);
     try {
-      // Use server-side HTML builder with password protection
-      const res1 = await api.exportHTML(report.report_data, null, report.title, accessCode.trim());
+      // Build HTML with optional password protection
+      const exportOpts = accessCode.trim()
+        ? { reportData: report.report_data, brandColor: null, title: report.title, password: accessCode.trim() }
+        : { reportData: report.report_data, brandColor: null, title: report.title };
+      const res1 = await api.exportHTML(exportOpts.reportData, exportOpts.brandColor, exportOpts.title, exportOpts.password);
       const html = res1.html;
       const slug = (report.title || 'report').toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 30);
       const res = await api.deployNetlify(html, slug);
@@ -326,12 +327,24 @@ export default function ReportPreviewPage() {
       if (url) {
         setNetlifyUrl(url);
         await api.updateReport(id, { netlifyUrl: url, status: 'published' });
-        toast.success('Published with password protection!');
+        setShowPublishPanel(false);
+        setAccessCode('');
+        toast.success(accessCode.trim() ? 'Published with password protection!' : 'Published successfully!');
       }
     } catch (err) {
       toast.error(err.message || 'Publish failed');
     } finally {
       setPublishing(false);
+    }
+  };
+
+  const handleStatusChange = async (newStatus) => {
+    try {
+      await api.updateReportStatus(id, newStatus);
+      setStatus(newStatus);
+      toast.success(`Report marked as ${newStatus}`);
+    } catch (err) {
+      toast.error(err.message || 'Failed to update status');
     }
   };
 
@@ -381,9 +394,31 @@ export default function ReportPreviewPage() {
               </span>
             )}
           </div>
-          <p className="text-sm text-gray-500">Preview & Export</p>
+          <div className="flex items-center gap-2 mt-1">
+            <p className="text-sm text-gray-500">Preview & Export</p>
+            {isOwner && (
+              <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${
+                status === 'done' ? 'bg-blue-100 text-blue-700' :
+                status === 'published' ? 'bg-green-100 text-green-700' :
+                status === 'archived' ? 'bg-gray-100 text-gray-600' :
+                'bg-amber-100 text-amber-700'
+              }`}>
+                <CircleDot className="h-3 w-3" /> {status}
+              </span>
+            )}
+          </div>
         </div>
         <div className="flex items-center gap-2 shrink-0 flex-wrap">
+          {isOwner && status !== 'done' && status !== 'published' && (
+            <button onClick={() => handleStatusChange('done')} className="btn-secondary flex items-center gap-2 text-sm text-blue-600 border-blue-200 hover:bg-blue-50">
+              <CheckCircle2 className="h-4 w-4" /> Mark Done
+            </button>
+          )}
+          {isOwner && status === 'done' && (
+            <button onClick={() => handleStatusChange('draft')} className="btn-secondary flex items-center gap-2 text-sm text-gray-500">
+              <CircleDot className="h-4 w-4" /> Back to Draft
+            </button>
+          )}
           <button onClick={() => navigate(`/reports/${id}`)} className="btn-secondary flex items-center gap-2 text-sm">
             <Edit className="h-4 w-4" /> Edit
           </button>
@@ -399,11 +434,40 @@ export default function ReportPreviewPage() {
           <button onClick={handleExportHTML} disabled={exporting} className="btn-secondary flex items-center gap-2 text-sm">
             {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileDown className="h-4 w-4" />} HTML
           </button>
-          <button onClick={handlePublish} disabled={publishing} className="btn-primary flex items-center gap-2 text-sm">
-            {publishing ? <Loader2 className="h-4 w-4 animate-spin" /> : <><Lock className="h-4 w-4" /><Globe className="h-4 w-4 -ml-1" /></>} Publish
+          <button onClick={() => setShowPublishPanel(!showPublishPanel)} disabled={publishing} className="btn-primary flex items-center gap-2 text-sm">
+            {publishing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Globe className="h-4 w-4" />} Publish
           </button>
         </div>
       </div>
+
+      {/* Publish Panel */}
+      {showPublishPanel && (
+        <div className="card p-4 border-blue-200 bg-blue-50/50 space-y-3">
+          <div className="flex items-center justify-between">
+            <h3 className="font-semibold text-gray-900 flex items-center gap-2">
+              <Globe className="h-4 w-4 text-blue-600" /> Publish to Netlify
+            </h3>
+            <button onClick={() => setShowPublishPanel(false)} className="text-gray-400 hover:text-gray-600 text-sm">✕</button>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Access Code <span className="text-gray-400 font-normal">(optional — leave empty for no password)</span>
+            </label>
+            <input
+              type="text"
+              className="input-field"
+              placeholder="e.g. calo2026"
+              value={accessCode}
+              onChange={e => setAccessCode(e.target.value)}
+            />
+            <p className="text-xs text-gray-500 mt-1">If set, viewers must enter this code to see the report.</p>
+          </div>
+          <button onClick={handlePublish} disabled={publishing} className="btn-primary flex items-center gap-2">
+            {publishing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Globe className="h-4 w-4" />}
+            {publishing ? 'Publishing...' : accessCode.trim() ? 'Publish with Password' : 'Publish Now'}
+          </button>
+        </div>
+      )}
 
       {/* Published URL */}
       {netlifyUrl && (

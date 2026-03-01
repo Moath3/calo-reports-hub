@@ -155,7 +155,7 @@ router.delete("/:id", requireAuth, (req, res) => {
 router.patch("/:id/status", requireAuth, (req, res) => {
   try {
     const { status } = req.body;
-    if (!["draft", "published", "archived"].includes(status)) return res.status(400).json({ error: "Invalid status" });
+    if (!["draft", "done", "published", "archived"].includes(status)) return res.status(400).json({ error: "Invalid status" });
 
     const db = getDb();
     const report = db.prepare("SELECT user_id FROM reports WHERE id = ?").get(req.params.id);

@@ -11,6 +11,7 @@ import {
 const statusOpts = [
   { value: 'all', label: 'All' },
   { value: 'draft', label: 'Drafts' },
+  { value: 'done', label: 'Done' },
   { value: 'published', label: 'Published' },
   { value: 'archived', label: 'Archived' },
 ];
@@ -76,7 +77,7 @@ export default function ReportsListPage() {
   };
 
   const statusBadge = (s) => {
-    const m = { draft: 'badge-amber', published: 'badge-green', archived: 'badge-gray' };
+    const m = { draft: 'badge-amber', done: 'badge-blue', published: 'badge-green', archived: 'badge-gray' };
     return m[s] || 'badge-gray';
   };
 

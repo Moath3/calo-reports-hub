@@ -418,6 +418,39 @@ export default function ReportEditorPage() {
 
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [aiChat]);
 
+  // Auto-save: debounce 2 seconds after any change to report data
+  const autoSaveTimer = useRef(null);
+  const lastSavedRef = useRef(null);
+  const [autoSaveStatus, setAutoSaveStatus] = useState(''); // '', 'saving', 'saved'
+
+  useEffect(() => {
+    if (!report || loading) return;
+    // Skip if report hasn't changed from what we loaded/saved
+    const currentData = JSON.stringify({ title: report.title, description: report.description, report_data: report.report_data });
+    if (lastSavedRef.current === currentData) return;
+    // First load — set initial snapshot, don't save
+    if (lastSavedRef.current === null) {
+      lastSavedRef.current = currentData;
+      return;
+    }
+
+    setAutoSaveStatus('');
+    if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
+    autoSaveTimer.current = setTimeout(async () => {
+      try {
+        setAutoSaveStatus('saving');
+        await api.updateReport(id, { title: report.title, description: report.description, reportData: report.report_data });
+        lastSavedRef.current = currentData;
+        setAutoSaveStatus('saved');
+        setTimeout(() => setAutoSaveStatus(prev => prev === 'saved' ? '' : prev), 2000);
+      } catch {
+        setAutoSaveStatus('');
+      }
+    }, 2000);
+
+    return () => { if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current); };
+  }, [report?.title, report?.description, report?.report_data, id, loading]);
+
   const reportData = report?.report_data || { generalInfo: {}, sections: [] };
   const sections = reportData.sections || [];
 
@@ -481,6 +514,7 @@ export default function ReportEditorPage() {
     setSaving(true);
     try {
       await api.updateReport(id, { title: report.title, description: report.description, reportData: report.report_data });
+      lastSavedRef.current = JSON.stringify({ title: report.title, description: report.description, report_data: report.report_data });
       toast.success('Saved!');
     } catch (err) { toast.error(err.message || 'Save failed'); }
     finally { setSaving(false); }
@@ -595,6 +629,12 @@ export default function ReportEditorPage() {
             value={report.description || ''} onChange={e => setReport(prev => ({ ...prev, description: e.target.value }))} placeholder="Description..." />
         </div>
         <div className="flex items-center gap-2 shrink-0">
+          {autoSaveStatus === 'saving' && (
+            <span className="text-xs text-gray-400 flex items-center gap-1"><Loader2 className="h-3 w-3 animate-spin" /> Saving...</span>
+          )}
+          {autoSaveStatus === 'saved' && (
+            <span className="text-xs text-green-500 flex items-center gap-1"><CheckCircle2 className="h-3 w-3" /> Saved</span>
+          )}
           <button onClick={() => navigate(`/reports/${id}/preview`)} className="btn-secondary flex items-center gap-2"><Eye className="h-4 w-4" /> Preview</button>
           <button onClick={handleSave} disabled={saving} className="btn-primary flex items-center gap-2">
             {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} Save

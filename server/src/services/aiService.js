@@ -181,6 +181,8 @@ RULES:
 - If the user just asks a question or wants advice, set "updates" to null and answer in "message"
 - If the user provides data (file content, pasted text, numbers), analyze it and populate "updates" with appropriate report content
 - When updating sections, use null in the array for sections you are NOT changing
+- When the report has no sections yet and the user asks to generate content, create complete sections with title and blocks in the "sections" array
+- Each section must have a "title" string and a "blocks" array with at least one block
 - The "message" field should NEVER contain JSON or code — always natural language
 - ALL field values must be strings (even numbers: "1234" not 1234)
 - Return ONLY the JSON object, no markdown code blocks or extra text

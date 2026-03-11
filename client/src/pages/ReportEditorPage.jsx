@@ -535,7 +535,15 @@ export default function ReportEditorPage() {
 
       updateData(rd => {
         if (updates.generalInfo) rd.generalInfo = { ...rd.generalInfo, ...updates.generalInfo };
-        if (updates.sections) updates.sections.forEach((su, i) => { if (su && rd.sections[i]) rd.sections[i] = { ...rd.sections[i], ...su }; });
+        if (updates.sections) {
+          const newSections = [...rd.sections];
+          updates.sections.forEach((su, i) => {
+            if (su) {
+              newSections[i] = newSections[i] ? { ...newSections[i], ...su } : su;
+            }
+          });
+          rd.sections = newSections;
+        }
       });
       toast.success(`Updated: ${parts.join(', ') || 'Report data'}`);
     }

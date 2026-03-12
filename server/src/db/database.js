@@ -230,6 +230,7 @@ function initSchema() {
   const migrations = [
     "ALTER TABLE reports ADD COLUMN visibility TEXT DEFAULT 'private'",
     "ALTER TABLE reports ADD COLUMN netlify_site_id TEXT",
+    "ALTER TABLE reports ADD COLUMN shared_with TEXT DEFAULT '[]'",
   ];
   for (const m of migrations) {
     try { wrapper._db.run(m); } catch { /* column already exists, ignore */ }

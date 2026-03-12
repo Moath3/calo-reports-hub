@@ -245,6 +245,18 @@ class ApiClient {
     });
   }
 
+
+  async shareReport(id, { visibility, sharedWith }) {
+    return this.request(`/reports/${id}/share`, {
+      method: 'PATCH',
+      body: JSON.stringify({ visibility, sharedWith }),
+    });
+  }
+
+  async getUsersForShare() {
+    return this.request('/auth/users-for-share');
+  }
+
   // Dashboard
   async getDashboardStats() {
     return this.request('/dashboard/stats');

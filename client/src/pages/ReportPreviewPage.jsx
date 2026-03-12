@@ -5,7 +5,7 @@ import api from '../utils/api';
 import toast from 'react-hot-toast';
 import {
   ArrowLeft, Globe, Edit, Loader2, Copy,
-  FileDown, ExternalLink, CheckCircle, CheckCircle2, Printer, ImageDown, Lock, Shield, Users, LockKeyhole, CircleDot
+  FileDown, ExternalLink, CheckCircle, CheckCircle2, Printer, ImageDown, Lock, Shield, Users, LockKeyhole, CircleDot, Share2, Search, UserCheck, X
 } from 'lucide-react';
 
 function renderReportHTML(data, { collapsible = false } = {}) {
@@ -202,6 +202,12 @@ export default function ReportPreviewPage() {
   const [visibility, setVisibility] = useState('private');
   const [isOwner, setIsOwner] = useState(true);
   const [status, setStatus] = useState('draft');
+  const [showSharePanel, setShowSharePanel] = useState(false);
+  const [shareUsers, setShareUsers] = useState([]);
+  const [selectedUsers, setSelectedUsers] = useState([]);
+  const [shareSearch, setShareSearch] = useState('');
+  const [shareLoading, setShareLoading] = useState(false);
+  const [shareAll, setShareAll] = useState(false);
 
   useEffect(() => {
     api.getReport(id)
@@ -211,6 +217,9 @@ export default function ReportPreviewPage() {
         setVisibility(res.report.visibility || 'private');
         setIsOwner(res.report.is_owner !== false);
         setStatus(res.report.status || 'draft');
+        const sw = res.report.shared_with || [];
+        setSelectedUsers(Array.isArray(sw) ? sw : []);
+        setShareAll(res.report.visibility === 'shared');
       })
       .catch(() => { toast.error('Report not found'); navigate('/reports'); })
       .finally(() => setLoading(false));
@@ -347,16 +356,46 @@ export default function ReportPreviewPage() {
     }
   };
 
-  const handleToggleVisibility = async () => {
-    const newVis = visibility === 'private' ? 'shared' : 'private';
-    try {
-      await api.toggleVisibility(id, newVis);
-      setVisibility(newVis);
-      toast.success(newVis === 'shared' ? 'Report shared with team' : 'Report set to private');
-    } catch (err) {
-      toast.error(err.message || 'Failed to update visibility');
+  const handleOpenSharePanel = async () => {
+    setShowSharePanel(!showSharePanel);
+    if (!showSharePanel && shareUsers.length === 0) {
+      try {
+        const res = await api.getUsersForShare();
+        setShareUsers(res.users || []);
+      } catch (err) {
+        console.error('Failed to load users:', err);
+      }
     }
   };
+
+  const handleShareSave = async () => {
+    setShareLoading(true);
+    try {
+      let newVis, sw;
+      if (shareAll) { newVis = 'shared'; sw = []; }
+      else if (selectedUsers.length > 0) { newVis = 'specific'; sw = selectedUsers; }
+      else { newVis = 'private'; sw = []; }
+      const res = await api.shareReport(id, { visibility: newVis, sharedWith: sw });
+      setVisibility(res.visibility);
+      setSelectedUsers(res.sharedWith || []);
+      setShowSharePanel(false);
+      if (newVis === 'shared') toast.success('Shared with all team members');
+      else if (newVis === 'specific') toast.success('Shared with ' + selectedUsers.length + ' user(s)');
+      else toast.success('Report set to private');
+    } catch (err) {
+      toast.error(err.message || 'Failed to update sharing');
+    } finally {
+      setShareLoading(false);
+    }
+  };
+
+  const toggleUserSelection = (userId) => {
+    setSelectedUsers(prev => prev.includes(userId) ? prev.filter(x => x !== userId) : [...prev, userId]);
+  };
+
+  const filteredShareUsers = shareUsers.filter(u =>
+    !shareSearch || u.name.toLowerCase().includes(shareSearch.toLowerCase()) || u.email.toLowerCase().includes(shareSearch.toLowerCase())
+  );
 
   if (loading) {
     return <div className="flex items-center justify-center h-64"><Loader2 className="h-8 w-8 animate-spin text-green-600" /></div>;
@@ -374,18 +413,14 @@ export default function ReportPreviewPage() {
           <div className="flex items-center gap-2">
             <h1 className="text-xl font-bold text-gray-900 truncate">{report.title}</h1>
             {isOwner && (
-              <button
-                onClick={handleToggleVisibility}
-                className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
-                  visibility === 'shared'
-                    ? 'bg-blue-100 text-blue-700 hover:bg-blue-200'
-                    : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
-                }`}
-                title={visibility === 'shared' ? 'Shared with team — click to make private' : 'Private — click to share with team'}
-              >
-                {visibility === 'shared' ? <Users className="h-3 w-3" /> : <LockKeyhole className="h-3 w-3" />}
-                {visibility === 'shared' ? 'Shared' : 'Private'}
-              </button>
+              <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium ${
+                visibility === 'shared' ? 'bg-blue-100 text-blue-700' :
+                visibility === 'specific' ? 'bg-purple-100 text-purple-700' :
+                'bg-gray-100 text-gray-500'
+              }`}>
+                {visibility === 'shared' ? <Users className="h-3 w-3" /> : visibility === 'specific' ? <UserCheck className="h-3 w-3" /> : <LockKeyhole className="h-3 w-3" />}
+                {visibility === 'shared' ? 'Team' : visibility === 'specific' ? selectedUsers.length + ' users' : 'Private'}
+              </span>
             )}
             {!isOwner && (
               <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-blue-50 text-blue-600">
@@ -433,11 +468,109 @@ export default function ReportPreviewPage() {
           <button onClick={handleExportHTML} disabled={exporting} className="btn-secondary flex items-center gap-2 text-sm">
             {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileDown className="h-4 w-4" />} HTML
           </button>
+          {isOwner && (
+            <button onClick={handleOpenSharePanel} className={`flex items-center gap-2 text-sm font-medium px-4 py-2 rounded-lg transition-colors ${
+              showSharePanel ? 'bg-green-600 text-white' :
+              visibility !== 'private' ? 'bg-green-100 text-green-700 hover:bg-green-200 border border-green-300' :
+              'btn-secondary text-green-600 border-green-200 hover:bg-green-50'
+            }`}>
+              <Share2 className="h-4 w-4" /> Share
+            </button>
+          )}
           <button onClick={() => setShowPublishPanel(!showPublishPanel)} disabled={publishing} className="btn-primary flex items-center gap-2 text-sm">
             {publishing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Globe className="h-4 w-4" />} Publish
           </button>
         </div>
       </div>
+
+      {/* Share Panel */}
+      {showSharePanel && isOwner && (
+        <div className="card p-5 border-green-200 bg-green-50/50 space-y-4">
+          <div className="flex items-center justify-between">
+            <h3 className="font-semibold text-gray-900 flex items-center gap-2 text-base">
+              <Share2 className="h-5 w-5 text-green-600" /> Share Report
+            </h3>
+            <button onClick={() => setShowSharePanel(false)} className="text-gray-400 hover:text-gray-600 p-1 rounded-lg hover:bg-gray-100">
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+
+          {/* Share with all toggle */}
+          <div className="flex items-center justify-between p-3 bg-white rounded-lg border border-gray-200">
+            <div>
+              <div className="font-medium text-sm text-gray-900">Share with All Team Members</div>
+              <div className="text-xs text-gray-500 mt-0.5">Everyone in the organization can view this report</div>
+            </div>
+            <button
+              onClick={() => { setShareAll(!shareAll); if (!shareAll) setSelectedUsers([]); }}
+              className={`relative w-11 h-6 rounded-full transition-colors ${shareAll ? 'bg-green-500' : 'bg-gray-300'}`}
+            >
+              <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${shareAll ? 'translate-x-5' : ''}`} />
+            </button>
+          </div>
+
+          {/* Specific users section */}
+          {!shareAll && (
+            <div className="space-y-3">
+              <div className="text-sm font-medium text-gray-700">Or share with specific people:</div>
+
+              {/* Search */}
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                <input
+                  type="text"
+                  className="input-field pl-9 text-sm"
+                  placeholder="Search users by name or email..."
+                  value={shareSearch}
+                  onChange={e => setShareSearch(e.target.value)}
+                />
+              </div>
+
+              {/* User list */}
+              <div className="max-h-48 overflow-y-auto space-y-1 border border-gray-200 rounded-lg bg-white p-1">
+                {filteredShareUsers.length === 0 ? (
+                  <div className="text-sm text-gray-400 text-center py-4">No users found</div>
+                ) : filteredShareUsers.map(user => (
+                  <label
+                    key={user.id}
+                    className={`flex items-center gap-3 p-2.5 rounded-lg cursor-pointer transition-colors ${
+                      selectedUsers.includes(user.id) ? 'bg-green-50 border border-green-200' : 'hover:bg-gray-50 border border-transparent'
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selectedUsers.includes(user.id)}
+                      onChange={() => toggleUserSelection(user.id)}
+                      className="w-4 h-4 rounded border-gray-300 text-green-600 focus:ring-green-500"
+                    />
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-medium text-gray-900 truncate">{user.name}</div>
+                      <div className="text-xs text-gray-500 truncate">{user.email}</div>
+                    </div>
+                    {user.department && (
+                      <span className="text-xs px-2 py-0.5 bg-gray-100 text-gray-500 rounded-full shrink-0">{user.department}</span>
+                    )}
+                  </label>
+                ))}
+              </div>
+
+              {selectedUsers.length > 0 && (
+                <div className="text-xs text-green-600 font-medium">{selectedUsers.length} user(s) selected</div>
+              )}
+            </div>
+          )}
+
+          {/* Save button */}
+          <button
+            onClick={handleShareSave}
+            disabled={shareLoading}
+            className="btn-primary flex items-center justify-center gap-2 w-full"
+          >
+            {shareLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Share2 className="h-4 w-4" />}
+            {shareLoading ? 'Saving...' : shareAll ? 'Share with Everyone' : selectedUsers.length > 0 ? 'Share with ' + selectedUsers.length + ' User(s)' : 'Make Private'}
+          </button>
+        </div>
+      )}
 
       {/* Publish Panel */}
       {showPublishPanel && (

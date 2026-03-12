@@ -214,4 +214,19 @@ router.patch('/users/:id/toggle', requireAuth, requireAdmin, (req, res) => {
   res.json({ message: `User ${user.is_active ? 'deactivated' : 'activated'}` });
 });
 
+
+// GET /api/auth/users-for-share — List active users for sharing UI (any authenticated user)
+router.get('/users-for-share', requireAuth, (req, res) => {
+  try {
+    const db = getDb();
+    const users = db.prepare(
+      'SELECT id, name, email, department FROM users WHERE is_active = 1 AND id != ? ORDER BY name ASC'
+    ).all(req.user.id);
+    res.json({ users });
+  } catch (err) {
+    console.error('Users for share error:', err);
+    res.status(500).json({ error: 'Failed to fetch users' });
+  }
+});
+
 export default router;

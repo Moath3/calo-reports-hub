@@ -14,11 +14,13 @@ router.get("/", requireAuth, (req, res) => {
     const params = [];
 
     let where;
-    let selectCols = "r.id, r.title, r.description, r.status, r.source_filename, r.ai_provider, r.tags, r.netlify_url, r.visibility, r.created_at, r.updated_at";
+    let selectCols = "r.id, r.title, r.description, r.status, r.source_filename, r.ai_provider, r.tags, r.netlify_url, r.visibility, r.shared_with, r.created_at, r.updated_at";
 
     if (visibility === "shared") {
-      // Show reports shared by OTHER users
-      where = "WHERE r.visibility = 'shared' AND r.user_id != ?";
+      // Show reports shared with this user: team-wide OR specifically shared with them
+      const userIdPattern = '%"' + req.user.id + '"%';
+      where = "WHERE (r.visibility = 'shared' OR (r.visibility = 'specific' AND r.shared_with LIKE ?)) AND r.user_id != ?";
+      params.push(userIdPattern);
       params.push(req.user.id);
       selectCols += ", u.name as author_name";
     } else {
@@ -73,17 +75,20 @@ router.get("/:id", requireAuth, (req, res) => {
     ).get(req.params.id);
     if (!report) return res.status(404).json({ error: "Report not found" });
 
-    // Access: owner, admin, or shared report viewable by any authenticated user
+    // Access: owner, admin, team-shared, or specifically shared with this user
     const isOwner = report.user_id === req.user.id;
     const isAdmin = req.user.role === "admin";
-    const isShared = report.visibility === "shared";
-    if (!isOwner && !isAdmin && !isShared) {
+    const isTeamShared = report.visibility === "shared";
+    const sharedWith = JSON.parse(report.shared_with || "[]");
+    const isSpecificShare = report.visibility === "specific" && sharedWith.includes(req.user.id);
+    if (!isOwner && !isAdmin && !isTeamShared && !isSpecificShare) {
       return res.status(403).json({ error: "Access denied" });
     }
 
     report.report_data = JSON.parse(report.report_data || "{}");
     report.source_data = report.source_data ? JSON.parse(report.source_data) : null;
     report.tags = JSON.parse(report.tags || "[]");
+    report.shared_with = sharedWith;
     report.is_owner = isOwner;
     res.json({ report });
   } catch (err) {
@@ -119,15 +124,16 @@ router.put("/:id", requireAuth, (req, res) => {
     if (!report) return res.status(404).json({ error: "Report not found" });
     if (report.user_id !== req.user.id) return res.status(403).json({ error: "Access denied" });
 
-    const { title, description, reportData, reportHtml, status, tags, netlifyUrl, visibility } = req.body;
+    const { title, description, reportData, reportHtml, status, tags, netlifyUrl, visibility, sharedWith } = req.body;
     db.prepare(
-      "UPDATE reports SET title=COALESCE(?,title), description=COALESCE(?,description), report_data=COALESCE(?,report_data), report_html=COALESCE(?,report_html), status=COALESCE(?,status), tags=COALESCE(?,tags), netlify_url=COALESCE(?,netlify_url), visibility=COALESCE(?,visibility), updated_at=CURRENT_TIMESTAMP WHERE id=?"
+      "UPDATE reports SET title=COALESCE(?,title), description=COALESCE(?,description), report_data=COALESCE(?,report_data), report_html=COALESCE(?,report_html), status=COALESCE(?,status), tags=COALESCE(?,tags), netlify_url=COALESCE(?,netlify_url), visibility=COALESCE(?,visibility), shared_with=COALESCE(?,shared_with), updated_at=CURRENT_TIMESTAMP WHERE id=?"
     ).run(
       title || null, description || null,
       reportData ? JSON.stringify(reportData) : null,
       reportHtml || null, status || null,
       tags ? JSON.stringify(tags) : null,
-      netlifyUrl || null, visibility || null, req.params.id
+      netlifyUrl || null, visibility || null,
+      sharedWith ? JSON.stringify(sharedWith) : null, req.params.id
     );
     res.json({ message: "Report updated" });
   } catch (err) {
@@ -169,7 +175,40 @@ router.patch("/:id/status", requireAuth, (req, res) => {
   }
 });
 
-// PATCH /:id/visibility — Toggle between private and shared
+// PATCH /:id/share — Update sharing settings (visibility + specific users)
+router.patch("/:id/share", requireAuth, (req, res) => {
+  try {
+    const { visibility, sharedWith } = req.body;
+    if (!["private", "shared", "specific"].includes(visibility)) {
+      return res.status(400).json({ error: "Invalid visibility. Use 'private', 'shared', or 'specific'." });
+    }
+
+    const db = getDb();
+    const report = db.prepare("SELECT user_id FROM reports WHERE id = ?").get(req.params.id);
+    if (!report) return res.status(404).json({ error: "Report not found" });
+    if (report.user_id !== req.user.id) return res.status(403).json({ error: "Only the report owner can change sharing" });
+
+    // For specific sharing, validate user IDs
+    let sharedWithArray = [];
+    if (visibility === "specific" && Array.isArray(sharedWith) && sharedWith.length > 0) {
+      for (const uid of sharedWith) {
+        const user = db.prepare("SELECT id FROM users WHERE id = ? AND is_active = 1").get(uid);
+        if (user) sharedWithArray.push(uid);
+      }
+    }
+
+    db.prepare(
+      "UPDATE reports SET visibility = ?, shared_with = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
+    ).run(visibility, JSON.stringify(sharedWithArray), req.params.id);
+
+    res.json({ message: "Sharing updated", visibility, sharedWith: sharedWithArray });
+  } catch (err) {
+    console.error("Share report error:", err);
+    res.status(500).json({ error: "Failed to update sharing" });
+  }
+});
+
+// PATCH /:id/visibility — Legacy toggle (kept for compatibility)
 router.patch("/:id/visibility", requireAuth, (req, res) => {
   try {
     const { visibility } = req.body;

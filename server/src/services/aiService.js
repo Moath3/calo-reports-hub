@@ -107,7 +107,7 @@ export function buildReportSystemPrompt(dataSummary, templateData) {
   const today = new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
   let prompt = "You are CALO Report AI, an expert data analyst. Analyze the data and produce a professional report.\n\n" +
     "Return ONLY valid JSON (no markdown, no code blocks):\n" +
-    "{ \"title\": \"Report Title\", \"subtitle\": \"Subtitle\", \"reportDate\": \"" + today + "\", \"brandColor\": \"#22c55e\",\n" +
+    "{ \"title\": \"Report Title\", \"subtitle\": \"Subtitle\", \"reportDate\": \"" + today + "\", \"brandColor\": \"#02B376\",\n" +
     "  \"kpis\": [{ \"label\": \"Name\", \"value\": \"123\", \"unit\": \"opt\", \"trend\": \"up|down|stable\" }],\n" +
     "  \"sections\": [{ \"title\": \"Section\", \"icon\": \"emoji\", \"blocks\": [...] }],\n" +
     "  \"summary\": \"Executive summary\", \"insights\": [\"insight1\"] }\n\n" +

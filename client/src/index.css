@@ -3,17 +3,17 @@
 @tailwind utilities;
 
 :root {
-  --brand-primary: #22c55e;
-  --brand-50: #f0fdf4;
-  --brand-100: #dcfce7;
-  --brand-200: #bbf7d0;
-  --brand-300: #86efac;
-  --brand-400: #4ade80;
-  --brand-500: #22c55e;
-  --brand-600: #16a34a;
-  --brand-700: #15803d;
-  --brand-800: #166534;
-  --brand-900: #14532d;
+  --brand-primary: #02B376;
+  --brand-50: #E6F9F1;
+  --brand-100: #B3EED8;
+  --brand-200: #80E3BF;
+  --brand-300: #4DD8A6;
+  --brand-400: #26CF93;
+  --brand-500: #02B376;
+  --brand-600: #029A66;
+  --brand-700: #027D53;
+  --brand-800: #016040;
+  --brand-900: #01432D;
 }
 
 @layer base {
@@ -23,7 +23,7 @@
 
 @layer components {
   .btn-primary {
-    @apply bg-green-600 hover:bg-green-700 text-white font-semibold py-2.5 px-5 rounded-lg
+    @apply bg-[#02B376] hover:bg-[#029A66] text-white font-semibold py-2.5 px-5 rounded-lg
     transition-all duration-200 shadow-sm hover:shadow-md active:scale-[0.98]
     disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:shadow-sm;
   }
@@ -47,7 +47,7 @@
   }
   .input-field {
     @apply w-full px-4 py-2.5 border border-gray-300 rounded-lg bg-white
-    focus:ring-2 focus:ring-green-500 focus:border-green-500 outline-none
+    focus:ring-2 focus:ring-[#02B376] focus:border-[#02B376] outline-none
     transition-all duration-200 placeholder:text-gray-400;
   }
   .label {
@@ -64,7 +64,7 @@
   }
 
   .gradient-header {
-    background: linear-gradient(135deg, var(--brand-primary, #22c55e) 0%, #059669 100%);
+    background: linear-gradient(135deg, var(--brand-primary, #02B376) 0%, #027D53 100%);
   }
 }
 

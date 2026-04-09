@@ -100,7 +100,7 @@ export default function NewReportPage() {
       const createRes = await api.createReport({
         title: title.trim(),
         description: description.trim(),
-        reportData: { generalInfo: { title: title.trim(), brandColor: '#22c55e' }, sections: [] },
+        reportData: { generalInfo: { title: title.trim(), brandColor: '#02B376' }, sections: [] },
         sourceFilename: file?.name || '',
         sourceData: dataSummary,
         tags: [],
@@ -122,7 +122,7 @@ export default function NewReportPage() {
     try {
       const createRes = await api.createReport({
         title: t.trim(),
-        reportData: { generalInfo: { title: t.trim(), brandColor: '#22c55e' }, sections: [] },
+        reportData: { generalInfo: { title: t.trim(), brandColor: '#02B376' }, sections: [] },
         tags: [],
       });
       toast.success('Blank report created');

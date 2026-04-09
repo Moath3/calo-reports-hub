@@ -5,20 +5,20 @@ export default {
     extend: {
       colors: {
         brand: {
-          50: 'var(--brand-50, #f0fdf4)',
-          100: 'var(--brand-100, #dcfce7)',
-          200: 'var(--brand-200, #bbf7d0)',
-          300: 'var(--brand-300, #86efac)',
-          400: 'var(--brand-400, #4ade80)',
-          500: 'var(--brand-500, #22c55e)',
-          600: 'var(--brand-600, #16a34a)',
-          700: 'var(--brand-700, #15803d)',
-          800: 'var(--brand-800, #166534)',
-          900: 'var(--brand-900, #14532d)',
+          50: 'var(--brand-50, #E6F9F1)',
+          100: 'var(--brand-100, #B3EED8)',
+          200: 'var(--brand-200, #80E3BF)',
+          300: 'var(--brand-300, #4DD8A6)',
+          400: 'var(--brand-400, #26CF93)',
+          500: 'var(--brand-500, #02B376)',
+          600: 'var(--brand-600, #029A66)',
+          700: 'var(--brand-700, #027D53)',
+          800: 'var(--brand-800, #016040)',
+          900: 'var(--brand-900, #01432D)',
         }
       },
       fontFamily: {
-        sans: ['Inter', 'system-ui', '-apple-system', 'sans-serif'],
+        sans: ['Lato', 'system-ui', '-apple-system', 'sans-serif'],
       },
       animation: {
         'fade-in': 'fadeIn 0.3s ease-out',

@@ -330,7 +330,7 @@ function BlockEditor({ block, onChange, onRemove, onMoveUp, onMoveDown, isFirst,
               <Field label="Icon" value={block.icon || ''} onChange={v => set('icon', v)} />
               <div className="grid grid-cols-3 gap-3">
                 <Field label="BG Color" value={block.bgColor || '#f0fdf4'} onChange={v => set('bgColor', v)} type="color" />
-                <Field label="Border" value={block.borderColor || '#22c55e'} onChange={v => set('borderColor', v)} type="color" />
+                <Field label="Border" value={block.borderColor || '#02B376'} onChange={v => set('borderColor', v)} type="color" />
                 <Field label="Text" value={block.textColor || '#166534'} onChange={v => set('textColor', v)} type="color" />
               </div>
             </>
@@ -717,8 +717,8 @@ export default function ReportEditorPage() {
           <div>
             <label className="label">Brand Color</label>
             <div className="flex items-center gap-3">
-              <input type="color" value={reportData.generalInfo?.brandColor || '#22c55e'} onChange={e => setGeneral('brandColor', e.target.value)} className="h-10 w-10 rounded cursor-pointer" />
-              <input className="input-field text-sm" value={reportData.generalInfo?.brandColor || '#22c55e'} onChange={e => setGeneral('brandColor', e.target.value)} />
+              <input type="color" value={reportData.generalInfo?.brandColor || '#02B376'} onChange={e => setGeneral('brandColor', e.target.value)} className="h-10 w-10 rounded cursor-pointer" />
+              <input className="input-field text-sm" value={reportData.generalInfo?.brandColor || '#02B376'} onChange={e => setGeneral('brandColor', e.target.value)} />
             </div>
           </div>
           <div>

@@ -1,337 +1,141 @@
-# CALO Reports Hub — Project Context
+# CLAUDE.md
 
-> This file is read by Claude Code automatically when working in this project.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Quick Reference
+## Commands
 
-- **GitHub**: https://github.com/Moath3/calo-reports-hub.git
-- **Branch**: `master`
-- **Deployment**: Render.com (free tier, auto-deploys on push)
-- **Local dev**: `npm run dev` (runs server:3001 + client:5173 concurrently)
-- **Build**: `npm run build` → `client/dist/`
-- **Node.js PATH (Windows)**: `export PATH="/c/Program Files/nodejs:$PATH"` (required in Claude Code bash)
+```bash
+# IMPORTANT: On Windows, always set Node.js PATH first
+export PATH="/c/Program Files/nodejs:$PATH"
 
----
+# Development (runs server:3001 + client:5173 concurrently)
+npm run dev
 
-## Tech Stack
+# Build client for production
+npm run build
 
-| Layer | Tech |
-|-------|------|
-| Frontend | React 18, Vite 6, TailwindCSS 3, Lucide React, React Hot Toast, React Router 6, Chart.js 4, react-dropzone, date-fns |
-| Backend | Node.js (ESM), Express 4, sql.js (SQLite), JWT, Multer, Helmet, CORS, express-rate-limit, bcryptjs, xlsx, sanitize-html |
-| AI | Google Gemini 2.0 Flash, Anthropic Claude Sonnet 4.5, Perplexity Sonar Pro |
-| Database | SQLite via sql.js, file at `server/data/calo-reports.db`, auto-saves every 30s |
-| Deploy | Render.com via `render.yaml` |
+# Start production server (serves client/dist + API)
+npm start
 
----
+# Install all dependencies (root + server + client)
+npm run setup
 
-## Environment Variables (.env — NOT committed)
+# Render.com deploy build
+npm run render:build
 
-```
-PORT=3001
-NODE_ENV=development
-JWT_SECRET=<secret>
-COMPANY_REG_CODE=CALO2026
-GEMINI_API_KEY=<key>
-CLAUDE_API_KEY=<key>
-PERPLEXITY_API_KEY=<key>
-DEFAULT_AI_PROVIDER=gemini
-NETLIFY_ACCESS_TOKEN=<token>
-MAX_FILE_SIZE_MB=25
-RESEND_API_KEY=<key>
-ADMIN_EMAIL=<email>
+# Server-only dev (with --watch)
+npm run dev:server
+
+# Client-only dev (vite)
+npm run dev:client
 ```
 
----
+No test suite exists. Verify changes by building (`npm run build`) and checking the live site after push.
 
-## Project Structure
+## Architecture
 
-```
-calo-report-platform/
-├── package.json              # Root workspace (concurrently for dev)
-├── .env                      # API keys (gitignored)
-├── render.yaml               # Render.com deploy config
-├── CLAUDE.md                 # This file
-│
-├── client/                   # React + Vite frontend
-│   ├── package.json
-│   ├── vite.config.js
-│   ├── tailwind.config.js
-│   └── src/
-│       ├── main.jsx          # Entry: AuthProvider + BrowserRouter
-│       ├── App.jsx           # Routes + Layout wrapper
-│       ├── index.css          # Tailwind + custom utility classes
-│       ├── contexts/
-│       │   └── AuthContext.jsx  # User state, login/register/logout, pending approval
-│       ├── components/
-│       │   └── Layout.jsx     # Sidebar nav (5 items), mobile drawer, user menu
-│       ├── utils/
-│       │   └── api.js         # ApiClient class (27 methods, JWT bearer auth)
-│       └── pages/
-│           ├── LoginPage.jsx          # Login + register with pending approval flow
-│           ├── DashboardPage.jsx      # Stats cards, recent reports, AI usage, admin overview
-│           ├── NewReportPage.jsx      # 3-step wizard: Upload → Configure → Generate
-│           ├── ReportEditorPage.jsx   # Visual block editors + AI chat (718 lines, main file)
-│           ├── ReportPreviewPage.jsx  # Preview, export HTML/PDF, Netlify deploy
-│           ├── ReportsListPage.jsx    # List, filter, search reports
-│           ├── TemplatesPage.jsx      # Browse, use, create templates
-│           └── SettingsPage.jsx       # Profile, password, admin user management
-│
-├── server/                   # Node.js/Express backend (ESM)
-│   ├── package.json
-│   └── src/
-│       ├── index.js           # Express app setup, middleware, route mounting, static serve
-│       ├── middleware/
-│       │   └── auth.js        # requireAuth JWT middleware
-│       ├── db/
-│       │   ├── database.js    # sql.js DbWrapper, schema init, file persistence
-│       │   └── seedTemplates.js  # Default templates + admin user seeder
-│       ├── routes/
-│       │   ├── auth.js        # /api/auth — login, register, me, profile, password, users, toggle
-│       │   ├── upload.js      # /api/upload — file upload via multer + fileParser
-│       │   ├── ai.js          # /api/ai — analyze, chat (with structured updates), refine, providers
-│       │   ├── reports.js     # /api/reports — CRUD, status, shared
-│       │   ├── templates.js   # /api/templates — CRUD, categories, use
-│       │   ├── export.js      # /api/export — HTML, PDF, Netlify deploy
-│       │   └── dashboard.js   # /api/dashboard — stats, AI usage
-│       └── services/
-│           ├── aiService.js   # callAI dispatcher, 3 provider functions, 3 system prompts, extractJSON
-│           ├── htmlBuilder.js # buildStandaloneHTML — 8 block types + chart rendering
-│           ├── fileParser.js  # Excel, CSV, JSON, text parsing with column statistics
-│           └── emailService.js  # Resend API for admin notifications
-│
-└── data/                     # Auto-created, gitignored
-    └── calo-reports.db       # SQLite database file
-```
+Full-stack monorepo: React 18 + Vite 6 frontend, Express 4 + sql.js backend, deployed to Render.com (auto-deploys on push to master).
 
----
+**Frontend** (`client/src/`): React Router 6 SPA with TailwindCSS 3. Auth state via `contexts/AuthContext.jsx` (JWT in localStorage `calo-token`). All API calls through `utils/api.js` (ApiClient class, ~30 methods, Bearer token auth). Pages are in `pages/`, one component per route.
+
+**Backend** (`server/src/`): ESM modules. Express routes in `routes/`, business logic in `services/`. Auth via JWT middleware (`middleware/auth.js` — `requireAuth`, `requireAdmin`). Database is sql.js (in-memory SQLite with file persistence to `DB_DIR/calo-reports.db`, auto-saves every 30s).
+
+**Data flow**: Vite proxies `/api` to Express in dev. In production, Express serves `client/dist/` as static files with SPA fallback.
+
+### Key Files
+
+| File | Purpose |
+|------|---------|
+| `server/src/services/aiService.js` | Multi-provider AI dispatcher (Gemini/Claude/Perplexity), system prompts, JSON extraction |
+| `client/src/pages/ReportEditorPage.jsx` | Main editor (~800 lines) — visual block editors, section management, AI chat tab |
+| `client/src/pages/ReportPreviewPage.jsx` | Preview, export, Netlify publish, sharing panel |
+| `server/src/db/database.js` | sql.js wrapper (mimics better-sqlite3 API), schema init, migrations, file persistence |
+| `server/src/services/htmlBuilder.js` | Standalone HTML report builder (9 block types + password protection) |
+| `server/src/services/fileParser.js` | Excel/CSV/JSON/text parser with column statistics |
+
+### Report Data Model
+
+Reports store structured JSON in `report_data` column:
+- `generalInfo`: title, reportDate, companyName, brandColor, kpiStrip[]
+- `sections[]`: each has title, icon, blocks[]
+
+**9 block types**: badge, notes, metrics, table, keyvalue, comparison, callout, image, chart
+
+### AI Chat Pattern
+
+The AI chat uses a structured update format:
+1. Client sends: message + current reportData + provider + last 6 messages
+2. Server builds system prompt with full block schemas + report context (8000 char limit)
+3. AI returns `{ message, updates }` where `updates.sections` is a sparse array (null = unchanged, object = merge/create)
+4. Client `handleAIResponse()` merges updates into state immutably
+5. When report has no sections, AI creates them; when sections exist, AI merges changes
+
+### Auth & Registration
+
+- Company code `CALO2026` required to register
+- First user auto-becomes admin (is_active=1); all others pending (is_active=0)
+- Admin approves users via Settings page (PATCH `/users/:id/toggle`)
+- JWT: 7-day expiry, stored in localStorage
+
+### Report Sharing (3-state model)
+
+- `private`: only owner + admin can view
+- `shared`: all authenticated users can view
+- `specific`: only selected users (stored in `shared_with` JSON array) can view
+- PATCH `/reports/:id/share` endpoint validates user IDs against active users
 
 ## Database Schema
 
-6 tables, 10 indexes:
+6 tables. Key columns beyond obvious CRUD fields:
 
-```sql
-users        — id, email, name, password_hash, role(employee/admin), avatar_url, department, created_at, last_login, is_active(0=pending/1=active)
-reports      — id, user_id(FK), title, description, report_data(JSON), report_html, source_filename, source_data, ai_provider, status(draft/published), tags(JSON), netlify_url, created_at, updated_at
-templates    — id, user_id(FK), name, description, category, template_data(JSON), preview_thumbnail, is_default, is_shared, usage_count, created_at, updated_at
-audit_log    — id(auto), user_id(FK), action, resource_type, resource_id, details, ip_address, created_at
-ai_usage     — id(auto), user_id(FK), provider, tokens_in, tokens_out, request_type(analyze/chat/refine), duration_ms, created_at
-sessions     — id, user_id(FK), token_hash, expires_at, created_at
+- **reports**: `visibility` (private/shared/specific), `shared_with` (JSON user ID array), `netlify_site_id` (for republish reuse), `status` (draft/done/published/archived)
+- **users**: `is_active` (0=pending, 1=approved), `role` (employee/admin)
+- **ai_usage**: tracks tokens_in/out, provider, request_type, duration per call
+
+Migrations run automatically on startup via `database.js` migrations array (ALTER TABLE statements).
+
+## Environment Variables
+
 ```
-
----
-
-## API Endpoints
-
-### Auth `/api/auth` (rate: 20/15min)
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/login` | email + password → JWT token + user |
-| POST | `/register` | name, email, password, companyCode → pending or active |
-| GET | `/me` | Current user profile |
-| PUT | `/profile` | Update name, department, avatar_url |
-| PUT | `/password` | Change password |
-| GET | `/users` | Admin: list all users |
-| PATCH | `/users/:id/toggle` | Admin: toggle is_active |
-
-### Upload `/api/upload`
-| POST | `/` | Multipart file → parsed data (Excel/CSV/JSON/text) |
-
-### AI `/api/ai` (rate: 10/min)
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/analyze` | dataSummary, provider, customPrompt → full report JSON |
-| POST | `/chat` | message, reportContext, provider, history → `{ response, message, updates }` |
-| POST | `/refine` | reportData, sectionIndex, instruction, provider → updated section JSON |
-| GET | `/providers` | List available AI providers |
-
-### Reports `/api/reports`
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/` | List (pagination, search, status filter) |
-| GET | `/:id` | Get single report |
-| POST | `/` | Create report |
-| PUT | `/:id` | Update report |
-| DELETE | `/:id` | Delete report |
-| PATCH | `/:id/status` | Update status (draft/published) |
-| GET | `/shared/all` | List published reports |
-
-### Templates `/api/templates`
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/` | List (category filter) |
-| GET | `/categories` | All categories |
-| GET | `/:id` | Get template |
-| POST | `/` | Create template |
-| PUT | `/:id` | Update template |
-| DELETE | `/:id` | Delete template |
-| POST | `/:id/use` | Increment usage, return data |
-
-### Export `/api/export`
-| POST | `/html` | reportData, brandColor, title → standalone HTML |
-| POST | `/pdf` | html → PDF blob |
-| POST | `/netlify` | html, siteName, netlifyToken → deploy |
-
-### Dashboard `/api/dashboard`
-| GET | `/stats` | Reports count, drafts, published, templates, AI usage |
-
----
-
-## Report Data Schema
-
-```json
-{
-  "generalInfo": {
-    "title": "string",
-    "reportDate": "string",
-    "companyName": "string",
-    "prevMonth": "string (period note)",
-    "brandColor": "#hex",
-    "kpiStrip": [{ "label": "Name", "value": "123", "unit": "meals", "trend": "up|down|stable" }]
-  },
-  "sections": [
-    {
-      "title": "Section Title",
-      "icon": "emoji",
-      "blocks": [ /* block objects */ ]
-    }
-  ]
-}
+PORT=3001                    # Server port
+NODE_ENV=development         # development | production
+JWT_SECRET=<secret>          # Required in production
+COMPANY_REG_CODE=CALO2026    # Registration gate
+DB_DIR=/data                 # Persistent disk path (Render)
+GEMINI_API_KEY=<key>         # Enables Gemini provider
+CLAUDE_API_KEY=<key>         # Enables Claude provider
+PERPLEXITY_API_KEY=<key>     # Enables Perplexity provider
+DEFAULT_AI_PROVIDER=gemini
+NETLIFY_ACCESS_TOKEN=<token> # For publish feature
+MAX_FILE_SIZE_MB=25
+RESEND_API_KEY=<key>         # Email notifications
+ADMIN_EMAIL=<email>          # Receives registration alerts
+FRONTEND_URL=<url>           # Production CORS origin
 ```
-
-### Block Types (9 types)
-
-| Type | Fields |
-|------|--------|
-| `badge` | type, label, title, subtitle, period, style (green/amber/red/blue) |
-| `notes` | type, label, items[] OR content (paragraph) |
-| `metrics` | type, label, items[{label, value, change, trend}] |
-| `table` | type, label, headers[], rows[[]] |
-| `keyvalue` | type, label, items[{key, value}] |
-| `comparison` | type, label, leftTitle, rightTitle, leftRows[{key,value}], rightRows[{key,value}] |
-| `callout` | type, title, value, icon, bgColor, borderColor, textColor |
-| `image` | type, url, caption |
-| `chart` | type, chartType (bar/line/pie/doughnut), title, labels[], datasets[{label, data[]}] |
-
----
-
-## ReportEditorPage.jsx — Architecture (718 lines)
-
-### Visual Sub-Editor Components (no JSON exposed to user)
-- `MetricsEditor({ items, onChange })` — inline metric cards
-- `TableEditor({ headers, rows, onChangeHeaders, onChangeRows })` — WYSIWYG table
-- `KeyValueEditor({ items, onChange })` — key-value pairs
-- `ComparisonEditor({ leftRows, rightRows, onChangeLeft, onChangeRight })` — dual-column
-- `KpiStripEditor({ items, onChange })` — KPI grid cards
-- `Field({ label, value, onChange, type })` — generic input/color
-
-### State
-```javascript
-report, loading, saving, tab('sections'|'general'|'ai'),
-aiMsg, aiChat[], aiLoading, showAddBlock,
-aiProvider, aiProviders[], showPasteBox, pasteText,
-fileInputRef, chatEndRef
-```
-
-### Key Functions
-- `updateData(fn)` — immutable report_data updater
-- `setGeneral(k, v)` — update generalInfo field
-- `updateSection/updateBlock/removeBlock/addBlock` — section/block CRUD
-- `addSection/removeSection/moveSection` — section management
-- `handleSave()` — save to backend
-- `handleAIResponse(res)` — parse `{ message, updates }`, merge into reportData, toast
-- `handleAISend()` — send chat to `/api/ai/chat`
-- `sendQuickAction(text)` — predefined AI prompts
-- `handleAIFileUpload(e)` — upload + send parsed data to AI
-- `handlePasteSubmit()` — paste raw data to AI
-- `handleRefine(sIdx)` — section-level AI refinement
-
-### Three Tabs
-1. **Sections** — collapsible cards, block editors, add/remove/reorder, AI refine per section
-2. **General Info** — metadata fields + brandColor + KpiStripEditor
-3. **AI Assistant** — provider selector, chat UI, 5 quick actions, file upload, paste box
-
----
-
-## AI Service (`aiService.js`)
-
-### Providers
-| Provider | Model | JSON Mode |
-|----------|-------|-----------|
-| Gemini | gemini-2.0-flash | `responseMimeType: "application/json"` |
-| Claude | claude-sonnet-4-5-20250514 | N/A (text parsing) |
-| Perplexity | sonar-pro | N/A (text parsing) |
-
-All: timeout 90s, temp 0.3, max 8192 tokens. Return `{ text, raw, tokensIn, tokensOut }`.
-
-### System Prompts
-- `buildReportSystemPrompt(dataSummary)` — full report generation
-- `buildChatSystemPrompt(reportContext)` — structured `{ message, updates }` with sparse sections array
-- `buildRefineSystemPrompt(section, instruction)` — single section refinement
-
-### Chat Flow
-1. Client sends message + reportData + provider + last 6 chat messages
-2. Server builds chat prompt with full block schemas + current report (8000 chars)
-3. AI returns `{ message, updates }` (updates = null if just chatting)
-4. Server parses with `extractJSON()`, separates message from updates
-5. Client `handleAIResponse()` auto-merges updates into state, shows toast
-
----
-
-## Auth Flow
-- **Register**: company code `CALO2026` → pending (`is_active=0`) → admin approves
-- **Login**: JWT in localStorage (`calo-token`)
-- **Roles**: `employee` (default), `admin`
-- **Admin seed**: `seedAdminUser()` on first run
-- **Email**: Resend API notifies admin of new registrations
 
 ## Rate Limits
+
 - General: 200 req / 15 min
 - Auth: 20 req / 15 min
 - AI: 10 req / 1 min
+- Export/Netlify: 5 req / 1 min
 
-## Frontend Routes
-| Path | Page | Access |
-|------|------|--------|
-| `/login` | LoginPage | Public |
-| `/` | DashboardPage | Protected |
-| `/new` | NewReportPage | Protected |
-| `/reports` | ReportsListPage | Protected |
-| `/reports/:id` | ReportEditorPage | Protected |
-| `/reports/:id/preview` | ReportPreviewPage | Protected |
-| `/templates` | TemplatesPage | Protected |
-| `/settings` | SettingsPage | Protected |
+## Deployment
 
----
+Render.com via `render.yaml`. Persistent disk at `/data` (1GB) for SQLite database. Build runs `npm run render:build` (installs server+client deps, builds client). Start runs `npm start`.
 
-## Git History
-```
-dfddbd5 Add visual block editors and enhanced AI chat for report editor
-77ccc83 Add approval-based registration with email notification
-8eb1fcc Add admin user seeding and role management endpoint
-c185417 Fix trust proxy for Render reverse proxy
-65e615b Fix Render build: include dev deps for client vite build
-d0cd5c7 Fix AI integration, add default templates, fix deployment
-65697d5 CALO Reports Hub - full-stack report generation platform
-```
+Auto-deploys on push to `master` branch. Live at: https://calo-reports-hub.onrender.com
 
----
+## File Editing Notes
 
-## Related Projects (standalone HTML generators)
+On this Windows machine, the Edit and Write tools sometimes fail with `EEXIST: file already exists, mkdir` errors for project subdirectories. Workarounds:
+1. Write a temp `.js` script to `C:\\Users\\Pc Force\\temp-*.js` that uses `fs.writeFileSync()` to modify the target file
+2. Run it with `node "C:\\Users\\Pc Force\\temp-*.js"`
+3. Clean up temp files after
+4. For simple single-line changes, `sed -i` works reliably
 
-### HR Report Generator
-- **File**: `C:\Users\Pc Force\Downloads\CALO HR Report Generator.html`
-- **Deploy dir**: `C:\Users\Pc Force\Downloads\hr-report-deploy\index.html`
-- **Tech**: Single HTML file, pure JS, localStorage, Netlify deploy
-- **localStorage**: `calo-hr-v2`, `calo-hr-templates`, `calo-hr-reports`, `calo-hr-netlify-token`, `calo-hr-netlify-sites`, `calo-hr-ai-key`, `calo-hr-ai-history`
+## Related Projects
 
-### Production Report Generator
-- **File**: `C:\Users\Pc Force\Downloads\CALO Production Report Generator.html`
-- **Deploy dir**: `C:\Users\Pc Force\Downloads\prod-report-deploy\index.html`
-- **Tech**: Single HTML file, pure JS, localStorage, Netlify deploy
-- **localStorage**: `calo-prod-v2`, `calo-prod-templates`, `calo-prod-reports`, `calo-prod-netlify-token`, `calo-prod-netlify-sites`, `calo-prod-ai-key`, `calo-prod-ai-history`
-- **Live**: calogrowth8-15thfeb26.netlify.app
-- **Extra blocks**: comparison (side-by-side), callout (announcement box)
-- **Preset**: `getPresetGrowth()` — 8 sections for KSA Market Growth Update
-
-Both generators share: 5 tabs (Edit Data, Manage Sections, Library, Preview Report, AI Assistant), multi-provider AI (Gemini/Claude/Perplexity), Netlify integration, template system, SheetJS for Excel parsing.
+Two standalone HTML report generators share the same block schema and AI patterns:
+- **HR Report Generator**: `C:\\Users\\Pc Force\\Downloads\\CALO HR Report Generator.html`
+- **Production Report Generator**: `C:\\Users\\Pc Force\\Downloads\\CALO Production Report Generator.html` (live: calogrowth8-15thfeb26.netlify.app)

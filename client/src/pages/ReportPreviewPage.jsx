@@ -10,8 +10,8 @@ import {
 
 function renderReportHTML(data, { collapsible = false } = {}) {
   const gi = data?.generalInfo || {};
-  const brand = gi.brandColor || '#2BB573';
-  const brandDark = '#1E8A57';
+  const brand = gi.brandColor || '#02B376';
+  const brandDark = '#027D53';
   const sections = data?.sections || [];
 
   const kpiCards = (gi.kpiStrip || data?.kpis || []).map(k => {
@@ -28,7 +28,7 @@ function renderReportHTML(data, { collapsible = false } = {}) {
   const renderBlock = (b) => {
     switch (b.type) {
       case 'badge': {
-        const colors = { green: { bg: '#E8F8F0', border: '#2BB573', text: '#166534' }, amber: { bg: '#FEF3C7', border: '#F59E0B', text: '#92400E' }, red: { bg: '#FEE2E2', border: '#EF4444', text: '#991B1B' }, blue: { bg: '#DBEAFE', border: '#3B82F6', text: '#1E40AF' } };
+        const colors = { green: { bg: '#E8F8F0', border: '#02B376', text: '#166534' }, amber: { bg: '#FEF3C7', border: '#F59E0B', text: '#92400E' }, red: { bg: '#FEE2E2', border: '#EF4444', text: '#991B1B' }, blue: { bg: '#DBEAFE', border: '#3B82F6', text: '#1E40AF' } };
         const c = colors[b.style] || colors.green;
         return `<div style="background:${c.bg};border-left:4px solid ${c.border};border-radius:10px;padding:14px 18px;margin-bottom:14px">
           <div style="font-size:15px;font-weight:700;color:${c.text}">${b.title || b.label || ''}</div>
@@ -107,14 +107,14 @@ function renderReportHTML(data, { collapsible = false } = {}) {
 
   const css = `
     *{margin:0;padding:0;box-sizing:border-box}
-    body{font-family:'Plus Jakarta Sans','DM Sans','Inter',system-ui,sans-serif;background:#F4F6F9;color:#1A1D23;line-height:1.6;-webkit-font-smoothing:antialiased}
+    body{font-family:'Lato','Inter',system-ui,sans-serif;background:#F4F6F9;color:#1A1D23;line-height:1.6;-webkit-font-smoothing:antialiased}
     .ctr{max-width:960px;margin:0 auto;padding:28px 20px}
-    .hdr{background:linear-gradient(135deg,${brand},${brandDark});color:white;padding:44px 40px 56px;border-radius:18px;margin-bottom:0;position:relative;overflow:hidden;box-shadow:0 4px 20px rgba(43,181,115,.25)}
+    .hdr{background:linear-gradient(135deg,${brand},${brandDark});color:white;padding:44px 40px 56px;border-radius:18px;margin-bottom:0;position:relative;overflow:hidden;box-shadow:0 4px 20px rgba(2,179,118,.25)}
     .hdr::before{content:'';position:absolute;top:-50%;right:-20%;width:70%;height:200%;background:radial-gradient(circle,rgba(255,255,255,.08) 0%,transparent 60%);pointer-events:none}
     .hdr::after{content:'';position:absolute;bottom:-40%;left:-10%;width:60%;height:160%;background:radial-gradient(circle,rgba(255,255,255,.05) 0%,transparent 50%);pointer-events:none}
     .hdr *{position:relative;z-index:1}
     .hdr h1{font-size:2rem;font-weight:800;letter-spacing:-.5px;margin-top:6px}
-    .logo-text{font-family:'Plus Jakarta Sans','Inter',sans-serif;font-weight:900;font-size:28px;letter-spacing:-1px;color:white;display:inline-block;text-shadow:0 2px 8px rgba(0,0,0,.12)}
+    .logo-text{font-family:'Lato','Inter',sans-serif;font-weight:900;font-size:28px;letter-spacing:-1px;color:white;display:inline-block;text-shadow:0 2px 8px rgba(0,0,0,.12)}
     .kpi-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(165px,1fr));gap:12px;margin-top:-32px;margin-bottom:28px;position:relative;z-index:2;padding:0 8px}
     .kpi-card{background:white;border-radius:14px;padding:18px;border:1px solid #E2E8F0;box-shadow:0 2px 8px rgba(0,0,0,.04);transition:transform .15s,box-shadow .15s;text-align:center}
     .kpi-card:hover{transform:translateY(-3px);box-shadow:0 6px 20px rgba(0,0,0,.08)}
@@ -140,13 +140,13 @@ function renderReportHTML(data, { collapsible = false } = {}) {
   `;
 
   const chartScript = `document.addEventListener("DOMContentLoaded",function(){
-    document.querySelectorAll("canvas[data-chartcfg]").forEach(function(c){try{var d=JSON.parse(c.getAttribute("data-chartcfg"));new Chart(c,{type:d.type,data:d.data,options:{responsive:true,plugins:{legend:{labels:{font:{family:'Plus Jakarta Sans'}}}}}});}catch(e){}});
+    document.querySelectorAll("canvas[data-chartcfg]").forEach(function(c){try{var d=JSON.parse(c.getAttribute("data-chartcfg"));new Chart(c,{type:d.type,data:d.data,options:{responsive:true,plugins:{legend:{labels:{font:{family:'Lato'}}}}}});}catch(e){}});
     ${collapsible ? `document.querySelectorAll(".sec-hdr").forEach(function(el){el.addEventListener("click",function(){this.classList.toggle("collapsed");var body=this.nextElementSibling;if(body)body.classList.toggle("hidden");});});` : ''}
   });`;
 
   return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
     <title>${gi.title || 'CALO Report'}</title>
-    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800;900&family=DM+Sans:wght@400;500;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Lato:wght@300;400;700;900&display=swap" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"><\/script>
     <style>${css}</style></head>
     <body><div class="ctr">

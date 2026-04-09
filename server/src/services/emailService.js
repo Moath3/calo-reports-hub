@@ -12,7 +12,7 @@ export async function notifyAdminNewRegistration({ name, email, department }) {
 
   const html = `
     <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:480px;margin:0 auto;padding:24px;">
-      <div style="background:#22c55e;color:#fff;padding:16px 24px;border-radius:12px 12px 0 0;">
+      <div style="background:#02B376;color:#fff;padding:16px 24px;border-radius:12px 12px 0 0;">
         <h2 style="margin:0;font-size:18px;">CALO Reports — New Registration</h2>
       </div>
       <div style="border:1px solid #e5e7eb;border-top:none;padding:24px;border-radius:0 0 12px 12px;">
@@ -23,7 +23,7 @@ export async function notifyAdminNewRegistration({ name, email, department }) {
           <tr><td style="padding:8px 0;color:#6b7280;">Department</td><td style="padding:8px 0;font-weight:600;color:#111827;">${department || 'Not specified'}</td></tr>
         </table>
         <div style="margin-top:24px;text-align:center;">
-          <a href="${APP_URL}/settings" style="display:inline-block;background:#22c55e;color:#fff;padding:12px 32px;border-radius:8px;text-decoration:none;font-weight:600;font-size:14px;">Review & Approve</a>
+          <a href="${APP_URL}/settings" style="display:inline-block;background:#02B376;color:#fff;padding:12px 32px;border-radius:8px;text-decoration:none;font-weight:600;font-size:14px;">Review & Approve</a>
         </div>
         <p style="margin:20px 0 0;font-size:12px;color:#9ca3af;text-align:center;">Go to Settings → Manage Users to approve or reject this registration.</p>
       </div>

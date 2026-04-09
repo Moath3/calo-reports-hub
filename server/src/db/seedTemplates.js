@@ -7,7 +7,7 @@ const HR_TEMPLATE = {
     title: "HR Performance Report",
     reportDate: "",
     companyName: "CALO",
-    brandColor: "#22c55e",
+    brandColor: "#02B376",
     prevMonth: "",
     kpiStrip: [
       { label: "Total Headcount", value: "0", unit: "", trend: "stable" },
@@ -142,7 +142,7 @@ const PRODUCTION_TEMPLATE = {
     title: "KSA MARKET GROWTH UPDATE",
     reportDate: "",
     companyName: "CALO",
-    brandColor: "#22c55e",
+    brandColor: "#02B376",
     prevMonth: "",
     kpiStrip: [
       { label: "Total KSA", value: "0", unit: "meals", trend: "up" },

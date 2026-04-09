@@ -57,7 +57,7 @@ export default function TemplatesPage() {
         name: newForm.name.trim(),
         description: newForm.description.trim(),
         category: newForm.category,
-        templateData: { generalInfo: { title: '', brandColor: '#22c55e' }, sections: [] },
+        templateData: { generalInfo: { title: '', brandColor: '#02B376' }, sections: [] },
         isShared: true,
       });
       toast.success('Template created');

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import toast from 'react-hot-toast';
 import { Eye, EyeOff, Loader2, Clock } from 'lucide-react';
+import CaloLogo from '../components/CaloLogo';
 
 export default function LoginPage() {
   const { login, register } = useAuth();

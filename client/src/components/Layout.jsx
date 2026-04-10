@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Outlet, NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import CaloLogo from './CaloLogo';
 import {
   LayoutDashboard, FilePlus, FileText, BookTemplate, Settings,
   LogOut, Menu, X, ChevronDown, User, HelpCircle
@@ -37,9 +38,7 @@ export default function Layout() {
       <aside className={`fixed inset-y-0 left-0 z-40 w-64 bg-white border-r border-gray-200 flex flex-col transition-transform duration-300 lg:static lg:translate-x-0 ${sideOpen ? 'translate-x-0' : '-translate-x-full'}`}>
         {/* Logo */}
         <div className="flex items-center gap-3 px-5 h-16 border-b border-gray-200 shrink-0">
-          <svg viewBox="0 0 100 32" className="h-8 w-auto" xmlns="http://www.w3.org/2000/svg">
-            <text x="2" y="27" fontFamily="Inter, system-ui, -apple-system, sans-serif" fontWeight="900" fontSize="32" fill="#3DAC6A" letterSpacing="-1">CALO</text>
-          </svg>
+          <CaloLogo className="h-7 w-auto" />
           <div>
             <div className="font-bold text-gray-900 text-sm leading-tight">Reports Hub</div>
             <div className="text-[11px] text-gray-500">Report Platform</div>

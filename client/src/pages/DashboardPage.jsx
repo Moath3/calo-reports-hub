@@ -3,11 +3,59 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import api from '../utils/api';
 import toast from 'react-hot-toast';
-import { format } from 'date-fns';
-import {
-  FileText, FilePlus, BookTemplate, Brain,
-  TrendingUp, Clock, Users, ArrowRight, Loader2
-} from 'lucide-react';
+import { format, formatDistanceToNow } from 'date-fns';
+import { Card, Pill, Eyebrow, Btn, Icon, PageHeader } from '../components/ui';
+
+function MiniStatCard({ label, value, trend, to, onClick }) {
+  return (
+    <div
+      onClick={onClick}
+      style={{
+        padding: '14px 16px',
+        background: '#fff', border: '1px solid var(--ink-200)',
+        borderRadius: 'var(--r-md)',
+        cursor: onClick ? 'pointer' : 'default',
+        transition: 'all .15s ease',
+      }}
+      onMouseEnter={e => { if (onClick) { e.currentTarget.style.borderColor = 'var(--calo-300)'; e.currentTarget.style.boxShadow = 'var(--shadow-md)'; } }}
+      onMouseLeave={e => { if (onClick) { e.currentTarget.style.borderColor = 'var(--ink-200)'; e.currentTarget.style.boxShadow = 'none'; } }}
+    >
+      <div style={{ fontSize: 10, fontWeight: 900, letterSpacing: '.12em', textTransform: 'uppercase', color: 'var(--ink-500)' }}>{label}</div>
+      <div className="num" style={{ fontSize: 24, fontWeight: 900, letterSpacing: '-0.03em', marginTop: 4, color: 'var(--ink-900)' }}>{value}</div>
+      {trend && <div style={{ fontSize: 11, color: 'var(--calo-600)', fontWeight: 700 }}>{trend}</div>}
+    </div>
+  );
+}
+
+function StatusPill({ status }) {
+  const map = {
+    published: { tone: 'solid', label: 'Live' },
+    done:      { tone: 'green', label: 'Done' },
+    draft:     { tone: 'amber', label: 'Draft' },
+    archived:  { tone: 'neutral', label: 'Archived' },
+  };
+  const s = map[status] || { tone: 'neutral', label: status || 'Draft' };
+  return <Pill tone={s.tone} size="sm">{s.label}</Pill>;
+}
+
+function timeAgo(iso) {
+  if (!iso) return '';
+  try { return formatDistanceToNow(new Date(iso), { addSuffix: true }); } catch { return ''; }
+}
+
+function ActivityItem({ who, did, what, time }) {
+  return (
+    <div style={{ display: 'flex', gap: 10, fontSize: 13 }}>
+      <div style={{ width: 6, height: 6, borderRadius: 3, background: 'var(--calo-500)', marginTop: 8, flexShrink: 0 }} />
+      <div style={{ flex: 1 }}>
+        <span style={{ fontWeight: 700 }}>{who}</span>
+        <span style={{ color: 'var(--ink-500)' }}> {did} </span>
+        <span style={{ fontWeight: 700 }}>{what}</span>
+        <div style={{ fontSize: 11, color: 'var(--ink-400)', marginTop: 2, fontWeight: 700 }}>{time}</div>
+      </div>
+    </div>
+  );
+}
 
 export default function DashboardPage() {
   const { user } = useAuth();
@@ -24,149 +72,150 @@ export default function DashboardPage() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <Loader2 className="h-8 w-8 animate-spin text-green-600" />
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 256 }}>
+        <div style={{ width: 40, height: 40, borderRadius: 20, border: '3px solid var(--calo-100)', borderTopColor: 'var(--calo-500)', animation: 'spinner 1s linear infinite' }} />
       </div>
     );
   }
 
-  const cards = [
-    { label: 'Total Reports', value: stats?.totalReports ?? 0, icon: FileText, color: 'bg-blue-50 text-blue-600', to: '/reports' },
-    { label: 'Drafts', value: stats?.draftReports ?? 0, icon: Clock, color: 'bg-amber-50 text-amber-600', to: '/reports?status=draft' },
-    { label: 'Published', value: stats?.publishedReports ?? 0, icon: TrendingUp, color: 'bg-green-50 text-green-600', to: '/reports?status=published' },
-    { label: 'Templates', value: stats?.totalTemplates ?? 0, icon: BookTemplate, color: 'bg-purple-50 text-purple-600', to: '/templates' },
+  const tot = stats?.totalReports ?? 0;
+  const drafts = stats?.draftReports ?? 0;
+  const pub = stats?.publishedReports ?? 0;
+  const tmpl = stats?.totalTemplates ?? 0;
+  const aiTot = stats?.aiUsage?.total ?? 0;
+  const recent = stats?.recentReports || [];
+
+  const kpiCards = [
+    { l: 'In progress', v: String(drafts),                 t: drafts > 0 ? `${drafts} pending` : 'All clear', to: '/reports?status=draft' },
+    { l: 'All reports', v: String(tot),                    t: tot > 0 ? 'Your workspace' : 'Start here',       to: '/reports' },
+    { l: 'Published',   v: String(pub),                    t: pub > 0 ? 'Live' : '—',                          to: '/reports?status=published' },
+    { l: 'Templates',   v: String(tmpl),                   t: 'Reusable',                                      to: '/templates' },
+    { l: 'AI calls',    v: String(aiTot),                  t: aiTot > 0 ? 'This workspace' : '—' },
+    { l: 'Users',       v: String(stats?.activeUsers ?? 1), t: user?.role === 'admin' ? 'Active' : 'You' },
   ];
 
   return (
-    <div className="space-y-6 animate-in">
-      {/* Welcome */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">
-            Welcome back, {user?.name?.split(' ')[0]}
-          </h1>
-          <p className="text-sm text-gray-500 mt-0.5">Here&apos;s your report overview</p>
-        </div>
-        <button onClick={() => navigate('/new')} className="btn-primary flex items-center gap-2 shrink-0">
-          <FilePlus className="h-4 w-4" /> New Report
-        </button>
-      </div>
+    <div className="animate-slide-up">
+      <PageHeader
+        eyebrow="HOME"
+        title={`Welcome back, ${user?.name?.split(' ')[0] || 'there'}`}
+        subtitle="Your reports, AI activity and team signals in one place."
+        actions={
+          <>
+            <Btn variant="secondary" icon="LayoutTemplate" onClick={() => navigate('/templates')}>Templates</Btn>
+            <Btn variant="primary" icon="Plus" onClick={() => navigate('/new')}>New report</Btn>
+          </>
+        }
+      />
 
-      {/* Stat cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        {cards.map(c => (
-          <button key={c.label} onClick={() => navigate(c.to)} className="card-hover p-5 text-left">
-            <div className={`h-10 w-10 rounded-lg ${c.color} flex items-center justify-center mb-3`}>
-              <c.icon className="h-5 w-5" />
-            </div>
-            <div className="text-2xl font-bold text-gray-900">{c.value}</div>
-            <div className="text-sm text-gray-500 mt-0.5">{c.label}</div>
-          </button>
+      {/* 6-col KPI strip */}
+      <div
+        className="kpi-grid"
+        style={{ display: 'grid', gridTemplateColumns: 'repeat(6, minmax(0, 1fr))', gap: 12, marginBottom: 24 }}
+      >
+        {kpiCards.map((k, i) => (
+          <MiniStatCard key={i} label={k.l} value={k.v} trend={k.t} onClick={k.to ? () => navigate(k.to) : undefined} />
         ))}
       </div>
 
-      <div className="grid lg:grid-cols-3 gap-6">
+      <div className="dash-grid" style={{ display: 'grid', gridTemplateColumns: '3fr 1fr', gap: 20 }}>
         {/* Recent reports */}
-        <div className="lg:col-span-2 card">
-          <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
-            <h2 className="font-semibold text-gray-900">Recent Reports</h2>
-            <button onClick={() => navigate('/reports')} className="text-sm text-green-600 hover:text-green-700 font-medium flex items-center gap-1">
-              View all <ArrowRight className="h-3.5 w-3.5" />
-            </button>
+        <Card padding={0}>
+          <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--ink-200)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div style={{ fontSize: 15, fontWeight: 900, letterSpacing: '-0.01em' }}>Recent reports</div>
+            <Pill tone="neutral" size="sm">{tot} total</Pill>
           </div>
-          <div className="divide-y divide-gray-100">
-            {stats?.recentReports?.length > 0 ? stats.recentReports.map(r => (
-              <button
-                key={r.id}
-                onClick={() => navigate(`/reports/${r.id}`)}
-                className="w-full flex items-center justify-between px-5 py-3.5 hover:bg-gray-50 transition-colors text-left"
-              >
-                <div className="min-w-0 flex-1">
-                  <div className="text-sm font-medium text-gray-900 truncate">{r.title}</div>
-                  <div className="text-xs text-gray-500 mt-0.5">
-                    {r.updated_at ? format(new Date(r.updated_at), 'MMM d, yyyy') : ''}
-                  </div>
-                </div>
-                <span className={`ml-3 shrink-0 ${r.status === 'published' ? 'badge-green' : r.status === 'draft' ? 'badge-amber' : 'badge-gray'}`}>
-                  {r.status}
-                </span>
-              </button>
-            )) : (
-              <div className="px-5 py-10 text-center text-sm text-gray-400">
-                No reports yet. Create your first report!
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Quick actions & AI usage */}
-        <div className="space-y-6">
-          <div className="card p-5">
-            <h3 className="font-semibold text-gray-900 mb-4">Quick Actions</h3>
-            <div className="space-y-2">
-              <button onClick={() => navigate('/new')} className="w-full btn-secondary text-left flex items-center gap-3 py-3">
-                <FilePlus className="h-4 w-4 text-green-600" /> Create New Report
-              </button>
-              <button onClick={() => navigate('/templates')} className="w-full btn-secondary text-left flex items-center gap-3 py-3">
-                <BookTemplate className="h-4 w-4 text-purple-600" /> Browse Templates
-              </button>
-              <button onClick={() => navigate('/reports')} className="w-full btn-secondary text-left flex items-center gap-3 py-3">
-                <FileText className="h-4 w-4 text-blue-600" /> View All Reports
-              </button>
+          {recent.length === 0 && (
+            <div style={{ padding: '48px 20px', textAlign: 'center' }}>
+              <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--ink-700)', marginBottom: 6 }}>No reports yet</div>
+              <div style={{ fontSize: 13, color: 'var(--ink-500)', marginBottom: 18 }}>Drop a file or pick a template to start your first report.</div>
+              <Btn variant="primary" icon="Plus" onClick={() => navigate('/new')}>New report</Btn>
             </div>
-          </div>
+          )}
+          {recent.map((r, i) => (
+            <div
+              key={r.id}
+              onClick={() => navigate(`/reports/${r.id}`)}
+              style={{
+                padding: '14px 20px',
+                borderBottom: i < recent.length - 1 ? '1px solid var(--ink-100)' : 'none',
+                display: 'grid', gridTemplateColumns: '1fr auto auto auto', gap: 16,
+                alignItems: 'center', cursor: 'pointer', transition: 'background .15s',
+              }}
+              onMouseEnter={e => e.currentTarget.style.background = 'var(--ink-50)'}
+              onMouseLeave={e => e.currentTarget.style.background = '#fff'}
+            >
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 14, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--ink-900)' }}>{r.title}</div>
+                <div style={{ fontSize: 11, color: 'var(--ink-500)', marginTop: 2 }}>
+                  {r.updated_at ? format(new Date(r.updated_at), 'MMM d, yyyy') : ''} · {timeAgo(r.updated_at)}
+                </div>
+              </div>
+              <StatusPill status={r.status} />
+              <Icon name="ChevronRight" size={16} color="var(--ink-400)" />
+            </div>
+          ))}
+        </Card>
 
-          <div className="card p-5">
-            <h3 className="font-semibold text-gray-900 mb-3">AI Usage</h3>
-            <div className="flex items-center gap-3 mb-3">
-              <div className="h-10 w-10 rounded-lg bg-indigo-50 flex items-center justify-center">
-                <Brain className="h-5 w-5 text-indigo-600" />
-              </div>
-              <div>
-                <div className="text-xl font-bold text-gray-900">{stats?.aiUsage?.total ?? 0}</div>
-                <div className="text-xs text-gray-500">Total AI requests</div>
-              </div>
+        {/* Sidebar cards */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <Card>
+            <Eyebrow>Quick start</Eyebrow>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 10 }}>
+              <Btn variant="primary" icon="Upload" full onClick={() => navigate('/new')}>Upload data</Btn>
+              <Btn variant="secondary" icon="LayoutTemplate" full onClick={() => navigate('/templates')}>From template</Btn>
+              <Btn variant="leaf" icon="Sparkles" full onClick={() => navigate('/new')}>Ask AI</Btn>
+            </div>
+          </Card>
+
+          <Card>
+            <Eyebrow>AI usage</Eyebrow>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginTop: 4 }}>
+              <span className="num" style={{ fontSize: 32, fontWeight: 900, letterSpacing: '-0.03em' }}>{aiTot}</span>
+              <span style={{ fontSize: 13, color: 'var(--ink-500)', fontWeight: 700 }}>generations</span>
             </div>
             {stats?.aiUsage?.byProvider && Object.keys(stats.aiUsage.byProvider).length > 0 && (
-              <div className="space-y-1.5 mt-3 pt-3 border-t border-gray-100">
+              <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
                 {Object.entries(stats.aiUsage.byProvider).map(([p, c]) => (
-                  <div key={p} className="flex justify-between text-sm">
-                    <span className="text-gray-500 capitalize">{p}</span>
-                    <span className="font-medium text-gray-900">{c}</span>
+                  <div key={p} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
+                    <span style={{ color: 'var(--ink-500)', textTransform: 'capitalize', fontWeight: 700 }}>{p}</span>
+                    <span className="num" style={{ fontWeight: 900, color: 'var(--ink-900)' }}>{c}</span>
                   </div>
                 ))}
               </div>
             )}
-          </div>
+          </Card>
 
-          {/* Admin stats */}
           {user?.role === 'admin' && stats?.totalUsers != null && (
-            <div className="card p-5">
-              <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
-                <Users className="h-4 w-4" /> Admin Overview
-              </h3>
-              <div className="space-y-2 text-sm">
-                <div className="flex justify-between">
-                  <span className="text-gray-500">Total Users</span>
-                  <span className="font-medium">{stats.totalUsers}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-500">Active Users</span>
-                  <span className="font-medium">{stats.activeUsers}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-500">All Reports</span>
-                  <span className="font-medium">{stats.companyReports}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-500">Company AI Calls</span>
-                  <span className="font-medium">{stats.companyAiUsage}</span>
-                </div>
+            <Card>
+              <Eyebrow>Admin</Eyebrow>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 8 }}>
+                {[
+                  ['Total users',     stats.totalUsers],
+                  ['Active users',    stats.activeUsers],
+                  ['All reports',     stats.companyReports],
+                  ['Company AI',      stats.companyAiUsage],
+                ].map(([k, v]) => (
+                  <div key={k} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
+                    <span style={{ color: 'var(--ink-500)', fontWeight: 700 }}>{k}</span>
+                    <span className="num" style={{ fontWeight: 900 }}>{v}</span>
+                  </div>
+                ))}
               </div>
-            </div>
+            </Card>
           )}
         </div>
       </div>
+
+      <style>{`
+        @media (max-width: 1023px) {
+          .kpi-grid { grid-template-columns: repeat(3, minmax(0, 1fr)) !important; }
+          .dash-grid { grid-template-columns: 1fr !important; }
+        }
+        @media (max-width: 639px) {
+          .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+        }
+      `}</style>
     </div>
   );
 }

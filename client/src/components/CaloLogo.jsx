@@ -1,9 +1,14 @@
-export default function CaloLogo({ className = 'h-8 w-auto', color = '#02B376' }) {
+export default function CaloLogo({ size = 28, color = '#02B376', className = '', style = {} }) {
+  const h = typeof size === 'number' ? size : 28;
+  const w = h * (746 / 320);
   return (
     <svg
-      viewBox="0 0 746 320"
-      className={className}
       xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 746 320"
+      width={w}
+      height={h}
+      className={className}
+      style={style}
       aria-label="CALO"
     >
       <g fill={color}>

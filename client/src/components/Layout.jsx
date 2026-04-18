@@ -1,108 +1,218 @@
 import { useState } from 'react';
-import { Outlet, NavLink, useNavigate } from 'react-router-dom';
+import { Outlet, NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import CaloLogo from './CaloLogo';
-import {
-  LayoutDashboard, FilePlus, FileText, BookTemplate, Settings,
-  LogOut, Menu, X, ChevronDown, User, HelpCircle
-} from 'lucide-react';
+import { Icon } from './ui';
+import { Menu, X, LogOut, Settings as SettingsIcon } from 'lucide-react';
 
-const nav = [
-  { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
-  { to: '/new', icon: FilePlus, label: 'New Report' },
-  { to: '/reports', icon: FileText, label: 'Reports' },
-  { to: '/templates', icon: BookTemplate, label: 'Templates' },
-  { to: '/settings', icon: Settings, label: 'Settings' },
-  { to: '/guide', icon: HelpCircle, label: 'How to Use' },
+const mainNav = [
+  { to: '/',           icon: 'Home',            label: 'Home' },
+  { to: '/reports',    icon: 'FolderOpen',      label: 'My Reports' },
+  { to: '/new',        icon: 'Plus',            label: 'New Report', accent: true },
+  { to: '/templates',  icon: 'LayoutTemplate',  label: 'Templates' },
 ];
+
+const footerNav = [
+  { to: '/guide',    icon: 'BookOpen', label: 'Guide' },
+  { to: '/settings', icon: 'Settings', label: 'Settings' },
+];
+
+function NavItem({ to, icon, label, active, accent, collapsed, onClick }) {
+  const [h, setH] = useState(false);
+  let bg = 'transparent', fg = 'var(--ink-700)';
+  if (accent && !active) { bg = 'var(--calo-500)'; fg = '#fff'; }
+  if (active) { bg = 'var(--ink-900)'; fg = '#fff'; }
+  else if (h && !accent) { bg = 'var(--ink-100)'; fg = 'var(--ink-900)'; }
+  return (
+    <NavLink
+      to={to}
+      end={to === '/'}
+      onClick={onClick}
+      onMouseEnter={() => setH(true)}
+      onMouseLeave={() => setH(false)}
+      style={{
+        display: 'flex', alignItems: 'center', gap: 12,
+        padding: '10px 12px', borderRadius: 'var(--r-md)',
+        background: bg, color: fg, fontSize: 14, fontWeight: 700,
+        textDecoration: 'none', letterSpacing: '-0.01em',
+        justifyContent: collapsed ? 'center' : 'flex-start',
+        transition: 'all .16s ease',
+      }}
+    >
+      <Icon name={icon} size={18} />
+      {!collapsed && <span>{label}</span>}
+    </NavLink>
+  );
+}
+
+function getInitials(name) {
+  if (!name) return 'U';
+  const parts = name.trim().split(/\s+/);
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
 
 export default function Layout() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const [sideOpen, setSideOpen] = useState(false);
+  const [collapsed, setCollapsed] = useState(false);
   const [userMenu, setUserMenu] = useState(false);
 
   const handleLogout = () => {
+    setUserMenu(false);
     logout();
     navigate('/login');
   };
 
+  const w = collapsed ? 76 : 240;
+  const isActive = (to) => to === '/' ? location.pathname === '/' : location.pathname.startsWith(to);
+
   return (
-    <div className="flex h-screen overflow-hidden bg-gray-50">
+    <div style={{ display: 'flex', minHeight: '100vh', background: 'var(--ink-50)' }}>
       {/* Mobile overlay */}
       {sideOpen && (
-        <div className="fixed inset-0 z-30 bg-black/40 lg:hidden" onClick={() => setSideOpen(false)} />
+        <div
+          className="lg:hidden"
+          style={{ position: 'fixed', inset: 0, background: 'rgba(10,31,23,.35)', zIndex: 30 }}
+          onClick={() => setSideOpen(false)}
+        />
       )}
 
       {/* Sidebar */}
-      <aside className={`fixed inset-y-0 left-0 z-40 w-64 bg-white border-r border-gray-200 flex flex-col transition-transform duration-300 lg:static lg:translate-x-0 ${sideOpen ? 'translate-x-0' : '-translate-x-full'}`}>
-        {/* Logo */}
-        <div className="flex items-center gap-3 px-5 h-16 border-b border-gray-200 shrink-0">
-          <CaloLogo className="h-7 w-auto" />
-          <div>
-            <div className="font-bold text-gray-900 text-sm leading-tight">Reports Hub</div>
-            <div className="text-[11px] text-gray-500">Report Platform</div>
-          </div>
-          <button className="ml-auto lg:hidden" onClick={() => setSideOpen(false)}>
-            <X className="h-5 w-5 text-gray-500" />
-          </button>
+      <aside
+        className={sideOpen ? 'sidebar-open' : ''}
+        style={{
+          width: w,
+          flexShrink: 0,
+          background: '#fff',
+          borderRight: '1px solid var(--ink-200)',
+          display: 'flex', flexDirection: 'column',
+          transition: 'width .25s ease, transform .25s ease',
+          position: 'sticky', top: 0, height: '100vh',
+          zIndex: 40,
+        }}
+      >
+        <style>{`
+          @media (max-width: 1023px) {
+            aside {
+              position: fixed !important;
+              transform: translateX(-100%);
+              width: 240px !important;
+            }
+            aside.sidebar-open { transform: translateX(0); }
+          }
+        `}</style>
+
+        {/* Logo + collapse toggle */}
+        <div style={{ padding: '22px 20px 14px 20px', display: 'flex', alignItems: 'center', gap: 10 }}>
+          <CaloLogo size={22} color="var(--calo-500)" />
+          {!collapsed && (
+            <span style={{ fontSize: 11, fontWeight: 900, letterSpacing: '.16em', color: 'var(--ink-500)' }}>REPORTS</span>
+          )}
+          <div style={{ flex: 1 }} />
+          {!collapsed && (
+            <button
+              className="lg:hidden"
+              onClick={() => setSideOpen(false)}
+              style={{ padding: 4, color: 'var(--ink-500)', border: 'none', background: 'none', cursor: 'pointer' }}
+            >
+              <X size={18} />
+            </button>
+          )}
         </div>
 
-        {/* Nav links */}
-        <nav className="flex-1 overflow-y-auto py-4 px-3 space-y-1">
-          {nav.map(n => (
-            <NavLink
+        {/* Main nav */}
+        <nav style={{ padding: '8px 12px', display: 'flex', flexDirection: 'column', gap: 2 }}>
+          {mainNav.map(n => (
+            <NavItem
               key={n.to}
-              to={n.to}
-              end={n.to === '/'}
+              {...n}
+              active={isActive(n.to)}
+              collapsed={collapsed}
               onClick={() => setSideOpen(false)}
-              className={({ isActive }) =>
-                `flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
-                  isActive
-                    ? 'bg-green-50 text-green-700'
-                    : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
-                }`
-              }
-            >
-              <n.icon className="h-5 w-5 shrink-0" />
-              {n.label}
-            </NavLink>
+            />
           ))}
         </nav>
 
-        {/* User section */}
-        <div className="border-t border-gray-200 p-3 shrink-0">
-          <div className="relative">
+        <div style={{ flex: 1 }} />
+
+        {/* Footer nav + user */}
+        <div style={{ padding: '8px 12px 16px 12px', borderTop: '1px solid var(--ink-100)' }}>
+          {footerNav.map(n => (
+            <NavItem
+              key={n.to}
+              {...n}
+              active={isActive(n.to)}
+              collapsed={collapsed}
+              onClick={() => setSideOpen(false)}
+            />
+          ))}
+
+          {/* User profile */}
+          <div style={{ position: 'relative' }}>
             <button
-              onClick={() => setUserMenu(!userMenu)}
-              className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-gray-100 transition-colors"
+              onClick={() => setUserMenu(v => !v)}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 10,
+                padding: '10px 10px', marginTop: 8, width: '100%',
+                background: userMenu ? 'var(--ink-100)' : 'transparent',
+                borderRadius: 'var(--r-md)', border: 'none',
+                cursor: 'pointer', textAlign: 'left',
+              }}
             >
-              <div className="h-8 w-8 rounded-full bg-green-100 flex items-center justify-center shrink-0">
-                <User className="h-4 w-4 text-green-700" />
-              </div>
-              <div className="flex-1 text-left min-w-0">
-                <div className="text-sm font-medium text-gray-900 truncate">{user?.name}</div>
-                <div className="text-xs text-gray-500 truncate">{user?.email}</div>
-              </div>
-              <ChevronDown className={`h-4 w-4 text-gray-400 transition-transform ${userMenu ? 'rotate-180' : ''}`} />
+              <div style={{
+                width: 32, height: 32, borderRadius: '50%',
+                background: 'linear-gradient(135deg, var(--calo-400), var(--calo-700))',
+                color: '#fff', fontWeight: 900, fontSize: 12,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                flexShrink: 0,
+              }}>{getInitials(user?.name)}</div>
+              {!collapsed && (
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', color: 'var(--ink-900)' }}>
+                    {user?.name || 'User'}
+                  </div>
+                  <div style={{ fontSize: 11, color: 'var(--ink-500)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {user?.role === 'admin' ? 'Admin' : 'Employee'}{user?.department ? ` · ${user.department}` : ''}
+                  </div>
+                </div>
+              )}
             </button>
 
             {userMenu && (
-              <div className="absolute bottom-full left-0 right-0 mb-1 bg-white rounded-lg border border-gray-200 shadow-lg py-1 z-50">
-                <div className="px-3 py-2 text-xs text-gray-500 border-b border-gray-100">
-                  {user?.role === 'admin' ? 'Administrator' : 'Employee'} {user?.department ? `- ${user.department}` : ''}
-                </div>
+              <div style={{
+                position: 'absolute', bottom: '100%', left: 0, right: 0, marginBottom: 4,
+                background: '#fff', borderRadius: 'var(--r-md)',
+                border: '1px solid var(--ink-200)', boxShadow: 'var(--shadow-lg)',
+                padding: 4, zIndex: 50,
+              }}>
                 <button
-                  onClick={() => { setUserMenu(false); navigate('/settings'); setSideOpen(false); }}
-                  className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                  onClick={() => { setUserMenu(false); navigate('/settings'); }}
+                  style={{
+                    width: '100%', textAlign: 'left', padding: '8px 12px', border: 'none', background: 'transparent',
+                    fontSize: 13, fontWeight: 700, color: 'var(--ink-700)',
+                    borderRadius: 'var(--r-sm)', cursor: 'pointer',
+                    display: 'flex', alignItems: 'center', gap: 8,
+                  }}
+                  onMouseEnter={e => e.currentTarget.style.background = 'var(--ink-50)'}
+                  onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
                 >
-                  <Settings className="h-4 w-4" /> Settings
+                  <SettingsIcon size={14} /> Settings
                 </button>
                 <button
                   onClick={handleLogout}
-                  className="w-full text-left px-3 py-2 text-sm text-red-600 hover:bg-red-50 flex items-center gap-2"
+                  style={{
+                    width: '100%', textAlign: 'left', padding: '8px 12px', border: 'none', background: 'transparent',
+                    fontSize: 13, fontWeight: 700, color: 'var(--danger)',
+                    borderRadius: 'var(--r-sm)', cursor: 'pointer',
+                    display: 'flex', alignItems: 'center', gap: 8,
+                  }}
+                  onMouseEnter={e => e.currentTarget.style.background = '#FDECEC'}
+                  onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
                 >
-                  <LogOut className="h-4 w-4" /> Sign Out
+                  <LogOut size={14} /> Sign out
                 </button>
               </div>
             )}
@@ -110,21 +220,30 @@ export default function Layout() {
         </div>
       </aside>
 
-      {/* Main content */}
-      <div className="flex-1 flex flex-col min-w-0">
-        {/* Top bar (mobile) */}
-        <header className="h-16 border-b border-gray-200 bg-white flex items-center px-4 shrink-0 lg:px-6">
-          <button className="lg:hidden mr-3" onClick={() => setSideOpen(true)}>
-            <Menu className="h-6 w-6 text-gray-600" />
+      {/* Main */}
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+        {/* Mobile top bar */}
+        <header
+          className="lg:hidden"
+          style={{
+            height: 56, borderBottom: '1px solid var(--ink-200)',
+            background: '#fff', display: 'flex', alignItems: 'center',
+            padding: '0 16px', flexShrink: 0,
+          }}
+        >
+          <button
+            onClick={() => setSideOpen(true)}
+            style={{ padding: 6, border: 'none', background: 'none', cursor: 'pointer', color: 'var(--ink-700)' }}
+          >
+            <Menu size={22} />
           </button>
-          <div className="flex-1" />
-          <div className="text-sm text-gray-500 hidden sm:block">
-            {new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+          <div style={{ marginLeft: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
+            <CaloLogo size={18} color="var(--calo-500)" />
+            <span style={{ fontSize: 11, fontWeight: 900, letterSpacing: '.16em', color: 'var(--ink-500)' }}>REPORTS</span>
           </div>
         </header>
 
-        {/* Page content */}
-        <main className="flex-1 overflow-y-auto p-4 lg:p-6">
+        <main style={{ flex: 1, padding: '28px 40px', minWidth: 0, overflowX: 'hidden' }}>
           <Outlet />
         </main>
       </div>

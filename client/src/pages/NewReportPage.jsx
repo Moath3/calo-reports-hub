@@ -3,14 +3,107 @@ import { useNavigate } from 'react-router-dom';
 import { useDropzone } from 'react-dropzone';
 import api from '../utils/api';
 import toast from 'react-hot-toast';
-import {
-  Upload, FileSpreadsheet, Brain, Loader2, Sparkles,
-  ChevronRight, X, FileText, Settings2, LayoutTemplate
-} from 'lucide-react';
+import { Card, Pill, Btn, Icon, LabeledInput } from '../components/ui';
+
+function StylePick({ label, sub, selected, onClick }) {
+  const [hover, setHover] = useState(false);
+  const active = selected;
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}
+      style={{
+        padding: '12px 14px', borderRadius: 10,
+        border: `1px solid ${active ? 'var(--calo-500)' : 'var(--ink-200)'}`,
+        background: active ? 'var(--calo-50)' : (hover ? 'var(--ink-50)' : '#fff'),
+        textAlign: 'left', position: 'relative', cursor: 'pointer', flex: 1,
+      }}
+    >
+      {active && (
+        <div style={{
+          position: 'absolute', top: 6, right: 6,
+          width: 16, height: 16, borderRadius: 8,
+          background: 'var(--calo-500)', color: '#fff',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }}>
+          <Icon name="Check" size={10} />
+        </div>
+      )}
+      <div style={{ fontSize: 13, fontWeight: 900, color: active ? 'var(--calo-800)' : 'var(--ink-900)' }}>{label}</div>
+      <div style={{ fontSize: 11, color: 'var(--ink-500)', marginTop: 2 }}>{sub}</div>
+    </button>
+  );
+}
+
+function GenerationProgress() {
+  const steps = [
+    { label: 'Reading your file', icon: 'FileSearch' },
+    { label: 'Understanding the data', icon: 'Brain' },
+    { label: 'Writing sections', icon: 'PenLine' },
+    { label: 'Calculating metrics', icon: 'BarChart3' },
+    { label: 'Polishing the layout', icon: 'Sparkles' },
+  ];
+  const [step, setStep] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setStep(s => (s + 1) % (steps.length + 1)), 1300);
+    return () => clearInterval(id);
+  }, [steps.length]);
+
+  return (
+    <Card padding={40}>
+      <div style={{ textAlign: 'center', marginBottom: 28 }}>
+        <div style={{ position: 'relative', width: 80, height: 80, margin: '0 auto 20px' }}>
+          <div style={{
+            position: 'absolute', inset: 0, borderRadius: '50%',
+            border: '3px solid var(--calo-100)',
+            borderTopColor: 'var(--calo-500)',
+            animation: 'spinner 1.2s linear infinite',
+          }} />
+          <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <Icon name="Sparkles" size={30} color="var(--calo-500)" />
+          </div>
+        </div>
+        <h2 style={{ fontSize: 26, fontWeight: 900, letterSpacing: '-0.02em', margin: '0 0 6px' }}>Building your report…</h2>
+        <p style={{ fontSize: 14, color: 'var(--ink-500)', margin: 0 }}>This usually takes 20–40 seconds.</p>
+      </div>
+
+      <div style={{ maxWidth: 480, margin: '0 auto' }}>
+        {steps.map((s, i) => {
+          const done = i < step;
+          const active = i === step;
+          return (
+            <div key={i} style={{
+              display: 'flex', alignItems: 'center', gap: 14,
+              padding: '12px 14px', borderRadius: 10,
+              background: active ? 'var(--calo-50)' : 'transparent',
+              opacity: i > step ? 0.4 : 1,
+              transition: 'all .3s',
+            }}>
+              <div style={{
+                width: 28, height: 28, borderRadius: '50%',
+                background: done ? 'var(--calo-500)' : (active ? 'var(--calo-500)' : 'var(--ink-100)'),
+                color: done || active ? '#fff' : 'var(--ink-500)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                flexShrink: 0,
+              }}>
+                {done ? <Icon name="Check" size={15} /> : <Icon name={s.icon} size={15} />}
+              </div>
+              <div style={{ flex: 1, fontSize: 14, fontWeight: 700, color: done || active ? 'var(--ink-900)' : 'var(--ink-500)' }}>
+                {s.label}
+              </div>
+              {done && <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--calo-600)' }}>Done</span>}
+            </div>
+          );
+        })}
+      </div>
+    </Card>
+  );
+}
 
 export default function NewReportPage() {
   const navigate = useNavigate();
-  const [step, setStep] = useState(1); // 1=upload, 2=configure, 3=generating
+  const [phase, setPhase] = useState('drop'); // drop | preview | gen
   const [file, setFile] = useState(null);
   const [dataSummary, setDataSummary] = useState(null);
   const [title, setTitle] = useState('');
@@ -21,6 +114,7 @@ export default function NewReportPage() {
   const [loading, setLoading] = useState(false);
   const [templates, setTemplates] = useState([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState('');
+  const [style, setStyle] = useState('standard');
 
   const onDrop = useCallback(async (accepted) => {
     if (!accepted.length) return;
@@ -31,7 +125,6 @@ export default function NewReportPage() {
       const res = await api.uploadFile(f);
       setDataSummary(res.parsedData || res.summary);
       setTitle(f.name.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' '));
-      // Fetch available providers and templates
       try {
         const pRes = await api.getProviders();
         setProviders(pRes.providers || []);
@@ -41,14 +134,12 @@ export default function NewReportPage() {
         const tRes = await api.getTemplates();
         setTemplates(tRes.templates || []);
       } catch { /* ignore */ }
-      setStep(2);
-      toast.success('File processed successfully');
+      setPhase('preview');
+      toast.success('File processed');
     } catch (err) {
       toast.error(err.message || 'Failed to process file');
       setFile(null);
-    } finally {
-      setLoading(false);
-    }
+    } finally { setLoading(false); }
   }, []);
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
@@ -68,11 +159,11 @@ export default function NewReportPage() {
 
   const handleGenerate = async () => {
     if (!title.trim()) { toast.error('Please enter a report title'); return; }
-    setStep(3);
+    setPhase('gen');
     setLoading(true);
     try {
-      const res = await api.analyzeData(dataSummary, provider, customPrompt || undefined, selectedTemplateId || undefined);
-      // Create report with AI-generated data
+      const extra = [customPrompt, style !== 'standard' ? `Style: ${style}` : ''].filter(Boolean).join('\n\n') || undefined;
+      const res = await api.analyzeData(dataSummary, provider, extra, selectedTemplateId || undefined);
       const aiReport = res.reportData || res.report || {};
       const createRes = await api.createReport({
         title: title.trim(),
@@ -87,10 +178,8 @@ export default function NewReportPage() {
       navigate(`/reports/${createRes.id}`);
     } catch (err) {
       toast.error(err.message || 'AI generation failed');
-      setStep(2);
-    } finally {
-      setLoading(false);
-    }
+      setPhase('preview');
+    } finally { setLoading(false); }
   };
 
   const handleSkipAI = async () => {
@@ -107,15 +196,11 @@ export default function NewReportPage() {
       });
       toast.success('Empty report created');
       navigate(`/reports/${createRes.id}`);
-    } catch (err) {
-      toast.error(err.message || 'Failed to create report');
-    } finally {
-      setLoading(false);
-    }
+    } catch (err) { toast.error(err.message || 'Failed to create report'); }
+    finally { setLoading(false); }
   };
 
-  // Also allow creating blank report without file
-  const handleBlankReport = async () => {
+  const handleBlank = async () => {
     const t = prompt('Enter report title:');
     if (!t?.trim()) return;
     setLoading(true);
@@ -127,194 +212,221 @@ export default function NewReportPage() {
       });
       toast.success('Blank report created');
       navigate(`/reports/${createRes.id}`);
-    } catch (err) {
-      toast.error(err.message || 'Failed to create report');
-    } finally {
-      setLoading(false);
-    }
+    } catch (err) { toast.error(err.message || 'Failed to create'); }
+    finally { setLoading(false); }
   };
 
   return (
-    <div className="max-w-3xl mx-auto space-y-6 animate-in">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">New Report</h1>
-          <p className="text-sm text-gray-500 mt-0.5">Upload data and generate with AI</p>
-        </div>
-        <button onClick={handleBlankReport} className="btn-secondary text-sm">
-          Blank Report
+    <div className="animate-slide-up" style={{ maxWidth: 880, margin: '0 auto' }}>
+      <div style={{ marginBottom: 28 }}>
+        <button
+          onClick={() => navigate('/')}
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13, color: 'var(--ink-500)', fontWeight: 700, marginBottom: 12, background: 'none', border: 'none', cursor: 'pointer' }}
+        >
+          <Icon name="ArrowLeft" size={14} /> Home
         </button>
+        <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
+          <div>
+            <h1 style={{ margin: 0, fontSize: 40, fontWeight: 900, letterSpacing: '-0.03em', lineHeight: 1.05 }}>New report</h1>
+            <p style={{ fontSize: 16, color: 'var(--ink-500)', margin: '8px 0 0', maxWidth: 560 }}>
+              Drop a file. Calo AI reads it and builds your report in about 30 seconds.
+            </p>
+          </div>
+          <Btn variant="ghost" onClick={handleBlank}>Blank report</Btn>
+        </div>
       </div>
 
-      {/* Steps */}
-      <div className="flex items-center gap-2 text-sm">
-        {['Upload Data', 'Configure', 'Generate'].map((s, i) => (
-          <div key={s} className="flex items-center gap-2">
-            {i > 0 && <ChevronRight className="h-4 w-4 text-gray-300" />}
-            <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full ${
-              step > i + 1 ? 'bg-green-100 text-green-700' : step === i + 1 ? 'bg-green-600 text-white' : 'bg-gray-100 text-gray-400'
-            }`}>
-              <span className="font-medium">{i + 1}</span>
-              <span className="hidden sm:inline">{s}</span>
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {/* Step 1: Upload */}
-      {step === 1 && (
-        <div className="card p-8">
-          <div
-            {...getRootProps()}
-            className={`border-2 border-dashed rounded-xl p-12 text-center cursor-pointer transition-colors ${
-              isDragActive ? 'border-green-400 bg-green-50' : 'border-gray-300 hover:border-green-400 hover:bg-green-50/50'
-            } ${loading ? 'opacity-50 pointer-events-none' : ''}`}
-          >
-            <input {...getInputProps()} />
-            {loading ? (
-              <div className="flex flex-col items-center gap-3">
-                <Loader2 className="h-12 w-12 text-green-600 animate-spin" />
-                <p className="text-sm text-gray-600">Processing file...</p>
+      {phase === 'drop' && (
+        <div
+          {...getRootProps()}
+          style={{
+            background: isDragActive ? 'var(--calo-50)' : '#fff',
+            border: `2px dashed ${isDragActive ? 'var(--calo-500)' : 'var(--ink-300)'}`,
+            borderRadius: 'var(--r-xl)',
+            padding: '72px 40px',
+            textAlign: 'center',
+            cursor: 'pointer',
+            transition: 'all .2s ease',
+            opacity: loading ? 0.6 : 1,
+            pointerEvents: loading ? 'none' : 'auto',
+          }}
+        >
+          <input {...getInputProps()} />
+          {loading ? (
+            <>
+              <div style={{ width: 56, height: 56, margin: '0 auto 20px', borderRadius: 16, background: 'var(--calo-50)', display: 'grid', placeItems: 'center' }}>
+                <div style={{ width: 28, height: 28, borderRadius: 14, border: '3px solid var(--calo-200)', borderTopColor: 'var(--calo-500)', animation: 'spinner 1s linear infinite' }} />
               </div>
-            ) : (
-              <div className="flex flex-col items-center gap-3">
-                <div className="h-16 w-16 rounded-2xl bg-green-50 flex items-center justify-center">
-                  <Upload className="h-8 w-8 text-green-600" />
-                </div>
-                <div>
-                  <p className="font-semibold text-gray-900">Drop your file here or click to browse</p>
-                  <p className="text-sm text-gray-500 mt-1">Supports Excel, CSV, JSON, HTML, Text (max 25MB)</p>
-                </div>
+              <div style={{ fontSize: 18, fontWeight: 900, letterSpacing: '-0.02em' }}>Reading your file…</div>
+            </>
+          ) : (
+            <>
+              <div style={{
+                width: 72, height: 72, margin: '0 auto 20px',
+                borderRadius: 20, background: 'var(--calo-50)',
+                color: 'var(--calo-700)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+              }}>
+                <Icon name="Upload" size={32} />
               </div>
-            )}
-          </div>
+              <div style={{ fontSize: 22, fontWeight: 900, letterSpacing: '-0.02em', marginBottom: 6 }}>Drop your file here</div>
+              <div style={{ fontSize: 14, color: 'var(--ink-500)', marginBottom: 20 }}>
+                or click to browse — Excel, CSV, JSON, or plain text
+              </div>
+              <div style={{
+                display: 'inline-flex', alignItems: 'center', gap: 14,
+                padding: '12px 18px', background: 'var(--ink-50)',
+                borderRadius: 'var(--r-pill)',
+                fontSize: 12, fontWeight: 700, color: 'var(--ink-500)',
+              }}>
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                  <Icon name="Lock" size={12} /> Your data stays private
+                </span>
+                <span style={{ width: 3, height: 3, borderRadius: 2, background: 'var(--ink-400)' }} />
+                <span>Up to 25 MB</span>
+              </div>
+            </>
+          )}
         </div>
       )}
 
-      {/* Step 2: Configure */}
-      {step === 2 && (
-        <div className="space-y-4">
-          {/* File info */}
-          <div className="card p-4 flex items-center gap-3">
-            <div className="h-10 w-10 rounded-lg bg-blue-50 flex items-center justify-center shrink-0">
-              <FileSpreadsheet className="h-5 w-5 text-blue-600" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="text-sm font-medium text-gray-900 truncate">{file?.name}</div>
-              <div className="text-xs text-gray-500">{(file?.size / 1024).toFixed(1)} KB</div>
-            </div>
-            <button onClick={() => { setStep(1); setFile(null); setDataSummary(null); }} className="btn-ghost p-1.5">
-              <X className="h-4 w-4" />
-            </button>
-          </div>
-
-          {/* Data summary */}
-          {dataSummary && (
-            <div className="card p-4">
-              <h3 className="text-sm font-semibold text-gray-700 mb-2 flex items-center gap-2">
-                <FileText className="h-4 w-4" /> Data Summary
-              </h3>
-              <pre className="text-xs text-gray-600 bg-gray-50 rounded-lg p-3 max-h-40 overflow-y-auto whitespace-pre-wrap">
-                {typeof dataSummary === 'string' ? dataSummary : JSON.stringify(dataSummary, null, 2)}
-              </pre>
-            </div>
-          )}
-
-          {/* Report config */}
-          <div className="card p-6 space-y-4">
-            <h3 className="font-semibold text-gray-900 flex items-center gap-2">
-              <Settings2 className="h-5 w-5" /> Report Settings
-            </h3>
-
-            <div>
-              <label className="label">Report Title</label>
-              <input className="input-field" value={title} onChange={e => setTitle(e.target.value)} placeholder="My Weekly Report" />
+      {phase === 'preview' && file && (
+        <div className="new-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+          <Card padding={24}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 20 }}>
+              <div style={{ width: 52, height: 52, borderRadius: 14, background: 'var(--calo-50)', color: 'var(--calo-700)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <Icon name="FileSpreadsheet" size={26} />
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 14, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{file.name}</div>
+                <div style={{ fontSize: 12, color: 'var(--ink-500)', marginTop: 2 }}>
+                  {(file.size/1024).toFixed(0)} KB{dataSummary?.rows ? ` · ${dataSummary.rows} rows × ${dataSummary.columns || dataSummary.cols || ''} columns` : ''}
+                </div>
+              </div>
+              <button
+                onClick={() => { setPhase('drop'); setFile(null); setDataSummary(null); }}
+                style={{ padding: 6, color: 'var(--ink-400)', background: 'none', border: 'none', cursor: 'pointer' }}
+              >
+                <Icon name="X" size={16} />
+              </button>
             </div>
 
-            <div>
-              <label className="label">Description (optional)</label>
-              <textarea className="input-field" rows={2} value={description} onChange={e => setDescription(e.target.value)} placeholder="Brief description..." />
+            <div className="eyebrow">Detected</div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 8 }}>
+              {[
+                { l: 'Type', v: dataSummary?.type || 'Report' },
+                { l: 'Rows', v: dataSummary?.rows || '—' },
+                { l: 'Columns', v: dataSummary?.columns || dataSummary?.cols || '—' },
+                { l: 'Format', v: (file.name.split('.').pop() || '').toUpperCase() },
+              ].map((d, i) => (
+                <div key={i} style={{ padding: '10px 12px', background: 'var(--ink-50)', borderRadius: 10 }}>
+                  <div style={{ fontSize: 10, fontWeight: 900, letterSpacing: '.1em', textTransform: 'uppercase', color: 'var(--ink-500)' }}>{d.l}</div>
+                  <div style={{ fontSize: 14, fontWeight: 700, marginTop: 2 }}>{d.v}</div>
+                </div>
+              ))}
             </div>
 
-            <div>
-              <label className="label">AI Provider</label>
-              <select className="input-field" value={provider} onChange={e => setProvider(e.target.value)}>
+            <div style={{ marginTop: 20, padding: 14, background: 'var(--calo-50)', border: '1px solid var(--calo-100)', borderRadius: 12, display: 'flex', gap: 10 }}>
+              <Icon name="Sparkles" size={16} color="var(--calo-700)" style={{ marginTop: 2, flexShrink: 0 }} />
+              <div style={{ fontSize: 13, color: 'var(--calo-800)', lineHeight: 1.5 }}>
+                <strong>AI ready.</strong> Calo AI will read your data and build KPIs, sections, tables, and an executive summary.
+              </div>
+            </div>
+          </Card>
+
+          <Card padding={24}>
+            <div className="eyebrow">Report details</div>
+            <div style={{ marginTop: 8 }}>
+              <LabeledInput label="Title" value={title} onChange={setTitle} placeholder="My Weekly Report" />
+            </div>
+
+            <div style={{ marginTop: 14 }}>
+              <label className="label">Style</label>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <StylePick label="Executive" sub="Short & visual"     selected={style === 'executive'} onClick={() => setStyle('executive')} />
+                <StylePick label="Standard"  sub="Balanced"            selected={style === 'standard'}  onClick={() => setStyle('standard')} />
+                <StylePick label="Detailed"  sub="All the data"        selected={style === 'detailed'}  onClick={() => setStyle('detailed')} />
+              </div>
+            </div>
+
+            <div style={{ marginTop: 14 }}>
+              <label className="label">AI model</label>
+              <select
+                value={provider}
+                onChange={e => setProvider(e.target.value)}
+                className="input-field"
+              >
                 {providers.length > 0 ? providers.map(p => (
                   <option key={p.id} value={p.id}>{p.name}</option>
                 )) : (
                   <>
-                    <option value="claude">Anthropic Claude</option>
-                    <option value="gemini">Google Gemini</option>
-                    <option value="perplexity">Perplexity AI</option>
+                    <option value="claude">Claude Sonnet 4.5 — best quality</option>
+                    <option value="gemini">Gemini 2.0 Flash — fastest</option>
+                    <option value="perplexity">Perplexity — web research</option>
                   </>
                 )}
               </select>
             </div>
 
             {templates.length > 0 && (
-              <div>
-                <label className="label">Report Template</label>
+              <div style={{ marginTop: 14 }}>
+                <label className="label">Template (optional)</label>
                 <select
-                  className="input-field"
                   value={selectedTemplateId}
                   onChange={e => setSelectedTemplateId(e.target.value)}
+                  className="input-field"
                 >
                   <option value="">None — AI decides structure</option>
-                  {templates.map(t => (
-                    <option key={t.id} value={t.id}>
-                      {t.name} ({t.category || 'general'})
-                    </option>
-                  ))}
+                  {templates.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
                 </select>
-                <p className="text-xs text-gray-400 mt-1">Select a template to guide the AI's report structure</p>
               </div>
             )}
 
-            <div>
-              <label className="label">Custom Instructions (optional)</label>
+            <div style={{ marginTop: 14 }}>
+              <label className="label">Extra notes for AI (optional)</label>
               <textarea
-                className="input-field"
-                rows={3}
                 value={customPrompt}
                 onChange={e => setCustomPrompt(e.target.value)}
-                placeholder="e.g. Focus on weekly growth metrics, use comparison tables..."
+                className="input-field"
+                rows={3}
+                placeholder="e.g. Focus on waste reduction, include kitchen-by-kitchen breakdown"
+                style={{ resize: 'vertical', fontFamily: 'inherit' }}
               />
             </div>
-          </div>
 
-          <div className="flex gap-3">
-            <button onClick={handleGenerate} disabled={loading} className="btn-primary flex-1 flex items-center justify-center gap-2">
-              <Sparkles className="h-4 w-4" /> Generate with AI
+            <button
+              onClick={handleGenerate}
+              disabled={loading}
+              style={{
+                marginTop: 20, width: '100%',
+                background: 'var(--calo-500)', color: '#fff', border: 'none',
+                padding: '14px 18px', borderRadius: 'var(--r-pill)',
+                fontSize: 15, fontWeight: 900, letterSpacing: '-0.01em',
+                display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                boxShadow: '0 4px 14px rgba(2,179,118,.35)', cursor: 'pointer',
+                opacity: loading ? 0.5 : 1,
+              }}
+            >
+              <Icon name="Sparkles" size={17} />
+              Generate report
+              <Icon name="ArrowRight" size={17} />
             </button>
-            <button onClick={handleSkipAI} disabled={loading} className="btn-secondary">
-              Skip AI
-            </button>
-          </div>
+            <div style={{ textAlign: 'center', marginTop: 10, fontSize: 12, color: 'var(--ink-500)' }}>
+              <button onClick={handleSkipAI} style={{ color: 'var(--ink-500)', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline', fontSize: 12, fontWeight: 700 }}>
+                Skip AI — start with an empty report
+              </button>
+            </div>
+          </Card>
         </div>
       )}
 
-      {/* Step 3: Generating */}
-      {step === 3 && (
-        <div className="card p-12 text-center">
-          <div className="flex flex-col items-center gap-4">
-            <div className="relative">
-              <div className="h-20 w-20 rounded-2xl bg-green-50 flex items-center justify-center">
-                <Brain className="h-10 w-10 text-green-600" />
-              </div>
-              <div className="absolute -bottom-1 -right-1 h-8 w-8 rounded-full bg-green-600 flex items-center justify-center">
-                <Loader2 className="h-4 w-4 text-white animate-spin" />
-              </div>
-            </div>
-            <div>
-              <h2 className="text-xl font-bold text-gray-900">Generating your report...</h2>
-              <p className="text-sm text-gray-500 mt-1">AI is analyzing your data and creating report sections</p>
-            </div>
-            <div className="w-64 h-2 bg-gray-200 rounded-full overflow-hidden mt-2">
-              <div className="h-full bg-green-500 rounded-full animate-pulse" style={{ width: '60%' }} />
-            </div>
-          </div>
-        </div>
-      )}
+      {phase === 'gen' && <GenerationProgress />}
+
+      <style>{`
+        @media (max-width: 767px) {
+          .new-grid { grid-template-columns: 1fr !important; }
+        }
+      `}</style>
     </div>
   );
 }

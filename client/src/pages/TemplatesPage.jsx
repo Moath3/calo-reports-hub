@@ -3,16 +3,13 @@ import { useNavigate } from 'react-router-dom';
 import api from '../utils/api';
 import toast from 'react-hot-toast';
 import { format } from 'date-fns';
-import {
-  BookTemplate, Plus, Trash2, Edit, Loader2, Copy,
-  Search, Tag, Users, User, Download
-} from 'lucide-react';
+import { Card, Pill, Btn, Icon, PageHeader, LabeledInput } from '../components/ui';
 
 export default function TemplatesPage() {
   const navigate = useNavigate();
   const [templates, setTemplates] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState('all'); // all, mine
+  const [filter, setFilter] = useState('all');
   const [categories, setCategories] = useState([]);
   const [catFilter, setCatFilter] = useState('');
   const [search, setSearch] = useState('');
@@ -28,11 +25,8 @@ export default function TemplatesPage() {
       if (catFilter) params.category = catFilter;
       const res = await api.getTemplates(params);
       setTemplates(res.templates || []);
-    } catch {
-      toast.error('Failed to load templates');
-    } finally {
-      setLoading(false);
-    }
+    } catch { toast.error('Failed to load templates'); }
+    finally { setLoading(false); }
   };
 
   const fetchCategories = async () => {
@@ -42,10 +36,13 @@ export default function TemplatesPage() {
     } catch { /* ignore */ }
   };
 
-  useEffect(() => { fetchTemplates(); fetchCategories(); }, [filter, catFilter]);
+  useEffect(() => { fetchTemplates(); fetchCategories(); /* eslint-disable-next-line */ }, [filter, catFilter]);
 
   const filtered = search.trim()
-    ? templates.filter(t => t.name.toLowerCase().includes(search.toLowerCase()) || (t.description || '').toLowerCase().includes(search.toLowerCase()))
+    ? templates.filter(t =>
+        t.name.toLowerCase().includes(search.toLowerCase()) ||
+        (t.description || '').toLowerCase().includes(search.toLowerCase())
+      )
     : templates;
 
   const handleCreate = async (e) => {
@@ -64,17 +61,13 @@ export default function TemplatesPage() {
       setShowNew(false);
       setNewForm({ name: '', description: '', category: 'general' });
       fetchTemplates();
-    } catch (err) {
-      toast.error(err.message || 'Failed to create');
-    } finally {
-      setSaving(false);
-    }
+    } catch (err) { toast.error(err.message || 'Failed to create'); }
+    finally { setSaving(false); }
   };
 
   const handleUse = async (t) => {
     try {
       const res = await api.useTemplate(t.id);
-      // Create a new report from template
       const tData = res.template?.template_data || t.template_data || {};
       const createRes = await api.createReport({
         title: `${t.name} - ${format(new Date(), 'MMM d, yyyy')}`,
@@ -84,133 +77,167 @@ export default function TemplatesPage() {
       });
       toast.success('Report created from template');
       navigate(`/reports/${createRes.id}`);
-    } catch (err) {
-      toast.error(err.message || 'Failed to use template');
-    }
+    } catch (err) { toast.error(err.message || 'Failed to use template'); }
   };
 
   const handleDelete = async (id, name) => {
     if (!confirm(`Delete template "${name}"?`)) return;
-    try {
-      await api.deleteTemplate(id);
-      toast.success('Deleted');
-      fetchTemplates();
-    } catch {
-      toast.error('Failed to delete');
-    }
+    try { await api.deleteTemplate(id); toast.success('Deleted'); fetchTemplates(); }
+    catch { toast.error('Failed to delete'); }
   };
 
   return (
-    <div className="space-y-5 animate-in">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">Templates</h1>
-          <p className="text-sm text-gray-500 mt-0.5">Reusable report structures</p>
-        </div>
-        <button onClick={() => setShowNew(true)} className="btn-primary flex items-center gap-2 shrink-0">
-          <Plus className="h-4 w-4" /> New Template
-        </button>
-      </div>
+    <div className="animate-slide-up">
+      <PageHeader
+        eyebrow="TEMPLATES"
+        title="Start from a template"
+        subtitle="Pre-built structures that get you to a finished report fast."
+        actions={<Btn variant="primary" icon="Plus" onClick={() => setShowNew(true)}>New template</Btn>}
+      />
 
       {/* New template modal */}
       {showNew && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setShowNew(false)}>
-          <div className="card p-6 w-full max-w-md space-y-4" onClick={e => e.stopPropagation()}>
-            <h2 className="text-lg font-bold text-gray-900">Create Template</h2>
-            <form onSubmit={handleCreate} className="space-y-3">
-              <div>
-                <label className="label">Name</label>
-                <input className="input-field" value={newForm.name} onChange={e => setNewForm(p => ({...p, name: e.target.value}))} placeholder="Weekly Growth Report" required />
-              </div>
+        <div
+          onClick={() => setShowNew(false)}
+          style={{
+            position: 'fixed', inset: 0, zIndex: 60,
+            background: 'rgba(10,31,23,.4)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            padding: 16,
+          }}
+        >
+          <Card
+            onClick={e => e.stopPropagation()}
+            padding={28}
+            style={{ width: '100%', maxWidth: 460 }}
+          >
+            <div style={{ fontSize: 18, fontWeight: 900, letterSpacing: '-0.02em', marginBottom: 4 }}>New template</div>
+            <div style={{ fontSize: 13, color: 'var(--ink-500)', marginBottom: 18 }}>Give it a name and category.</div>
+            <form onSubmit={handleCreate} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+              <LabeledInput label="Name" value={newForm.name} onChange={v => setNewForm(p => ({ ...p, name: v }))} placeholder="Weekly Growth Report" />
               <div>
                 <label className="label">Category</label>
-                <select className="input-field" value={newForm.category} onChange={e => setNewForm(p => ({...p, category: e.target.value}))}>
+                <select
+                  value={newForm.category}
+                  onChange={e => setNewForm(p => ({ ...p, category: e.target.value }))}
+                  className="input-field"
+                >
                   <option value="general">General</option>
                   <option value="hr">HR</option>
                   <option value="production">Production</option>
                   <option value="finance">Finance</option>
                   <option value="marketing">Marketing</option>
+                  <option value="logistics">Logistics</option>
                 </select>
               </div>
               <div>
                 <label className="label">Description</label>
-                <textarea className="input-field" rows={2} value={newForm.description} onChange={e => setNewForm(p => ({...p, description: e.target.value}))} placeholder="Optional description" />
+                <textarea
+                  value={newForm.description}
+                  onChange={e => setNewForm(p => ({ ...p, description: e.target.value }))}
+                  className="input-field"
+                  rows={3}
+                  placeholder="What's this template for?"
+                />
               </div>
-              <div className="flex gap-2 pt-2">
-                <button type="submit" disabled={saving} className="btn-primary flex-1">
-                  {saving ? 'Creating...' : 'Create'}
-                </button>
-                <button type="button" onClick={() => setShowNew(false)} className="btn-secondary">Cancel</button>
+              <div style={{ display: 'flex', gap: 8, paddingTop: 6 }}>
+                <Btn type="submit" variant="primary" disabled={saving} full>{saving ? 'Creating…' : 'Create template'}</Btn>
+                <Btn variant="secondary" onClick={() => setShowNew(false)}>Cancel</Btn>
               </div>
             </form>
-          </div>
+          </Card>
         </div>
       )}
 
       {/* Filters */}
-      <div className="card p-4 flex flex-col sm:flex-row gap-3">
-        <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-          <input className="input-field pl-10" placeholder="Search templates..." value={search} onChange={e => setSearch(e.target.value)} />
+      <Card padding={14} style={{ marginBottom: 18, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+        <div style={{ flex: 1, position: 'relative', minWidth: 220 }}>
+          <Icon name="Search" size={15} color="var(--ink-400)" style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)' }} />
+          <input
+            className="input-field"
+            style={{ paddingLeft: 36 }}
+            placeholder="Search templates..."
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+          />
         </div>
-        <div className="flex items-center gap-2">
-          <button onClick={() => setFilter('all')} className={`px-3 py-1.5 rounded-lg text-sm font-medium ${filter === 'all' ? 'bg-green-100 text-green-700' : 'text-gray-500 hover:bg-gray-100'}`}>
-            <Users className="h-3.5 w-3.5 inline mr-1" /> All
-          </button>
-          <button onClick={() => setFilter('mine')} className={`px-3 py-1.5 rounded-lg text-sm font-medium ${filter === 'mine' ? 'bg-green-100 text-green-700' : 'text-gray-500 hover:bg-gray-100'}`}>
-            <User className="h-3.5 w-3.5 inline mr-1" /> Mine
-          </button>
-          {categories.length > 0 && (
-            <select className="input-field py-1.5 text-sm w-auto" value={catFilter} onChange={e => setCatFilter(e.target.value)}>
-              <option value="">All Categories</option>
-              {categories.map(c => <option key={c} value={c}>{c}</option>)}
-            </select>
-          )}
-        </div>
-      </div>
-
-      {/* Templates grid */}
-      {loading ? (
-        <div className="flex items-center justify-center h-40">
-          <Loader2 className="h-8 w-8 animate-spin text-green-600" />
-        </div>
-      ) : filtered.length > 0 ? (
-        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filtered.map(t => (
-            <div key={t.id} className="card-hover p-5 flex flex-col">
-              <div className="flex items-start gap-3 mb-3">
-                <div className="h-10 w-10 rounded-lg bg-purple-50 flex items-center justify-center shrink-0">
-                  <BookTemplate className="h-5 w-5 text-purple-600" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <h3 className="font-semibold text-gray-900 text-sm truncate">{t.name}</h3>
-                  {t.author_name && <p className="text-xs text-gray-400">by {t.author_name}</p>}
-                </div>
-              </div>
-              {t.description && <p className="text-xs text-gray-500 line-clamp-2 mb-3">{t.description}</p>}
-              <div className="flex items-center gap-2 mb-3">
-                <span className="badge-blue"><Tag className="h-3 w-3 inline mr-1" />{t.category || 'general'}</span>
-                {t.usage_count > 0 && <span className="badge-gray"><Download className="h-3 w-3 inline mr-1" />{t.usage_count} uses</span>}
-              </div>
-              <div className="mt-auto pt-3 border-t border-gray-100 flex gap-2">
-                <button onClick={() => handleUse(t)} className="btn-primary text-xs py-1.5 px-3 flex-1">
-                  Use Template
-                </button>
-                <button onClick={() => handleDelete(t.id, t.name)} className="btn-ghost p-1.5 text-red-400 hover:text-red-600">
-                  <Trash2 className="h-3.5 w-3.5" />
-                </button>
-              </div>
-            </div>
+        <div style={{ display: 'flex', gap: 4 }}>
+          {[{ k: 'all', l: 'All', i: 'Users' }, { k: 'mine', l: 'Mine', i: 'User' }].map(f => (
+            <button
+              key={f.k}
+              onClick={() => setFilter(f.k)}
+              style={{
+                padding: '8px 14px', borderRadius: 'var(--r-pill)',
+                background: filter === f.k ? 'var(--calo-50)' : 'transparent',
+                color: filter === f.k ? 'var(--calo-800)' : 'var(--ink-500)',
+                border: filter === f.k ? '1px solid var(--calo-100)' : '1px solid transparent',
+                fontSize: 13, fontWeight: 700, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6,
+              }}
+            >
+              <Icon name={f.i} size={13} /> {f.l}
+            </button>
           ))}
         </div>
-      ) : (
-        <div className="card p-12 text-center">
-          <BookTemplate className="h-12 w-12 text-gray-300 mx-auto mb-3" />
-          <h3 className="font-semibold text-gray-900">No templates found</h3>
-          <p className="text-sm text-gray-500 mt-1">Create a template to reuse report structures</p>
-          <button onClick={() => setShowNew(true)} className="btn-primary mt-4">Create Template</button>
+        {categories.length > 0 && (
+          <select
+            className="input-field"
+            style={{ width: 'auto', padding: '8px 14px' }}
+            value={catFilter}
+            onChange={e => setCatFilter(e.target.value)}
+          >
+            <option value="">All categories</option>
+            {categories.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+        )}
+      </Card>
+
+      {/* Grid */}
+      {loading ? (
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 200 }}>
+          <div style={{ width: 32, height: 32, borderRadius: 16, border: '3px solid var(--calo-100)', borderTopColor: 'var(--calo-500)', animation: 'spinner 1s linear infinite' }} />
         </div>
+      ) : filtered.length > 0 ? (
+        <div className="tmpl-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 16 }}>
+          {filtered.map(t => {
+            const sections = (t.template_data?.sections?.length) || 0;
+            return (
+              <Card key={t.id} hover padding={20} onClick={() => handleUse(t)}>
+                <div style={{ width: 40, height: 40, borderRadius: 10, background: 'var(--calo-50)', display: 'grid', placeItems: 'center', marginBottom: 14 }}>
+                  <Icon name="LayoutTemplate" size={18} color="var(--calo-700)" />
+                </div>
+                <div style={{ fontSize: 17, fontWeight: 900, letterSpacing: '-0.02em', color: 'var(--ink-900)' }}>{t.name}</div>
+                {t.author_name && <div style={{ fontSize: 11, color: 'var(--ink-400)', marginTop: 2 }}>by {t.author_name}</div>}
+                {t.description && <div style={{ fontSize: 13, color: 'var(--ink-500)', marginTop: 6, lineHeight: 1.5, minHeight: 39, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{t.description}</div>}
+                <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid var(--ink-100)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                    <Pill tone="neutral" size="sm">{sections} section{sections === 1 ? '' : 's'}</Pill>
+                    {t.category && <Pill tone="green" size="sm">{t.category}</Pill>}
+                  </div>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--calo-700)' }}>Use →</span>
+                </div>
+              </Card>
+            );
+          })}
+        </div>
+      ) : (
+        <Card padding={48} style={{ textAlign: 'center' }}>
+          <div style={{ width: 56, height: 56, margin: '0 auto 14px', borderRadius: 16, background: 'var(--calo-50)', color: 'var(--calo-700)', display: 'grid', placeItems: 'center' }}>
+            <Icon name="LayoutTemplate" size={28} />
+          </div>
+          <div style={{ fontSize: 18, fontWeight: 900 }}>No templates found</div>
+          <div style={{ fontSize: 13, color: 'var(--ink-500)', marginTop: 6, marginBottom: 20 }}>Create a template to reuse report structures</div>
+          <Btn variant="primary" icon="Plus" onClick={() => setShowNew(true)}>New template</Btn>
+        </Card>
       )}
+
+      <style>{`
+        @media (max-width: 1023px) {
+          .tmpl-grid { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+        }
+        @media (max-width: 639px) {
+          .tmpl-grid { grid-template-columns: 1fr !important; }
+        }
+      `}</style>
     </div>
   );
 }

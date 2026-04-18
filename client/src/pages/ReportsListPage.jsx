@@ -3,18 +3,26 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../utils/api';
 import toast from 'react-hot-toast';
 import { format } from 'date-fns';
-import {
-  Search, Filter, FileText, Plus, Trash2, ExternalLink,
-  Loader2, ChevronLeft, ChevronRight, Eye, Users, LockKeyhole
-} from 'lucide-react';
+import { Card, Pill, Btn, Icon, PageHeader } from '../components/ui';
 
 const statusOpts = [
-  { value: 'all', label: 'All' },
-  { value: 'draft', label: 'Drafts' },
-  { value: 'done', label: 'Done' },
-  { value: 'published', label: 'Published' },
-  { value: 'archived', label: 'Archived' },
+  { value: 'all',       label: 'All' },
+  { value: 'draft',     label: 'Drafts' },
+  { value: 'done',      label: 'Done' },
+  { value: 'published', label: 'Live' },
+  { value: 'archived',  label: 'Archived' },
 ];
+
+function statusPill(s) {
+  const map = {
+    published: { tone: 'solid', label: 'Live' },
+    done:      { tone: 'green', label: 'Done' },
+    draft:     { tone: 'amber', label: 'Draft' },
+    archived:  { tone: 'neutral', label: 'Archived' },
+  };
+  const t = map[s] || { tone: 'neutral', label: s || 'Draft' };
+  return <Pill tone={t.tone} size="sm">{t.label}</Pill>;
+}
 
 export default function ReportsListPage() {
   const navigate = useNavigate();
@@ -24,7 +32,7 @@ export default function ReportsListPage() {
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
-  const [viewMode, setViewMode] = useState('mine'); // 'mine' or 'shared'
+  const [viewMode, setViewMode] = useState('mine');
 
   const statusFilter = searchParams.get('status') || 'all';
   const [search, setSearch] = useState(searchParams.get('search') || '');
@@ -33,11 +41,8 @@ export default function ReportsListPage() {
     setLoading(true);
     try {
       const params = { page: pg, limit: 12 };
-      if (viewMode === 'shared') {
-        params.visibility = 'shared';
-      } else {
-        if (statusFilter !== 'all') params.status = statusFilter;
-      }
+      if (viewMode === 'shared') params.visibility = 'shared';
+      else if (statusFilter !== 'all') params.status = statusFilter;
       if (search.trim()) params.search = search.trim();
       const res = await api.getReports(params);
       setReports(res.reports || []);
@@ -51,182 +56,176 @@ export default function ReportsListPage() {
     }
   };
 
-  useEffect(() => { fetchReports(1); }, [statusFilter, viewMode]);
+  useEffect(() => { fetchReports(1); /* eslint-disable-next-line */ }, [statusFilter, viewMode]);
 
-  const handleSearch = (e) => {
-    e.preventDefault();
-    fetchReports(1);
-  };
-
+  const handleSearch = (e) => { e.preventDefault(); fetchReports(1); };
   const handleStatusChange = (val) => {
     const p = new URLSearchParams(searchParams);
-    if (val === 'all') p.delete('status');
-    else p.set('status', val);
+    if (val === 'all') p.delete('status'); else p.set('status', val);
     setSearchParams(p);
   };
-
   const handleDelete = async (id, title) => {
     if (!confirm(`Delete "${title}"?`)) return;
-    try {
-      await api.deleteReport(id);
-      toast.success('Report deleted');
-      fetchReports();
-    } catch {
-      toast.error('Failed to delete');
-    }
-  };
-
-  const statusBadge = (s) => {
-    const m = { draft: 'badge-amber', done: 'badge-blue', published: 'badge-green', archived: 'badge-gray' };
-    return m[s] || 'badge-gray';
+    try { await api.deleteReport(id); toast.success('Report deleted'); fetchReports(); }
+    catch { toast.error('Failed to delete'); }
   };
 
   return (
-    <div className="space-y-5 animate-in">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">Reports</h1>
-          <p className="text-sm text-gray-500 mt-0.5">{total} report{total !== 1 ? 's' : ''}</p>
-        </div>
-        <button onClick={() => navigate('/new')} className="btn-primary flex items-center gap-2 shrink-0">
-          <Plus className="h-4 w-4" /> New Report
-        </button>
+    <div className="animate-slide-up">
+      <PageHeader
+        eyebrow="MY REPORTS"
+        title="All reports"
+        subtitle={`${total} report${total === 1 ? '' : 's'} across your workspace`}
+        actions={<Btn variant="primary" icon="Plus" onClick={() => navigate('/new')}>New report</Btn>}
+      />
+
+      {/* Toggle: mine / shared */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: 3, background: 'var(--ink-100)', borderRadius: 'var(--r-pill)', width: 'fit-content', marginBottom: 18 }}>
+        {[
+          { id: 'mine',   label: 'My reports',  icon: 'LockKeyhole' },
+          { id: 'shared', label: 'Shared with me', icon: 'Users' },
+        ].map(t => (
+          <button
+            key={t.id}
+            onClick={() => setViewMode(t.id)}
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+              padding: '8px 14px', borderRadius: 'var(--r-pill)',
+              background: viewMode === t.id ? '#fff' : 'transparent',
+              color: viewMode === t.id ? 'var(--ink-900)' : 'var(--ink-600)',
+              boxShadow: viewMode === t.id ? 'var(--shadow-sm)' : 'none',
+              fontSize: 13, fontWeight: 700, border: 'none', cursor: 'pointer', letterSpacing: '-0.01em',
+            }}
+          >
+            <Icon name={t.icon} size={13} /> {t.label}
+          </button>
+        ))}
       </div>
 
-      {/* View mode tabs: My Reports / Shared */}
-      <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-1 w-fit">
-        <button
-          onClick={() => setViewMode('mine')}
-          className={`flex items-center gap-1.5 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-            viewMode === 'mine' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
-          }`}
-        >
-          <LockKeyhole className="h-3.5 w-3.5" /> My Reports
-        </button>
-        <button
-          onClick={() => setViewMode('shared')}
-          className={`flex items-center gap-1.5 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-            viewMode === 'shared' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
-          }`}
-        >
-          <Users className="h-3.5 w-3.5" /> Shared with me
-        </button>
-      </div>
-
-      {/* Filters */}
-      <div className="card p-4 flex flex-col sm:flex-row gap-3">
-        <form onSubmit={handleSearch} className="flex-1 relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+      {/* Filters row */}
+      <Card padding={14} style={{ marginBottom: 18, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+        <form onSubmit={handleSearch} style={{ flex: 1, position: 'relative', minWidth: 240 }}>
+          <Icon name="Search" size={15} color="var(--ink-400)" style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)' }} />
           <input
-            className="input-field pl-10"
+            className="input-field"
+            style={{ paddingLeft: 36 }}
             placeholder={viewMode === 'shared' ? 'Search shared reports...' : 'Search reports...'}
             value={search}
             onChange={e => setSearch(e.target.value)}
           />
         </form>
         {viewMode === 'mine' && (
-          <div className="flex items-center gap-2">
-            <Filter className="h-4 w-4 text-gray-400 shrink-0" />
+          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
             {statusOpts.map(o => (
               <button
                 key={o.value}
                 onClick={() => handleStatusChange(o.value)}
-                className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-                  statusFilter === o.value ? 'bg-green-100 text-green-700' : 'text-gray-500 hover:bg-gray-100'
-                }`}
+                style={{
+                  padding: '8px 14px', borderRadius: 'var(--r-pill)',
+                  background: statusFilter === o.value ? 'var(--calo-50)' : 'transparent',
+                  color: statusFilter === o.value ? 'var(--calo-800)' : 'var(--ink-500)',
+                  border: statusFilter === o.value ? '1px solid var(--calo-100)' : '1px solid transparent',
+                  fontSize: 13, fontWeight: 700, cursor: 'pointer', letterSpacing: '-0.01em',
+                }}
               >
                 {o.label}
               </button>
             ))}
           </div>
         )}
-      </div>
+      </Card>
 
-      {/* Reports grid */}
+      {/* List */}
       {loading ? (
-        <div className="flex items-center justify-center h-40">
-          <Loader2 className="h-8 w-8 animate-spin text-green-600" />
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 200 }}>
+          <div style={{ width: 32, height: 32, borderRadius: 16, border: '3px solid var(--calo-100)', borderTopColor: 'var(--calo-500)', animation: 'spinner 1s linear infinite' }} />
         </div>
       ) : reports.length > 0 ? (
-        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {reports.map(r => (
-            <div key={r.id} className="card-hover p-5 flex flex-col" onClick={() => navigate(viewMode === 'shared' ? `/reports/${r.id}/preview` : `/reports/${r.id}`)}>
-              <div className="flex items-start justify-between gap-2 mb-3">
-                <div className="h-10 w-10 rounded-lg bg-blue-50 flex items-center justify-center shrink-0">
-                  <FileText className="h-5 w-5 text-blue-600" />
-                </div>
-                <div className="flex items-center gap-1.5">
-                  {r.visibility === 'shared' && viewMode === 'mine' && (
-                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-blue-50 text-blue-600">
-                      <Users className="h-3 w-3" />
-                    </span>
-                  )}
-                  <span className={statusBadge(r.status)}>{r.status}</span>
+        <Card padding={0}>
+          {reports.map((r, i) => (
+            <div
+              key={r.id}
+              onClick={() => navigate(viewMode === 'shared' ? `/reports/${r.id}/preview` : `/reports/${r.id}`)}
+              style={{
+                padding: '16px 22px',
+                borderBottom: i < reports.length - 1 ? '1px solid var(--ink-100)' : 'none',
+                display: 'flex', alignItems: 'center', gap: 14,
+                cursor: 'pointer', transition: 'background .15s',
+              }}
+              onMouseEnter={e => e.currentTarget.style.background = 'var(--ink-50)'}
+              onMouseLeave={e => e.currentTarget.style.background = '#fff'}
+            >
+              <div style={{
+                width: 40, height: 40, borderRadius: 10,
+                background: 'var(--calo-50)',
+                display: 'grid', placeItems: 'center', flexShrink: 0,
+              }}>
+                <Icon name="FileText" size={18} color="var(--calo-700)" />
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 15, fontWeight: 900, letterSpacing: '-0.01em', color: 'var(--ink-900)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.title}</div>
+                <div style={{ fontSize: 12, color: 'var(--ink-500)', marginTop: 2, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                  {r.author_name && viewMode === 'shared' && <span style={{ color: 'var(--calo-700)', fontWeight: 700 }}>{r.author_name}</span>}
+                  {r.description && <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.description}</span>}
+                  {!r.description && r.updated_at && <span>{format(new Date(r.updated_at), 'MMM d, yyyy')}</span>}
                 </div>
               </div>
-              <h3 className="font-semibold text-gray-900 text-sm line-clamp-2 mb-1">{r.title}</h3>
-              {r.author_name && viewMode === 'shared' && (
-                <p className="text-xs text-blue-600 font-medium mb-1">by {r.author_name}</p>
+              {r.visibility === 'shared' && viewMode === 'mine' && (
+                <Pill tone="blue" size="sm" icon="Users">Team</Pill>
               )}
-              {r.description && <p className="text-xs text-gray-500 line-clamp-2 mb-3">{r.description}</p>}
-              <div className="mt-auto pt-3 border-t border-gray-100 flex items-center justify-between">
-                <span className="text-xs text-gray-400">
-                  {r.updated_at ? format(new Date(r.updated_at), 'MMM d, yyyy') : ''}
-                </span>
-                <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
-                  {r.netlify_url && (
-                    <a href={r.netlify_url} target="_blank" rel="noopener noreferrer" className="btn-ghost p-1.5" title="View published">
-                      <ExternalLink className="h-3.5 w-3.5" />
-                    </a>
-                  )}
-                  <button onClick={() => navigate(`/reports/${r.id}/preview`)} className="btn-ghost p-1.5" title="Preview">
-                    <Eye className="h-3.5 w-3.5" />
+              {statusPill(r.status)}
+              <div onClick={e => e.stopPropagation()} style={{ display: 'flex', gap: 4 }}>
+                {r.netlify_url && (
+                  <a href={r.netlify_url} target="_blank" rel="noopener noreferrer" title="Open published"
+                    style={{ padding: 8, color: 'var(--ink-500)', borderRadius: 8, display: 'inline-flex' }}
+                    onMouseEnter={e => e.currentTarget.style.background = 'var(--ink-100)'}
+                    onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                  >
+                    <Icon name="ExternalLink" size={15} />
+                  </a>
+                )}
+                {viewMode === 'mine' && (
+                  <button onClick={() => handleDelete(r.id, r.title)} title="Delete"
+                    style={{ padding: 8, color: 'var(--danger)', background: 'none', border: 'none', borderRadius: 8, cursor: 'pointer', display: 'inline-flex' }}
+                    onMouseEnter={e => e.currentTarget.style.background = '#FDECEC'}
+                    onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                  >
+                    <Icon name="Trash2" size={15} />
                   </button>
-                  {viewMode === 'mine' && (
-                    <button onClick={() => handleDelete(r.id, r.title)} className="btn-ghost p-1.5 text-red-500 hover:text-red-700 hover:bg-red-50" title="Delete">
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
-                  )}
-                </div>
+                )}
               </div>
+              <Icon name="ChevronRight" size={16} color="var(--ink-400)" />
             </div>
           ))}
-        </div>
+        </Card>
       ) : (
-        <div className="card p-12 text-center">
-          <FileText className="h-12 w-12 text-gray-300 mx-auto mb-3" />
-          <h3 className="font-semibold text-gray-900">
-            {viewMode === 'shared' ? 'No shared reports' : 'No reports found'}
-          </h3>
-          <p className="text-sm text-gray-500 mt-1">
-            {viewMode === 'shared' ? 'No one has shared reports with the team yet' : 'Create your first report to get started'}
-          </p>
-          {viewMode === 'mine' && (
-            <button onClick={() => navigate('/new')} className="btn-primary mt-4">Create Report</button>
-          )}
-        </div>
+        <Card padding={48} style={{ textAlign: 'center' }}>
+          <div style={{ width: 56, height: 56, margin: '0 auto 14px', borderRadius: 16, background: 'var(--calo-50)', color: 'var(--calo-700)', display: 'grid', placeItems: 'center' }}>
+            <Icon name="FileText" size={28} />
+          </div>
+          <div style={{ fontSize: 18, fontWeight: 900, color: 'var(--ink-900)' }}>
+            {viewMode === 'shared' ? 'No shared reports' : 'No reports yet'}
+          </div>
+          <div style={{ fontSize: 13, color: 'var(--ink-500)', marginTop: 6, marginBottom: 20 }}>
+            {viewMode === 'shared' ? 'No one has shared with the team yet' : 'Drop a file or pick a template to start'}
+          </div>
+          {viewMode === 'mine' && <Btn variant="primary" icon="Plus" onClick={() => navigate('/new')}>New report</Btn>}
+        </Card>
       )}
 
-      {/* Pagination */}
       {totalPages > 1 && (
-        <div className="flex items-center justify-center gap-2">
+        <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 10, marginTop: 18 }}>
           <button
             onClick={() => fetchReports(page - 1)}
             disabled={page <= 1}
-            className="btn-ghost p-2 disabled:opacity-30"
-          >
-            <ChevronLeft className="h-4 w-4" />
-          </button>
-          <span className="text-sm text-gray-500">
-            Page {page} of {totalPages}
-          </span>
+            style={{ padding: 8, borderRadius: 8, border: '1px solid var(--ink-200)', background: '#fff', cursor: 'pointer', opacity: page <= 1 ? 0.4 : 1 }}
+          ><Icon name="ChevronLeft" size={16} /></button>
+          <span style={{ fontSize: 13, color: 'var(--ink-600)', fontWeight: 700 }}>Page {page} of {totalPages}</span>
           <button
             onClick={() => fetchReports(page + 1)}
             disabled={page >= totalPages}
-            className="btn-ghost p-2 disabled:opacity-30"
-          >
-            <ChevronRight className="h-4 w-4" />
-          </button>
+            style={{ padding: 8, borderRadius: 8, border: '1px solid var(--ink-200)', background: '#fff', cursor: 'pointer', opacity: page >= totalPages ? 0.4 : 1 }}
+          ><Icon name="ChevronRight" size={16} /></button>
         </div>
       )}
     </div>

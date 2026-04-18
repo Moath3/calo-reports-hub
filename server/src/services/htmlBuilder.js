@@ -2,24 +2,33 @@ import { createHash } from 'crypto';
 
 /**
  * Compute SHA-256 hash of a string (server-side).
- * The hash is embedded in the published HTML instead of the plaintext password.
  */
 function sha256(str) {
   return createHash('sha256').update(str).digest('hex');
 }
 
+// Official CALO logo SVG paths
+const LOGO_PATHS = [
+  'M89.2,299.5c-18.1,0-33.5-6.3-46.1-19s-18.9-28-18.9-46v-149c0-18,6.4-33.4,19.1-46 c12.7-12.7,28.1-19,45.9-19c18.1,0,33.4,6.4,46,19.1c12.6,12.7,18.9,28,18.9,46v31h-42.5V84.8c0-6.6-2.3-12.2-6.9-16.8 s-10.2-6.9-16.8-6.9c-6.5,0-12,2.3-16.6,6.9c-4.6,4.6-6.9,10.2-6.9,16.8v149.4c0,6.6,2.3,12.1,6.9,16.7c4.6,4.6,10.1,6.9,16.6,6.9 c6.6,0,12.2-2.3,16.8-6.9s6.9-10.2,6.9-16.7v-37.5h42.5v37.9c0,18.1-6.4,33.5-19.1,46C122.3,293.2,107,299.5,89.2,299.5z',
+  'M260.7,233.5l-10,62.5h-42.7l46.1-272.1h56.5l45.5,272.1h-43l-9.7-62.5H260.7z M282.2,86.3L267,193.6h30.4 L282.2,86.3z',
+  'M533.3,296.1H421.4V23.9h41v231.4h70.9L533.3,296.1L533.3,296.1z',
+  'M656.7,20.6c18.1,0,33.5,6.4,46.2,19.1s19,28.1,19,46.1v148.4c0,18.1-6.4,33.5-19.1,46.2 c-12.7,12.7-28.1,19-46.1,19s-33.3-6.4-45.9-19.1c-12.6-12.7-18.9-28.1-18.9-46.1V85.9c0-18.1,6.4-33.5,19.1-46.2 C623.7,27,639,20.6,656.7,20.6z M679,85.1c0-6.6-2.3-12.1-6.8-16.6c-4.5-4.5-10.1-6.8-16.6-6.8c-6.5,0-12,2.3-16.6,6.8 S632,78.5,632,85.1V234c0,6.5,2.3,12,6.9,16.5s10.2,6.9,16.6,6.9c6.6,0,12.1-2.3,16.6-6.9c4.5-4.6,6.8-10.1,6.8-16.5V85.1z',
+];
+
+function caloLogoSvg(fill, height) {
+  const paths = LOGO_PATHS.map(d => `<path d="${d}"/>`).join('');
+  return `<svg viewBox="0 0 746 320" height="${height}" style="display:inline-block;vertical-align:middle" xmlns="http://www.w3.org/2000/svg"><g fill="${fill}">${paths}</g></svg>`;
+}
+
 /**
- * Build standalone HTML report with CALO branding.
- * @param {object} reportData - Report data (sections, kpis, summary, insights)
- * @param {string} brandColor - Brand color override
- * @param {string} title - Title override
- * @param {object} options - { password: string|null } — if set, wraps report in password gate
+ * Build standalone HTML report — editorial magazine style per claude.ai/design handoff.
  */
 export function buildStandaloneHTML(reportData, brandColor, title, options = {}) {
   const r = reportData || {};
   const gi = r.generalInfo || {};
   const color = brandColor || gi.brandColor || r.brandColor || "#02B376";
-  const colorDark = "#027D53";
+  const colorDark = "#016040";
+  const colorDeepest = "#01432D";
   const rt = title || gi.title || r.title || "Report";
   const accessPassword = options.password || null;
 
@@ -28,160 +37,179 @@ export function buildStandaloneHTML(reportData, brandColor, title, options = {})
     var h = "";
     if (b.type === "badge") {
       var cs = {
-        green: { bg: "#E8F8F0", border: "#02B376", text: "#166534" },
-        amber: { bg: "#FEF3C7", border: "#F59E0B", text: "#92400E" },
-        red:   { bg: "#FEE2E2", border: "#EF4444", text: "#991B1B" },
-        blue:  { bg: "#DBEAFE", border: "#3B82F6", text: "#1E40AF" }
+        green: { bg: "#E6F9F1", border: "#02B376", text: "#016040" },
+        amber: { bg: "#FEF5E4", border: "#E8A33D", text: "#8A5A1A" },
+        red:   { bg: "#FDECEC", border: "#D94F4F", text: "#8C2929" },
+        blue:  { bg: "#E9EEFA", border: "#4F7CD9", text: "#2E4699" }
       };
       var c = cs[b.style] || cs.green;
-      return '<div style="background:' + c.bg + ';border-left:4px solid ' + c.border + ';border-radius:10px;padding:14px 18px;margin-bottom:14px">' +
-        '<div style="font-size:15px;font-weight:700;color:' + c.text + '">' + (b.title || b.label || '') + '</div>' +
-        (b.subtitle ? '<div style="font-size:13px;color:' + c.text + ';opacity:.8;margin-top:2px">' + b.subtitle + '</div>' : '') +
-        (b.period ? '<div style="font-size:12px;color:' + c.text + ';opacity:.6;margin-top:4px">' + b.period + '</div>' : '') +
+      return '<div style="background:' + c.bg + ';border-left:4px solid ' + c.border + ';border-radius:14px;padding:18px 22px;margin-bottom:16px">' +
+        '<div style="font-size:15px;font-weight:900;color:' + c.text + ';letter-spacing:-0.01em">' + (b.title || b.label || '') + '</div>' +
+        (b.subtitle ? '<div style="font-size:13px;color:' + c.text + ';opacity:.82;margin-top:3px">' + b.subtitle + '</div>' : '') +
+        (b.period ? '<div style="font-size:11px;color:' + c.text + ';opacity:.7;margin-top:5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase">' + b.period + '</div>' : '') +
         '</div>';
     }
     if (b.type === "notes") {
       var items = b.items || (b.content ? b.content.split('\n').filter(Boolean) : (b.text ? [b.text] : []));
-      var label = b.label ? '<div style="font-weight:600;margin-bottom:8px;color:#1A1D23;font-size:14px">' + b.label + '</div>' : '';
-      return '<div style="margin-bottom:14px">' + label +
-        '<ul style="margin:0;padding-left:20px;color:#5F6B7A;font-size:13.5px;line-height:1.85">' +
-        items.map(function(it) { return '<li style="margin-bottom:4px">' + it + '</li>'; }).join('') +
+      var label = b.label ? '<div style="font-size:11px;font-weight:900;color:' + color + ';letter-spacing:.14em;text-transform:uppercase;margin-bottom:10px">' + b.label + '</div>' : '';
+      return '<div style="margin-bottom:16px">' + label +
+        '<ul style="margin:0;padding-left:22px;color:#2F332C;font-size:15px;line-height:1.7;font-weight:300">' +
+        items.map(function(it) { return '<li style="margin-bottom:6px">' + it + '</li>'; }).join('') +
         '</ul></div>';
     }
     if (b.type === "metrics") {
-      h = '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(155px,1fr));gap:12px;margin-bottom:14px">';
+      h = '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:14px;margin-bottom:16px">';
       (b.items || []).forEach(function(m) {
-        var tc = m.trend === "up" ? "#16a34a" : m.trend === "down" ? "#dc2626" : "#6b7280";
-        h += '<div style="background:white;border:1px solid #E2E8F0;border-radius:12px;padding:16px;box-shadow:0 1px 3px rgba(0,0,0,.04)">';
-        h += '<div style="font-size:11px;color:#5F6B7A;text-transform:uppercase;letter-spacing:.3px">' + (m.label || '') + '</div>';
-        h += '<div style="font-size:22px;font-weight:800;color:#1A1D23;margin-top:4px">' + (m.value || '') + '</div>';
-        if (m.change) h += '<div style="font-size:12px;color:' + tc + ';font-weight:600;margin-top:4px">' + m.change + '</div>';
+        var tc = m.trend === "up" ? "#029A66" : m.trend === "down" ? "#D94F4F" : "#787C72";
+        h += '<div style="background:#FAFAF7;border:1px solid #E8E9E3;border-radius:14px;padding:16px 18px">';
+        h += '<div style="font-size:11px;color:#787C72;text-transform:uppercase;letter-spacing:.1em;font-weight:900">' + (m.label || '') + '</div>';
+        h += '<div class="num" style="font-size:26px;font-weight:900;color:#0A1F17;margin-top:6px;letter-spacing:-0.03em">' + (m.value || '') + '</div>';
+        if (m.change) h += '<div style="font-size:12px;color:' + tc + ';font-weight:700;margin-top:4px">' + m.change + '</div>';
         h += '</div>';
       });
       return h + '</div>';
     }
     if (b.type === "table") {
-      h = '<div style="overflow-x:auto;margin-bottom:14px;border-radius:10px;border:1px solid #E2E8F0;overflow:hidden">';
-      h += '<table style="width:100%;border-collapse:collapse;font-size:13px"><thead><tr>';
-      (b.headers || []).forEach(function(hd) {
-        h += '<th style="background:' + color + ';color:white;padding:11px 14px;text-align:left;font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.3px">' + hd + '</th>';
-      });
-      h += '</tr></thead><tbody>';
+      var headerCols = (b.headers || []).length || 1;
+      h = '<div style="margin-bottom:16px;border-radius:14px;border:1px solid #E8E9E3;overflow:hidden">';
+      h += '<div style="display:grid;grid-template-columns:repeat(' + headerCols + ', 1fr);background:#0A1F17;color:#fff;padding:14px 20px;font-size:11px;font-weight:900;letter-spacing:.1em;text-transform:uppercase">';
+      (b.headers || []).forEach(function(hd) { h += '<span>' + hd + '</span>'; });
+      h += '</div>';
       (b.rows || []).forEach(function(row, i) {
-        h += '<tr class="trow" style="background:' + (i % 2 ? '#F8FAFB' : 'white') + '">';
+        var cols = row.length || 1;
+        h += '<div class="trow" style="display:grid;grid-template-columns:repeat(' + cols + ', 1fr);padding:14px 20px;border-bottom:' + (i < (b.rows || []).length - 1 ? '1px solid #F4F4F0' : 'none') + ';background:' + (i % 2 ? '#FAFAF7' : '#fff') + ';align-items:center">';
         row.forEach(function(cell) {
           var isNeg = typeof cell === 'string' && cell.startsWith('-');
-          h += '<td style="padding:10px 14px;border-bottom:1px solid #E2E8F0;' + (isNeg ? 'color:#dc2626;font-weight:600' : '') + '">' + cell + '</td>';
-        });
-        h += '</tr>';
-      });
-      return h + '</tbody></table></div>';
-    }
-    if (b.type === "keyvalue") {
-      var kvLabel = b.label ? '<div style="font-weight:600;margin-bottom:10px;color:#1A1D23;font-size:14px">' + b.label + '</div>' : '';
-      h = '<div style="margin-bottom:14px">' + kvLabel + '<div style="display:grid;gap:6px">';
-      (b.items || []).forEach(function(kv) {
-        h += '<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 14px;background:#F8FAFB;border-radius:10px;border:1px solid #E2E8F0">';
-        h += '<span style="color:#5F6B7A;font-size:13px">' + (kv.key || '') + '</span>';
-        h += '<span style="font-weight:700;color:#1A1D23;font-size:13px">' + (kv.value || '') + '</span></div>';
-      });
-      return h + '</div></div>';
-    }
-    if (b.type === "comparison") {
-      h = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">';
-      [[b.leftTitle, b.leftRows], [b.rightTitle, b.rightRows]].forEach(function(pair) {
-        h += '<div style="background:white;border:1px solid #E2E8F0;border-radius:12px;padding:16px;box-shadow:0 1px 3px rgba(0,0,0,.04)">';
-        h += '<div style="font-weight:700;margin-bottom:10px;color:' + color + ';font-size:14px;padding-bottom:8px;border-bottom:2px solid ' + color + '33">' + (pair[0] || '') + '</div>';
-        (pair[1] || []).forEach(function(rv) {
-          h += '<div style="display:flex;justify-content:space-between;padding:6px 0;font-size:13px;border-bottom:1px solid #F1F5F9">';
-          h += '<span style="color:#5F6B7A">' + (rv.key || rv.label || '') + '</span><span style="font-weight:600;color:#1A1D23">' + (rv.value || '') + '</span></div>';
+          var isPos = typeof cell === 'string' && /^[+↑]/.test(cell);
+          h += '<span class="num" style="font-size:14px;font-weight:700;' + (isNeg ? 'color:#D94F4F;' : '') + (isPos ? 'color:' + color + ';font-weight:900;' : '') + '">' + cell + '</span>';
         });
         h += '</div>';
       });
       return h + '</div>';
     }
+    if (b.type === "keyvalue") {
+      var kvLabel = b.label ? '<div style="font-size:11px;font-weight:900;color:' + color + ';letter-spacing:.14em;text-transform:uppercase;margin-bottom:10px">' + b.label + '</div>' : '';
+      h = '<div style="margin-bottom:16px">' + kvLabel + '<div style="display:grid;gap:8px">';
+      (b.items || []).forEach(function(kv) {
+        h += '<div style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;background:#FAFAF7;border-radius:12px;border:1px solid #F4F4F0">';
+        h += '<span style="color:#4E524A;font-size:13px;font-weight:700">' + (kv.key || '') + '</span>';
+        h += '<span class="num" style="font-weight:900;color:#0A1F17;font-size:14px">' + (kv.value || '') + '</span></div>';
+      });
+      return h + '</div></div>';
+    }
+    if (b.type === "comparison") {
+      h = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">';
+      var panes = [
+        { title: b.leftTitle, rows: b.leftRows, accent: false, meta: 'Previous' },
+        { title: b.rightTitle, rows: b.rightRows, accent: true, meta: 'This' },
+      ];
+      panes.forEach(function(p) {
+        var bg = p.accent ? 'background:linear-gradient(135deg,' + colorDark + ',' + color + ');color:#fff;' : 'background:#fff;color:#0A1F17;border:1px solid #E8E9E3;';
+        var sh = p.accent ? 'box-shadow:0 10px 30px rgba(2,179,118,.25);' : '';
+        h += '<div style="padding:22px;border-radius:14px;' + bg + sh + '">';
+        h += '<div style="font-size:11px;font-weight:900;letter-spacing:.14em;opacity:' + (p.accent ? '.85' : '.6') + ';text-transform:uppercase">' + p.meta + '</div>';
+        h += '<div style="font-size:17px;font-weight:900;margin-top:4px;letter-spacing:-0.01em">' + (p.title || '') + '</div>';
+        h += '<div style="border-top:1px solid ' + (p.accent ? 'rgba(255,255,255,.2)' : '#F4F4F0') + ';margin-top:14px;padding-top:12px">';
+        (p.rows || []).forEach(function(rv) {
+          h += '<div style="display:flex;justify-content:space-between;padding:7px 0;font-size:13px;font-weight:700">';
+          h += '<span style="opacity:' + (p.accent ? '.85' : '.7') + '">' + (rv.key || rv.label || '') + '</span>';
+          h += '<span class="num">' + (rv.value || '') + '</span></div>';
+        });
+        h += '</div></div>';
+      });
+      return h + '</div>';
+    }
     if (b.type === "callout") {
-      return '<div style="background:linear-gradient(135deg,' + (b.bgColor || '#E8F8F0') + ',' + (b.bgColor || '#E8F8F0') + 'dd);border:2px solid ' + (b.borderColor || color) + ';border-radius:14px;padding:24px;text-align:center;margin-bottom:14px">' +
-        (b.icon ? '<div style="font-size:32px;margin-bottom:8px">' + b.icon + '</div>' : '') +
-        '<div style="font-size:14px;color:' + (b.textColor || '#166534') + ';font-weight:600">' + (b.title || '') + '</div>' +
-        '<div style="font-size:30px;font-weight:800;color:' + (b.textColor || '#166534') + ';margin-top:6px">' + (b.value || '') + '</div></div>';
+      return '<div style="padding:32px;background:#0A1F17;border-radius:18px;color:#fff;display:flex;gap:22px;align-items:center;margin-bottom:16px;position:relative;overflow:hidden">' +
+        '<div style="position:absolute;right:-40px;bottom:-40px;width:220px;height:220px;border-radius:50%;background:' + color + ';opacity:.12;pointer-events:none"></div>' +
+        (b.icon ? '<div style="font-size:44px;flex-shrink:0;position:relative">' + b.icon + '</div>' : '') +
+        '<div style="position:relative">' +
+        '<div style="font-size:11px;font-weight:900;letter-spacing:.2em;color:#66D7A5;margin-bottom:6px;text-transform:uppercase">' + (b.title || 'Highlight') + '</div>' +
+        '<div style="font-size:26px;font-weight:900;letter-spacing:-0.03em;line-height:1.15">' + (b.value || '') + '</div>' +
+        '</div></div>';
     }
     if (b.type === "chart") {
       var cid = "ch" + Math.random().toString(36).slice(2, 8);
       var cd = JSON.stringify({ type: b.chartType || "bar", data: { labels: b.labels || [], datasets: b.datasets || [] } }).replace(/"/g, "&quot;");
-      return '<div style="background:white;padding:20px;border-radius:12px;border:1px solid #E2E8F0;margin-bottom:14px"><div style="font-weight:700;margin-bottom:10px;color:#1A1D23">' + (b.title || "Chart") + '</div><canvas id="' + cid + '" data-chartcfg="' + cd + '"></canvas></div>';
+      return '<div style="background:#FAFAF7;padding:24px;border-radius:16px;border:1px solid #F4F4F0;margin-bottom:16px"><div style="font-size:11px;font-weight:900;color:' + color + ';letter-spacing:.14em;text-transform:uppercase;margin-bottom:12px">' + (b.title || "Chart") + '</div><canvas id="' + cid + '" data-chartcfg="' + cd + '"></canvas></div>';
     }
     if (b.type === "link") {
-      return '<div style="margin-bottom:14px;padding:14px 18px;background:#E8F8F0;border:1px solid #bbf7d0;border-radius:10px;display:flex;align-items:center;gap:12px">' +
-        '<div style="width:36px;height:36px;border-radius:10px;background:' + color + ';display:flex;align-items:center;justify-content:center;flex-shrink:0"><span style="color:white;font-size:16px">&#128279;</span></div>' +
-        '<div><a href="' + (b.url || '#') + '" target="_blank" rel="noopener noreferrer" style="color:' + color + ';font-weight:700;font-size:14px;text-decoration:none">' + (b.text || b.url || 'Link') + '</a>' +
-        (b.description ? '<div style="font-size:12px;color:#5F6B7A;margin-top:2px">' + b.description + '</div>' : '') +
+      return '<div style="margin-bottom:16px;padding:16px 20px;background:#E6F9F1;border:1px solid #CFF3E3;border-radius:14px;display:flex;align-items:center;gap:14px">' +
+        '<div style="width:40px;height:40px;border-radius:12px;background:' + color + ';display:flex;align-items:center;justify-content:center;flex-shrink:0"><span style="color:white;font-size:18px">&#128279;</span></div>' +
+        '<div><a href="' + (b.url || '#') + '" target="_blank" rel="noopener noreferrer" style="color:' + colorDark + ';font-weight:900;font-size:15px;text-decoration:none;letter-spacing:-0.01em">' + (b.text || b.url || 'Link') + '</a>' +
+        (b.description ? '<div style="font-size:13px;color:#4E524A;margin-top:2px">' + b.description + '</div>' : '') +
         '</div></div>';
     }
     if (b.type === "image") {
-      return '<div style="margin-bottom:14px;text-align:center"><img src="' + (b.url || '') + '" style="max-width:100%;border-radius:10px;box-shadow:0 2px 8px rgba(0,0,0,.08)" alt="' + (b.caption || '') + '" />' +
-        (b.caption ? '<div style="font-size:12px;color:#5F6B7A;margin-top:8px">' + b.caption + '</div>' : '') + '</div>';
+      return '<div style="margin-bottom:16px;text-align:center"><img src="' + (b.url || '') + '" style="max-width:100%;border-radius:14px;box-shadow:0 4px 10px rgba(10,31,23,.08)" alt="' + (b.caption || '') + '" />' +
+        (b.caption ? '<div style="font-size:12px;color:#787C72;margin-top:10px;font-weight:700">' + b.caption + '</div>' : '') + '</div>';
     }
     return "";
   }
 
   var css = "*{margin:0;padding:0;box-sizing:border-box}";
-  css += "body{font-family:'Lato','Inter',system-ui,sans-serif;background:#F4F6F9;color:#1A1D23;line-height:1.6;-webkit-font-smoothing:antialiased}";
-  css += ".ctr{max-width:960px;margin:0 auto;padding:28px 20px}";
-  css += ".hdr{background:linear-gradient(135deg," + color + "," + colorDark + ");color:white;padding:44px 40px 56px;border-radius:18px;margin-bottom:0;position:relative;overflow:hidden;box-shadow:0 4px 20px rgba(2,179,118,.25)}";
-  css += ".hdr::before{content:'';position:absolute;top:-50%;right:-20%;width:70%;height:200%;background:radial-gradient(circle,rgba(255,255,255,.08) 0%,transparent 60%);pointer-events:none}";
-  css += ".hdr::after{content:'';position:absolute;bottom:-40%;left:-10%;width:60%;height:160%;background:radial-gradient(circle,rgba(255,255,255,.05) 0%,transparent 50%);pointer-events:none}";
-  css += ".hdr *{position:relative;z-index:1}";
-  css += ".hdr h1{font-size:2rem;font-weight:800;letter-spacing:-.5px;margin-top:6px}";
-  css += ".logo-text{font-family:'Lato','Inter',sans-serif;font-weight:900;font-size:28px;letter-spacing:-1px;color:white;display:inline-block;text-shadow:0 2px 8px rgba(0,0,0,.12)}";
-  css += ".kpi-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(165px,1fr));gap:12px;margin-top:-32px;margin-bottom:28px;position:relative;z-index:2;padding:0 8px}";
-  css += ".kpi-card{background:white;border-radius:14px;padding:18px;border:1px solid #E2E8F0;box-shadow:0 2px 8px rgba(0,0,0,.04);transition:transform .15s,box-shadow .15s;text-align:center}";
-  css += ".kpi-card:hover{transform:translateY(-3px);box-shadow:0 6px 20px rgba(0,0,0,.08)}";
-  css += ".kpi-label{font-size:11px;color:#5F6B7A;text-transform:uppercase;letter-spacing:.4px;font-weight:600}";
-  css += ".kpi-value{font-size:24px;font-weight:800;color:#1A1D23;margin-top:4px}";
-  css += ".kpi-unit{font-size:11px;color:#5F6B7A;margin-top:2px}";
-  css += ".sec{background:white;border-radius:16px;border:1px solid #E2E8F0;overflow:hidden;margin-bottom:18px;box-shadow:0 1px 4px rgba(0,0,0,.03)}";
-  css += ".sec-hdr{display:flex;align-items:center;gap:12px;padding:16px 22px;cursor:pointer;user-select:none;transition:background .15s;position:relative}";
-  css += ".sec-hdr:hover{background:#F8FAFB}";
-  css += ".sec-hdr::after{content:'\\25BC';position:absolute;right:20px;top:50%;transform:translateY(-50%);font-size:11px;color:#9ca3af;transition:transform .2s}";
-  css += ".sec-hdr.collapsed::after{transform:translateY(-50%) rotate(-90deg)}";
-  css += ".sec-icon{width:40px;height:40px;border-radius:12px;background:" + color + "15;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0}";
-  css += ".sec-title{font-size:16px;font-weight:700;color:#1A1D23}";
-  css += ".sec-body{padding:18px 22px;border-top:1px solid #E2E8F0;transition:max-height .3s ease,opacity .2s}";
-  css += ".sec-body.hidden{max-height:0!important;opacity:0;padding:0 22px;overflow:hidden;border-top:none}";
-  css += ".summary-box{background:linear-gradient(135deg," + color + "08," + color + "04);border:1px solid " + color + "30;border-radius:14px;padding:24px;margin-bottom:18px}";
-  css += ".insight-item{padding:12px 18px;background:" + color + "08;border-left:4px solid " + color + ";margin-bottom:8px;border-radius:0 10px 10px 0;font-size:13.5px;color:#166534;line-height:1.6}";
-  css += ".footer{text-align:center;padding:28px;color:#9ca3af;font-size:12px;display:flex;align-items:center;justify-content:center;gap:8px}";
-  css += ".trow:hover{background:#E8F8F0!important}";
-  css += "@media print{body{background:white}.ctr{padding:0;max-width:100%}.sec-hdr::after{display:none}.sec-body.hidden{max-height:none!important;opacity:1;padding:18px 22px;border-top:1px solid #E2E8F0}.kpi-card:hover{transform:none}}";
-  css += "@media(max-width:768px){.kpi-grid{grid-template-columns:repeat(3,1fr)}}";
-  css += "@media(max-width:480px){.kpi-grid{grid-template-columns:repeat(2,1fr)}.hdr{padding:28px 24px 44px}.hdr h1{font-size:1.5rem}}";
+  css += "body{font-family:'Lato','Inter',system-ui,sans-serif;background:#F4F4F0;color:#0A1F17;line-height:1.6;-webkit-font-smoothing:antialiased;font-feature-settings:'ss01','kern'}";
+  css += ".num{font-feature-settings:'tnum','kern';font-variant-numeric:tabular-nums}";
+  css += ".ctr{max-width:960px;margin:0 auto;padding:32px 20px}";
+  css += ".paper{background:#fff;border-radius:20px;overflow:hidden;box-shadow:0 24px 60px rgba(10,31,23,.10),0 8px 24px rgba(10,31,23,.06)}";
+  css += ".hero{background:linear-gradient(135deg," + colorDeepest + " 0%," + colorDark + " 45%," + color + " 100%);color:#fff;padding:56px 48px;position:relative;overflow:hidden}";
+  css += ".hero *{position:relative;z-index:1}";
+  css += ".hero-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:40px;flex-wrap:wrap;gap:12px}";
+  css += ".hero-eyebrow{font-size:11px;font-weight:900;letter-spacing:.2em;opacity:.8}";
+  css += ".hero-sub{font-size:12px;font-weight:900;letter-spacing:.18em;opacity:.85;margin-bottom:12px}";
+  css += ".hero h1{font-size:56px;font-weight:900;letter-spacing:-0.04em;line-height:1.02;margin:0;max-width:700px}";
+  css += ".hero-meta{display:flex;flex-wrap:wrap;gap:28px;margin-top:36px;padding-top:22px;border-top:1px solid rgba(255,255,255,.2)}";
+  css += ".meta-item{min-width:120px}";
+  css += ".meta-label{font-size:10px;font-weight:900;opacity:.7;letter-spacing:.16em;text-transform:uppercase}";
+  css += ".meta-value{font-size:14px;font-weight:900;margin-top:3px}";
+  css += ".kpi-strip{background:#fff;padding:32px 48px;border-bottom:1px solid #F4F4F0}";
+  css += ".kpi-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:22px}";
+  css += ".kpi-label{font-size:11px;font-weight:900;color:#787C72;letter-spacing:.1em;text-transform:uppercase}";
+  css += ".kpi-value{font-size:42px;font-weight:900;letter-spacing:-0.04em;line-height:1;margin-top:6px}";
+  css += ".kpi-unit{font-size:18px;color:#787C72;font-weight:700;margin-left:3px}";
+  css += ".kpi-trend{font-size:12px;font-weight:700;margin-top:4px;display:inline-flex;align-items:center;gap:4px}";
+  css += ".kpi-up{color:#029A66}.kpi-down{color:#D94F4F}.kpi-stable{color:#787C72}";
+  css += ".sec{padding:36px 48px;border-top:1px solid #F4F4F0}";
+  css += ".sec-eyebrow{font-size:11px;font-weight:900;color:" + color + ";letter-spacing:.18em;text-transform:uppercase;margin-bottom:8px}";
+  css += ".sec-title{font-size:32px;font-weight:900;letter-spacing:-0.03em;margin:0 0 22px;line-height:1.1;color:#0A1F17;cursor:pointer;user-select:none;display:flex;align-items:center;justify-content:space-between;gap:10px}";
+  css += ".sec-title .chev{font-size:16px;color:#A8ABA1;transition:transform .2s;flex-shrink:0}";
+  css += ".sec-title.collapsed .chev{transform:rotate(-90deg)}";
+  css += ".sec-body{transition:max-height .35s ease,opacity .25s}";
+  css += ".sec-body.hidden{max-height:0!important;opacity:0;overflow:hidden;margin-top:0!important}";
+  css += ".summary{padding:28px;background:linear-gradient(135deg,#E6F9F1,#fff);border:1px solid #CFF3E3;border-radius:16px;font-size:17px;font-weight:300;line-height:1.6;color:#1A1D17}";
+  css += ".summary strong{font-weight:900;color:" + colorDark + "}";
+  css += ".insights{display:flex;flex-direction:column;gap:12px}";
+  css += ".insight{padding:16px 20px;background:#E6F9F1;border-left:4px solid " + color + ";border-radius:0 14px 14px 0;font-size:14px;color:#016040;line-height:1.6;font-weight:400}";
+  css += ".footer{padding:32px 48px;border-top:1px solid #F4F4F0;background:#FAFAF7;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px}";
+  css += ".footer-brand{display:flex;align-items:center;gap:14px}";
+  css += ".footer-brand-text{font-size:12px;font-weight:700;color:#2F332C}";
+  css += ".footer-brand-sub{font-size:11px;color:#787C72;margin-top:2px}";
+  css += ".footer-tag{font-size:11px;color:#787C72;font-weight:700;letter-spacing:.08em;text-transform:uppercase}";
+  css += ".trow:hover{background:#E6F9F1!important}";
+  css += "@media print{body{background:white}.ctr{padding:0;max-width:100%}.paper{box-shadow:none;border-radius:0}.sec-body.hidden{max-height:none!important;opacity:1}.sec-title{cursor:default}.sec-title .chev{display:none}}";
+  css += "@media(max-width:768px){.hero{padding:40px 28px}.hero h1{font-size:38px}.kpi-strip{padding:24px 28px}.kpi-value{font-size:32px}.sec{padding:28px 28px}.sec-title{font-size:24px}.footer{padding:22px 28px}.hero-meta{gap:16px}.meta-item{min-width:100px}}";
 
-  // Password gate CSS
   if (accessPassword) {
-    css += ".pw-gate{position:fixed;inset:0;background:#F4F6F9;z-index:9999;display:flex;align-items:center;justify-content:center}";
-    css += ".pw-box{background:white;border-radius:18px;padding:40px;max-width:400px;width:90%;text-align:center;box-shadow:0 8px 40px rgba(0,0,0,.1);border:1px solid #E2E8F0}";
-    css += ".pw-box .logo-text{color:" + color + ";font-size:32px;text-shadow:none;margin-bottom:6px}";
-    css += ".pw-box h2{font-size:18px;font-weight:700;color:#1A1D23;margin-bottom:4px}";
-    css += ".pw-box p{font-size:13px;color:#5F6B7A;margin-bottom:20px}";
-    css += ".pw-box input{width:100%;padding:12px 16px;border:2px solid #E2E8F0;border-radius:12px;font-size:14px;outline:none;transition:border-color .2s;font-family:inherit}";
-    css += ".pw-box input:focus{border-color:" + color + "}";
-    css += ".pw-box button{width:100%;padding:12px;background:" + color + ";color:white;border:none;border-radius:12px;font-size:14px;font-weight:700;cursor:pointer;margin-top:12px;transition:background .2s;font-family:inherit}";
-    css += ".pw-box button:hover{background:" + colorDark + "}";
-    css += ".pw-err{color:#dc2626;font-size:13px;margin-top:8px;display:none}";
-    css += ".pw-notice{font-size:11px;color:#9ca3af;margin-top:16px}";
+    css += ".pw-gate{position:fixed;inset:0;background:#F4F4F0;z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px}";
+    css += ".pw-box{background:white;border-radius:20px;padding:40px;max-width:420px;width:100%;text-align:center;box-shadow:0 24px 60px rgba(10,31,23,.10),0 8px 24px rgba(10,31,23,.06);border:1px solid #E8E9E3}";
+    css += ".pw-logo{margin-bottom:20px}";
+    css += ".pw-box h2{font-size:22px;font-weight:900;color:#0A1F17;margin-bottom:6px;letter-spacing:-0.02em}";
+    css += ".pw-box p{font-size:13px;color:#787C72;margin-bottom:22px}";
+    css += ".pw-box input{width:100%;padding:13px 16px;border:1px solid #E8E9E3;border-radius:12px;font-size:14px;outline:none;transition:border-color .2s;font-family:inherit}";
+    css += ".pw-box input:focus{border-color:" + color + ";box-shadow:0 0 0 3px rgba(2,179,118,.12)}";
+    css += ".pw-box button{width:100%;padding:13px;background:" + color + ";color:white;border:none;border-radius:999px;font-size:14px;font-weight:900;cursor:pointer;margin-top:14px;transition:background .2s;font-family:inherit;letter-spacing:-0.01em}";
+    css += ".pw-box button:hover{background:#029A66}";
+    css += ".pw-err{color:#D94F4F;font-size:13px;margin-top:8px;display:none;font-weight:700}";
+    css += ".pw-notice{font-size:11px;color:#A8ABA1;margin-top:18px;font-weight:700;letter-spacing:.08em;text-transform:uppercase}";
   }
 
   var chartScript = 'document.addEventListener("DOMContentLoaded",function(){';
-  chartScript += 'document.querySelectorAll("canvas[data-chartcfg]").forEach(function(c){try{var d=JSON.parse(c.getAttribute("data-chartcfg"));new Chart(c,{type:d.type,data:d.data,options:{responsive:true,plugins:{legend:{labels:{font:{family:"Lato"}}}}}});}catch(e){}});';
-  chartScript += 'document.querySelectorAll(".sec-hdr").forEach(function(el){el.addEventListener("click",function(){this.classList.toggle("collapsed");var body=this.nextElementSibling;if(body)body.classList.toggle("hidden");});});';
+  chartScript += 'document.querySelectorAll("canvas[data-chartcfg]").forEach(function(c){try{var d=JSON.parse(c.getAttribute("data-chartcfg"));new Chart(c,{type:d.type,data:d.data,options:{responsive:true,plugins:{legend:{labels:{font:{family:"Lato",weight:700}}}}}});}catch(e){}});';
+  chartScript += 'document.querySelectorAll(".sec-title").forEach(function(el){el.addEventListener("click",function(){this.classList.toggle("collapsed");var body=this.parentElement.querySelector(".sec-body");if(body)body.classList.toggle("hidden");});});';
   chartScript += '});';
 
-  // Password gate script — uses SHA-256 hashing so the password isn't in plaintext
   var pwScript = '';
   if (accessPassword) {
-    // Hash the password using a simple client-side approach
-    // We store a SHA-256 hash of the password, then compare on input
     pwScript = `
     (function(){
       var gate=document.getElementById('pw-gate');
@@ -214,7 +242,6 @@ export function buildStandaloneHTML(reportData, brandColor, title, options = {})
     })();`;
   }
 
-  // Support both flat and generalInfo structures
   var reportTitle = gi.title || r.title || rt;
   var reportDate = gi.reportDate || r.reportDate || '';
   var reportSubtitle = gi.subtitle || r.subtitle || '';
@@ -228,97 +255,117 @@ export function buildStandaloneHTML(reportData, brandColor, title, options = {})
   var o = "";
   o += '<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">';
   o += '<meta name="robots" content="noindex,nofollow">';
-  o += "<title>" + reportTitle + "<\/title>";
+  o += "<title>" + reportTitle + "</title>";
+  o += '<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>';
   o += '<link href="https://fonts.googleapis.com/css2?family=Lato:wght@300;400;700;900&display=swap" rel="stylesheet">';
   o += '<script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"><\/script>';
-  o += "<style>" + css + "<\/style><\/head><body>";
+  o += "<style>" + css + "</style></head><body>";
 
-  // Password gate overlay (if enabled)
   if (accessPassword) {
-    // Compute SHA-256 hash of password to embed (not plaintext)
     var hashHex = sha256(accessPassword);
     o += '<div id="pw-gate" class="pw-gate" data-h="' + hashHex + '">';
     o += '<div class="pw-box">';
-    o += '<div style="margin-bottom:4px"><svg viewBox=\"0 0 746 320\" height=\"44\" style=\"display:inline-block;vertical-align:middle\" xmlns=\"http://www.w3.org/2000/svg\"><g fill=\"white\"><path d=\"M89.2,299.5c-18.1,0-33.5-6.3-46.1-19s-18.9-28-18.9-46v-149c0-18,6.4-33.4,19.1-46 c12.7-12.7,28.1-19,45.9-19c18.1,0,33.4,6.4,46,19.1c12.6,12.7,18.9,28,18.9,46v31h-42.5V84.8c0-6.6-2.3-12.2-6.9-16.8 s-10.2-6.9-16.8-6.9c-6.5,0-12,2.3-16.6,6.9c-4.6,4.6-6.9,10.2-6.9,16.8v149.4c0,6.6,2.3,12.1,6.9,16.7c4.6,4.6,10.1,6.9,16.6,6.9 c6.6,0,12.2-2.3,16.8-6.9s6.9-10.2,6.9-16.7v-37.5h42.5v37.9c0,18.1-6.4,33.5-19.1,46C122.3,293.2,107,299.5,89.2,299.5z\"/><path d=\"M260.7,233.5l-10,62.5h-42.7l46.1-272.1h56.5l45.5,272.1h-43l-9.7-62.5H260.7z M282.2,86.3L267,193.6h30.4 L282.2,86.3z\"/><path d=\"M533.3,296.1H421.4V23.9h41v231.4h70.9L533.3,296.1L533.3,296.1z\"/><path d=\"M656.7,20.6c18.1,0,33.5,6.4,46.2,19.1s19,28.1,19,46.1v148.4c0,18.1-6.4,33.5-19.1,46.2 c-12.7,12.7-28.1,19-46.1,19s-33.3-6.4-45.9-19.1c-12.6-12.7-18.9-28.1-18.9-46.1V85.9c0-18.1,6.4-33.5,19.1-46.2 C623.7,27,639,20.6,656.7,20.6z M679,85.1c0-6.6-2.3-12.1-6.8-16.6c-4.5-4.5-10.1-6.8-16.6-6.8c-6.5,0-12,2.3-16.6,6.8 S632,78.5,632,85.1V234c0,6.5,2.3,12,6.9,16.5s10.2,6.9,16.6,6.9c6.6,0,12.1-2.3,16.6-6.9c4.5-4.6,6.8-10.1,6.8-16.5V85.1z\"/></g></svg></div>';
-    o += '<h2>Confidential Report<\/h2>';
-    o += '<p>This report is restricted to authorized CALO personnel only.<\/p>';
+    o += '<div class="pw-logo">' + caloLogoSvg(color, 32) + '</div>';
+    o += '<h2>Confidential report</h2>';
+    o += '<p>This report is restricted to authorized Calo personnel only.</p>';
     o += '<input id="pw-input" type="password" placeholder="Enter access code" autocomplete="off" />';
-    o += '<button id="pw-btn">View Report<\/button>';
-    o += '<div id="pw-err" class="pw-err"><\/div>';
-    o += '<div class="pw-notice">&#128274; Protected by CALO Reports Platform<\/div>';
-    o += '<\/div><\/div>';
+    o += '<button id="pw-btn">View report</button>';
+    o += '<div id="pw-err" class="pw-err"></div>';
+    o += '<div class="pw-notice">&#128274; Protected by Calo Reports</div>';
+    o += '</div></div>';
   }
 
   o += '<div id="pw-content" class="ctr">';
+  o += '<div class="paper">';
 
-  // Header
-  o += '<div class="hdr">';
-  o += '<div style="margin-bottom:8px"><svg viewBox=\"0 0 746 320\" height=\"36\" style=\"display:inline-block;vertical-align:middle\" xmlns=\"http://www.w3.org/2000/svg\"><g fill=\"' + color + '\"><path d=\"M89.2,299.5c-18.1,0-33.5-6.3-46.1-19s-18.9-28-18.9-46v-149c0-18,6.4-33.4,19.1-46 c12.7-12.7,28.1-19,45.9-19c18.1,0,33.4,6.4,46,19.1c12.6,12.7,18.9,28,18.9,46v31h-42.5V84.8c0-6.6-2.3-12.2-6.9-16.8 s-10.2-6.9-16.8-6.9c-6.5,0-12,2.3-16.6,6.9c-4.6,4.6-6.9,10.2-6.9,16.8v149.4c0,6.6,2.3,12.1,6.9,16.7c4.6,4.6,10.1,6.9,16.6,6.9 c6.6,0,12.2-2.3,16.8-6.9s6.9-10.2,6.9-16.7v-37.5h42.5v37.9c0,18.1-6.4,33.5-19.1,46C122.3,293.2,107,299.5,89.2,299.5z\"/><path d=\"M260.7,233.5l-10,62.5h-42.7l46.1-272.1h56.5l45.5,272.1h-43l-9.7-62.5H260.7z M282.2,86.3L267,193.6h30.4 L282.2,86.3z\"/><path d=\"M533.3,296.1H421.4V23.9h41v231.4h70.9L533.3,296.1L533.3,296.1z\"/><path d=\"M656.7,20.6c18.1,0,33.5,6.4,46.2,19.1s19,28.1,19,46.1v148.4c0,18.1-6.4,33.5-19.1,46.2 c-12.7,12.7-28.1,19-46.1,19s-33.3-6.4-45.9-19.1c-12.6-12.7-18.9-28.1-18.9-46.1V85.9c0-18.1,6.4-33.5,19.1-46.2 C623.7,27,639,20.6,656.7,20.6z M679,85.1c0-6.6-2.3-12.1-6.8-16.6c-4.5-4.5-10.1-6.8-16.6-6.8c-6.5,0-12,2.3-16.6,6.8 S632,78.5,632,85.1V234c0,6.5,2.3,12,6.9,16.5s10.2,6.9,16.6,6.9c6.6,0,12.1-2.3,16.6-6.9c4.5-4.6,6.8-10.1,6.8-16.5V85.1z\"/></g></svg></div>';
-  o += '<h1>' + reportTitle + '<\/h1>';
-  if (reportDate) o += '<div style="margin-top:8px;font-size:14px;opacity:.9">' + reportDate + '<\/div>';
-  if (prevMonth) o += '<div style="display:inline-block;margin-top:8px;padding:4px 14px;background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.2);border-radius:20px;font-size:12px">' + prevMonth + '<\/div>';
-  if (companyName) o += '<div style="margin-top:8px;font-size:13px;opacity:.7">' + companyName + '<\/div>';
-  if (reportSubtitle) o += '<div style="font-size:16px;opacity:.9;margin-top:6px">' + reportSubtitle + '<\/div>';
-  o += '<\/div>';
-
-  // KPI Grid
-  if (kpis && kpis.length) {
-    o += '<div class="kpi-grid">';
-    kpis.forEach(function(k) {
-      var trendIcon = k.trend === 'up' ? '&#9650;' : k.trend === 'down' ? '&#9660;' : '&#8226;';
-      var trendColor = k.trend === 'up' ? '#16a34a' : k.trend === 'down' ? '#dc2626' : '#6b7280';
-      o += '<div class="kpi-card">';
-      o += '<div class="kpi-label">' + (k.label || '') + '<\/div>';
-      o += '<div class="kpi-value">' + (k.value || '') + '<\/div>';
-      if (k.unit) o += '<div class="kpi-unit">' + k.unit + '<\/div>';
-      if (k.trend) o += '<div style="font-size:11px;color:' + trendColor + ';margin-top:4px"><span>' + trendIcon + '</span> ' + (k.change || k.trend) + '<\/div>';
-      o += '<\/div>';
+  // Editorial hero
+  o += '<div class="hero">';
+  o += '<div class="hero-top">' + caloLogoSvg('#ffffff', 28);
+  if (prevMonth || reportDate) {
+    o += '<div class="hero-eyebrow">' + (prevMonth || reportDate) + '</div>';
+  }
+  o += '</div>';
+  if (reportSubtitle) o += '<div class="hero-sub">' + reportSubtitle + '</div>';
+  o += '<h1>' + reportTitle + '</h1>';
+  var metaItems = [];
+  if (reportDate && !prevMonth) metaItems.push({ l: 'Date', v: reportDate });
+  if (prevMonth && reportDate) metaItems.push({ l: 'Published', v: reportDate });
+  if (companyName) metaItems.push({ l: 'Organization', v: companyName });
+  metaItems.push({ l: 'Sections', v: sections.length || 0 });
+  if (metaItems.length) {
+    o += '<div class="hero-meta">';
+    metaItems.forEach(function(m) {
+      o += '<div class="meta-item"><div class="meta-label">' + m.l + '</div><div class="meta-value">' + m.v + '</div></div>';
     });
-    o += '<\/div>';
+    o += '</div>';
+  }
+  o += '</div>';
+
+  // KPI strip
+  if (kpis && kpis.length) {
+    o += '<div class="kpi-strip"><div class="kpi-grid">';
+    kpis.forEach(function(k) {
+      var trendClass = k.trend === 'up' ? 'kpi-up' : k.trend === 'down' ? 'kpi-down' : 'kpi-stable';
+      var trendIcon = k.trend === 'up' ? '&#9650;' : k.trend === 'down' ? '&#9660;' : '';
+      o += '<div>';
+      o += '<div class="kpi-label">' + (k.label || '') + '</div>';
+      o += '<div class="kpi-value num">' + (k.value || '');
+      if (k.unit) o += '<span class="kpi-unit">' + k.unit + '</span>';
+      o += '</div>';
+      if (k.trend || k.change) {
+        o += '<div class="kpi-trend ' + trendClass + '">';
+        if (trendIcon) o += '<span>' + trendIcon + '</span> ';
+        o += (k.change || k.trend || '');
+        o += '</div>';
+      }
+      o += '</div>';
+    });
+    o += '</div></div>';
+  }
+
+  // Executive summary
+  if (summary) {
+    o += '<div class="sec">';
+    o += '<div class="sec-eyebrow">Executive summary</div>';
+    o += '<h2 class="sec-title"><span>Highlights</span><span class="chev">&#9662;</span></h2>';
+    o += '<div class="sec-body"><div class="summary">' + summary + '</div></div>';
+    o += '</div>';
   }
 
   // Sections
-  sections.forEach(function(s) {
+  sections.forEach(function(s, idx) {
     o += '<div class="sec">';
-    o += '<div class="sec-hdr">';
-    o += '<div class="sec-icon">' + (s.icon || '&#128202;') + '<\/div>';
-    o += '<div class="sec-title">' + (s.title || '') + '<\/div>';
-    o += '<\/div>';
+    o += '<div class="sec-eyebrow">Section · ' + String(idx + 1).padStart(2, '0') + '</div>';
+    o += '<h2 class="sec-title"><span>' + (s.icon ? s.icon + ' ' : '') + (s.title || '') + '</span><span class="chev">&#9662;</span></h2>';
     o += '<div class="sec-body">';
     (s.blocks || []).forEach(function(b) { o += rb(b); });
-    o += '<\/div><\/div>';
+    o += '</div></div>';
   });
 
-  // Executive Summary
-  if (summary) {
-    o += '<div class="summary-box">';
-    o += '<h3 style="font-size:18px;font-weight:700;margin-bottom:12px;color:#1A1D23">Executive Summary<\/h3>';
-    o += '<p style="color:#5F6B7A;line-height:1.8;font-size:14px">' + summary + '<\/p><\/div>';
-  }
-
-  // Key Insights
+  // Insights
   if (insights && insights.length) {
-    o += '<div class="sec" style="overflow:visible">';
-    o += '<div class="sec-hdr" style="cursor:default">';
-    o += '<div class="sec-icon">&#128161;<\/div>';
-    o += '<div class="sec-title">Key Insights<\/div>';
-    o += '<\/div><div class="sec-body">';
-    insights.forEach(function(i) { o += '<div class="insight-item">' + i + '<\/div>'; });
-    o += '<\/div><\/div>';
+    o += '<div class="sec">';
+    o += '<div class="sec-eyebrow">Next quarter</div>';
+    o += '<h2 class="sec-title"><span>Key insights</span><span class="chev">&#9662;</span></h2>';
+    o += '<div class="sec-body"><div class="insights">';
+    insights.forEach(function(i) { o += '<div class="insight">' + i + '</div>'; });
+    o += '</div></div></div>';
   }
 
   // Footer
   o += '<div class="footer">';
-  o += '<svg viewBox=\"0 0 746 320\" height=\"18\" style=\"display:inline-block;vertical-align:middle\" xmlns=\"http://www.w3.org/2000/svg\"><g fill=\"#9ca3af\"><path d=\"M89.2,299.5c-18.1,0-33.5-6.3-46.1-19s-18.9-28-18.9-46v-149c0-18,6.4-33.4,19.1-46 c12.7-12.7,28.1-19,45.9-19c18.1,0,33.4,6.4,46,19.1c12.6,12.7,18.9,28,18.9,46v31h-42.5V84.8c0-6.6-2.3-12.2-6.9-16.8 s-10.2-6.9-16.8-6.9c-6.5,0-12,2.3-16.6,6.9c-4.6,4.6-6.9,10.2-6.9,16.8v149.4c0,6.6,2.3,12.1,6.9,16.7c4.6,4.6,10.1,6.9,16.6,6.9 c6.6,0,12.2-2.3,16.8-6.9s6.9-10.2,6.9-16.7v-37.5h42.5v37.9c0,18.1-6.4,33.5-19.1,46C122.3,293.2,107,299.5,89.2,299.5z\"/><path d=\"M260.7,233.5l-10,62.5h-42.7l46.1-272.1h56.5l45.5,272.1h-43l-9.7-62.5H260.7z M282.2,86.3L267,193.6h30.4 L282.2,86.3z\"/><path d=\"M533.3,296.1H421.4V23.9h41v231.4h70.9L533.3,296.1L533.3,296.1z\"/><path d=\"M656.7,20.6c18.1,0,33.5,6.4,46.2,19.1s19,28.1,19,46.1v148.4c0,18.1-6.4,33.5-19.1,46.2 c-12.7,12.7-28.1,19-46.1,19s-33.3-6.4-45.9-19.1c-12.6-12.7-18.9-28.1-18.9-46.1V85.9c0-18.1,6.4-33.5,19.1-46.2 C623.7,27,639,20.6,656.7,20.6z M679,85.1c0-6.6-2.3-12.1-6.8-16.6c-4.5-4.5-10.1-6.8-16.6-6.8c-6.5,0-12,2.3-16.6,6.8 S632,78.5,632,85.1V234c0,6.5,2.3,12,6.9,16.5s10.2,6.9,16.6,6.9c6.6,0,12.1-2.3,16.6-6.9c4.5-4.6,6.8-10.1,6.8-16.5V85.1z\"/></g></svg>';
-  o += '<span>Reports Platform<\/span>';
-  o += '<\/div>';
+  o += '<div class="footer-brand">' + caloLogoSvg('#A8ABA1', 18);
+  o += '<div><div class="footer-brand-text">Calo Reports Platform</div>';
+  o += '<div class="footer-brand-sub">Prepared with care' + (reportDate ? ' · ' + reportDate : '') + '</div></div></div>';
+  o += '<div class="footer-tag">Confidential · Internal use only</div>';
+  o += '</div>';
 
-  o += "<\/div>";
-  o += "<script>" + chartScript + "<\/script>";
+  o += '</div>'; // paper
+  o += "</div>"; // ctr
+  o += "<script>" + chartScript + "</script>";
   if (accessPassword) {
-    o += "<script>" + pwScript + "<\/script>";
+    o += "<script>" + pwScript + "</script>";
   }
-  o += "<\/body><\/html>";
+  o += "</body></html>";
   return o;
 }
-

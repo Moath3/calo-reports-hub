@@ -226,20 +226,28 @@ export default function ReportPreviewPage() {
   }, [id, navigate]);
 
   useEffect(() => {
-    if (report && iframeRef.current) {
-      const html = renderReportHTML(report.report_data);
-      const doc = iframeRef.current.contentDocument;
-      doc.open();
-      doc.write(html);
-      doc.close();
-    }
+    if (!report || !iframeRef.current) return;
+    let cancelled = false;
+    api.exportHTML(report.report_data, null, report.title)
+      .then(res => {
+        if (cancelled || !iframeRef.current) return;
+        const doc = iframeRef.current.contentDocument;
+        doc.open(); doc.write(res.html); doc.close();
+      })
+      .catch(() => {
+        if (cancelled || !iframeRef.current) return;
+        const html = renderReportHTML(report.report_data);
+        const doc = iframeRef.current.contentDocument;
+        doc.open(); doc.write(html); doc.close();
+      });
+    return () => { cancelled = true; };
   }, [report]);
 
   const handleExportHTML = async () => {
     setExporting(true);
     try {
-      const html = renderReportHTML(report.report_data, { collapsible: true });
-      const blob = new Blob([html], { type: 'text/html' });
+      const res = await api.exportHTML(report.report_data, null, report.title);
+      const blob = new Blob([res.html], { type: 'text/html' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -316,9 +324,14 @@ export default function ReportPreviewPage() {
     }
   };
 
-  const handleCopyHTML = () => {
-    const html = renderReportHTML(report.report_data, { collapsible: true });
-    navigator.clipboard.writeText(html).then(() => toast.success('HTML copied!'));
+  const handleCopyHTML = async () => {
+    try {
+      const res = await api.exportHTML(report.report_data, null, report.title);
+      await navigator.clipboard.writeText(res.html);
+      toast.success('HTML copied!');
+    } catch {
+      toast.error('Copy failed');
+    }
   };
 
   const handlePublish = async () => {

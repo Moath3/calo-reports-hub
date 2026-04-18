@@ -209,10 +209,19 @@ export default function ReportPreviewPage() {
   const [shareLoading, setShareLoading] = useState(false);
   const [shareAll, setShareAll] = useState(false);
 
-  // Tweak panel — visual variant + brand color
+  // Tweak panel — modular report styling
   const [showTweaks, setShowTweaks] = useState(false);
   const [variant, setVariant] = useState('editorial');
   const [brandColor, setBrandColor] = useState('#02B376');
+  const [density, setDensity] = useState('comfortable');
+  const [pageWidth, setPageWidth] = useState('medium');
+  const [showHero, setShowHero] = useState(true);
+  const [showKpis, setShowKpis] = useState(true);
+  const [showSummary, setShowSummary] = useState(true);
+  const [showSections, setShowSections] = useState(true);
+  const [showInsights, setShowInsights] = useState(true);
+  const [showFooter, setShowFooter] = useState(true);
+  const [densifySections, setDensifySections] = useState(false);
   const [savingTweaks, setSavingTweaks] = useState(false);
 
   useEffect(() => {
@@ -227,8 +236,27 @@ export default function ReportPreviewPage() {
         setSelectedUsers(Array.isArray(sw) ? sw : []);
         setShareAll(res.report.visibility === 'shared');
         const gi = res.report.report_data?.generalInfo || {};
-        setVariant((gi.variant || 'editorial').toLowerCase());
+        const v = (gi.variant || 'editorial').toLowerCase();
+        setVariant(v);
         setBrandColor(gi.brandColor || '#02B376');
+        // Variant-aware tweak defaults
+        const presets = {
+          editorial: { density: 'spacious',    pageWidth: 'medium', densifySections: false },
+          dashboard: { density: 'compact',     pageWidth: 'wide',   densifySections: true  },
+          minimal:   { density: 'comfortable', pageWidth: 'narrow', densifySections: false },
+          brief:     { density: 'comfortable', pageWidth: 'narrow', densifySections: false },
+        };
+        const preset = presets[v] || presets.editorial;
+        const saved = gi.tweaks || {};
+        setDensity(saved.density || preset.density);
+        setPageWidth(saved.pageWidth || preset.pageWidth);
+        setShowHero(saved.showHero ?? true);
+        setShowKpis(saved.showKpis ?? true);
+        setShowSummary(saved.showSummary ?? true);
+        setShowSections(saved.showSections ?? (v !== 'brief'));
+        setShowInsights(saved.showInsights ?? true);
+        setShowFooter(saved.showFooter ?? true);
+        setDensifySections(saved.densifySections ?? preset.densifySections);
       })
       .catch(() => { toast.error('Report not found'); navigate('/reports'); })
       .finally(() => setLoading(false));
@@ -237,7 +265,12 @@ export default function ReportPreviewPage() {
   useEffect(() => {
     if (!report || !iframeRef.current) return;
     let cancelled = false;
-    api.exportHTML(report.report_data, brandColor, report.title, null, variant)
+    const tweaks = {
+      density, pageWidth,
+      showHero, showKpis, showSummary, showSections, showInsights, showFooter,
+      densifySections,
+    };
+    api.exportHTML(report.report_data, brandColor, report.title, null, variant, tweaks)
       .then(res => {
         if (cancelled || !iframeRef.current) return;
         const doc = iframeRef.current.contentDocument;
@@ -250,12 +283,16 @@ export default function ReportPreviewPage() {
         doc.open(); doc.write(html); doc.close();
       });
     return () => { cancelled = true; };
-  }, [report, variant, brandColor]);
+  }, [report, variant, brandColor, density, pageWidth, showHero, showKpis, showSummary, showSections, showInsights, showFooter, densifySections]);
+
+  const currentTweaks = () => ({
+    density, pageWidth, showHero, showKpis, showSummary, showSections, showInsights, showFooter, densifySections,
+  });
 
   const handleExportHTML = async () => {
     setExporting(true);
     try {
-      const res = await api.exportHTML(report.report_data, brandColor, report.title, null, variant);
+      const res = await api.exportHTML(report.report_data, brandColor, report.title, null, variant, currentTweaks());
       const blob = new Blob([res.html], { type: 'text/html' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -335,7 +372,7 @@ export default function ReportPreviewPage() {
 
   const handleCopyHTML = async () => {
     try {
-      const res = await api.exportHTML(report.report_data, brandColor, report.title, null, variant);
+      const res = await api.exportHTML(report.report_data, brandColor, report.title, null, variant, currentTweaks());
       await navigator.clipboard.writeText(res.html);
       toast.success('HTML copied!');
     } catch {
@@ -348,7 +385,7 @@ export default function ReportPreviewPage() {
     try {
       // Build HTML with optional password protection + selected variant
       const password = accessCode.trim() || undefined;
-      const res1 = await api.exportHTML(report.report_data, brandColor, report.title, password, variant);
+      const res1 = await api.exportHTML(report.report_data, brandColor, report.title, password, variant, currentTweaks());
       const html = res1.html;
       const slug = (report.title || 'report').toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 30);
       // Pass reportId so backend reuses existing Netlify site on republish
@@ -419,14 +456,18 @@ export default function ReportPreviewPage() {
     !shareSearch || u.name.toLowerCase().includes(shareSearch.toLowerCase()) || u.email.toLowerCase().includes(shareSearch.toLowerCase())
   );
 
-  // Save variant + brand color to report.generalInfo (persists across sessions)
+  // Persist all tweaks into report.generalInfo.tweaks
   const handleSaveTweaks = async () => {
     if (!isOwner) { toast.error('Only the owner can change tweaks'); return; }
     setSavingTweaks(true);
     try {
       const newData = {
         ...report.report_data,
-        generalInfo: { ...(report.report_data?.generalInfo || {}), variant, brandColor },
+        generalInfo: {
+          ...(report.report_data?.generalInfo || {}),
+          variant, brandColor,
+          tweaks: currentTweaks(),
+        },
       };
       await api.updateReport(id, { title: report.title, description: report.description, reportData: newData });
       setReport(prev => ({ ...prev, report_data: newData }));
@@ -437,10 +478,39 @@ export default function ReportPreviewPage() {
     } finally { setSavingTweaks(false); }
   };
 
+  // When user switches variant, apply that variant's preset to sensible defaults
+  const applyVariant = (v) => {
+    setVariant(v);
+    const presets = {
+      editorial: { density: 'spacious',    pageWidth: 'medium', showSections: true,  densifySections: false },
+      dashboard: { density: 'compact',     pageWidth: 'wide',   showSections: true,  densifySections: true  },
+      minimal:   { density: 'comfortable', pageWidth: 'narrow', showSections: true,  densifySections: false },
+      brief:     { density: 'comfortable', pageWidth: 'narrow', showSections: false, densifySections: false },
+    };
+    const p = presets[v] || presets.editorial;
+    setDensity(p.density);
+    setPageWidth(p.pageWidth);
+    setShowSections(p.showSections);
+    setDensifySections(p.densifySections);
+  };
+
   const variantOptions = [
-    { id: 'editorial', label: 'Editorial',  desc: 'Magazine-style hero, big type, expressive' },
-    { id: 'dashboard', label: 'Dashboard',  desc: 'Dense operational layout, dark header, numbered sections' },
-    { id: 'minimal',   label: 'Minimal',    desc: 'Paper document, print-ready, no decoration' },
+    { id: 'editorial', label: 'Editorial',  desc: 'Magazine — long-form, expressive, all the depth' },
+    { id: 'dashboard', label: 'Dashboard',  desc: 'Compact — tight grid, summarized, data-first' },
+    { id: 'minimal',   label: 'Minimal',    desc: 'Paper — print-ready, quiet, no decoration' },
+    { id: 'brief',     label: 'Brief',      desc: 'One-pager — KPIs + summary + insights' },
+  ];
+
+  const densityOptions = [
+    { id: 'compact',     label: 'Compact' },
+    { id: 'comfortable', label: 'Comfortable' },
+    { id: 'spacious',    label: 'Spacious' },
+  ];
+
+  const widthOptions = [
+    { id: 'narrow', label: 'Narrow', px: '760' },
+    { id: 'medium', label: 'Medium', px: '960' },
+    { id: 'wide',   label: 'Wide',   px: '1120' },
   ];
 
   const colorPresets = [
@@ -450,6 +520,16 @@ export default function ReportPreviewPage() {
     { c: '#4F7CD9', name: 'Ocean' },
     { c: '#E8A33D', name: 'Ember' },
     { c: '#8C2929', name: 'Burgundy' },
+  ];
+
+  // Only meaningful toggles given variant
+  const toggleList = [
+    { key: 'showHero',     label: 'Hero',     value: showHero,     set: setShowHero },
+    { key: 'showKpis',     label: 'KPIs',     value: showKpis,     set: setShowKpis },
+    { key: 'showSummary',  label: 'Summary',  value: showSummary,  set: setShowSummary },
+    { key: 'showSections', label: 'Sections', value: showSections, set: setShowSections, disabled: variant === 'brief' },
+    { key: 'showInsights', label: 'Insights', value: showInsights, set: setShowInsights },
+    { key: 'showFooter',   label: 'Footer',   value: showFooter,   set: setShowFooter },
   ];
 
   if (loading) {
@@ -551,14 +631,14 @@ export default function ReportPreviewPage() {
         </div>
       </div>
 
-      {/* Tweak Panel — visual variant + brand color */}
+      {/* Tweak Panel — modular report styling */}
       {showTweaks && isOwner && (
         <div style={{
           background: '#fff', borderRadius: 'var(--r-lg)',
           border: '1px solid var(--ink-200)',
           boxShadow: 'var(--shadow-md)', padding: 20,
         }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
             <Sliders className="h-4 w-4" style={{ color: 'var(--calo-700)' }} />
             <span style={{ fontSize: 14, fontWeight: 900, letterSpacing: '-0.01em' }}>Tweaks</span>
             <span style={{ display: 'inline-flex', alignItems: 'center', padding: '3px 10px', background: 'var(--calo-50)', color: 'var(--calo-800)', border: '1px solid var(--calo-100)', borderRadius: 999, fontSize: 11, fontWeight: 700 }}>Live preview</span>
@@ -568,89 +648,169 @@ export default function ReportPreviewPage() {
             </button>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 18 }}>
-            {/* Variant picker */}
+          {/* 1. Layout (full-width — it's the primary control) */}
+          <div style={{ marginBottom: 18 }}>
+            <div style={{ fontSize: 11, fontWeight: 900, letterSpacing: '.1em', textTransform: 'uppercase', color: 'var(--ink-500)', marginBottom: 10 }}>
+              Layout
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 8 }}>
+              {variantOptions.map(v => {
+                const active = variant === v.id;
+                return (
+                  <button
+                    key={v.id}
+                    onClick={() => applyVariant(v.id)}
+                    style={{
+                      textAlign: 'left', padding: '12px 14px',
+                      border: active ? '1px solid var(--calo-500)' : '1px solid var(--ink-200)',
+                      background: active ? 'var(--calo-50)' : '#fff',
+                      borderRadius: 'var(--r-sm)', cursor: 'pointer',
+                      transition: 'all .15s ease',
+                    }}
+                  >
+                    <div style={{ fontSize: 13, fontWeight: 900, color: active ? 'var(--calo-800)' : 'var(--ink-900)', letterSpacing: '-0.01em', display: 'flex', alignItems: 'center', gap: 6 }}>
+                      {active && <CheckCircle2 className="h-3 w-3" />}
+                      {v.label}
+                    </div>
+                    <div style={{ fontSize: 11, color: 'var(--ink-500)', marginTop: 4, lineHeight: 1.35 }}>{v.desc}</div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* 2. Density + Page width (two-col) */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 18, marginBottom: 18 }}>
             <div>
               <div style={{ fontSize: 11, fontWeight: 900, letterSpacing: '.1em', textTransform: 'uppercase', color: 'var(--ink-500)', marginBottom: 10 }}>
-                Report layout
+                Density
               </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                {variantOptions.map(v => {
-                  const active = variant === v.id;
-                  return (
-                    <button
-                      key={v.id}
-                      onClick={() => setVariant(v.id)}
-                      style={{
-                        textAlign: 'left', padding: '12px 14px',
-                        border: active ? '1px solid var(--calo-500)' : '1px solid var(--ink-200)',
-                        background: active ? 'var(--calo-50)' : '#fff',
-                        borderRadius: 'var(--r-sm)', cursor: 'pointer',
-                        display: 'flex', alignItems: 'center', gap: 10,
-                      }}
-                    >
-                      <div style={{
-                        width: 18, height: 18, borderRadius: 9,
-                        background: active ? 'var(--calo-500)' : 'var(--ink-100)',
-                        color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        flexShrink: 0,
-                      }}>
-                        {active ? <CheckCircle2 className="h-3 w-3" /> : null}
-                      </div>
-                      <div>
-                        <div style={{ fontSize: 13, fontWeight: 900, color: active ? 'var(--calo-800)' : 'var(--ink-900)', letterSpacing: '-0.01em' }}>{v.label}</div>
-                        <div style={{ fontSize: 11, color: 'var(--ink-500)', marginTop: 1 }}>{v.desc}</div>
-                      </div>
-                    </button>
-                  );
-                })}
+              <div style={{ display: 'flex', gap: 4, padding: 3, background: 'var(--ink-100)', borderRadius: 999 }}>
+                {densityOptions.map(d => (
+                  <button
+                    key={d.id}
+                    onClick={() => setDensity(d.id)}
+                    style={{
+                      flex: 1, padding: '7px 12px', fontSize: 12, fontWeight: 700,
+                      borderRadius: 999, border: 'none', cursor: 'pointer',
+                      background: density === d.id ? 'var(--ink-900)' : 'transparent',
+                      color: density === d.id ? '#fff' : 'var(--ink-600)',
+                      transition: 'all .15s',
+                    }}
+                  >{d.label}</button>
+                ))}
               </div>
             </div>
-
-            {/* Brand color picker */}
             <div>
               <div style={{ fontSize: 11, fontWeight: 900, letterSpacing: '.1em', textTransform: 'uppercase', color: 'var(--ink-500)', marginBottom: 10 }}>
-                Accent color
+                Page width
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
-                {colorPresets.map(p => {
-                  const active = brandColor.toLowerCase() === p.c.toLowerCase();
-                  return (
-                    <button
-                      key={p.c}
-                      onClick={() => setBrandColor(p.c)}
-                      style={{
-                        padding: 8, border: active ? '2px solid var(--ink-900)' : '1px solid var(--ink-200)',
-                        borderRadius: 10, background: '#fff', cursor: 'pointer',
-                        display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4,
-                      }}
-                      title={p.name}
-                    >
-                      <div style={{ width: 28, height: 28, borderRadius: 8, background: p.c }} />
-                      <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--ink-600)' }}>{p.name}</div>
-                    </button>
-                  );
-                })}
-              </div>
-              <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 8 }}>
-                <input
-                  type="color"
-                  value={brandColor}
-                  onChange={e => setBrandColor(e.target.value)}
-                  style={{ width: 32, height: 32, borderRadius: 6, border: '1px solid var(--ink-200)', cursor: 'pointer' }}
-                />
-                <input
-                  value={brandColor}
-                  onChange={e => setBrandColor(e.target.value)}
-                  className="input-field"
-                  style={{ flex: 1 }}
-                  placeholder="#02B376"
-                />
+              <div style={{ display: 'flex', gap: 4, padding: 3, background: 'var(--ink-100)', borderRadius: 999 }}>
+                {widthOptions.map(w => (
+                  <button
+                    key={w.id}
+                    onClick={() => setPageWidth(w.id)}
+                    style={{
+                      flex: 1, padding: '7px 12px', fontSize: 12, fontWeight: 700,
+                      borderRadius: 999, border: 'none', cursor: 'pointer',
+                      background: pageWidth === w.id ? 'var(--ink-900)' : 'transparent',
+                      color: pageWidth === w.id ? '#fff' : 'var(--ink-600)',
+                      transition: 'all .15s',
+                    }}
+                  >{w.label} <span style={{ opacity: .6, fontSize: 10 }}>{w.px}</span></button>
+                ))}
               </div>
             </div>
           </div>
 
-          <div style={{ display: 'flex', gap: 8, marginTop: 16, paddingTop: 14, borderTop: '1px solid var(--ink-100)' }}>
+          {/* 3. Accent color */}
+          <div style={{ marginBottom: 18 }}>
+            <div style={{ fontSize: 11, fontWeight: 900, letterSpacing: '.1em', textTransform: 'uppercase', color: 'var(--ink-500)', marginBottom: 10 }}>
+              Accent color
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+              {colorPresets.map(p => {
+                const active = brandColor.toLowerCase() === p.c.toLowerCase();
+                return (
+                  <button
+                    key={p.c}
+                    onClick={() => setBrandColor(p.c)}
+                    title={p.name}
+                    style={{
+                      padding: 4, border: active ? '2px solid var(--ink-900)' : '1px solid var(--ink-200)',
+                      borderRadius: 10, background: '#fff', cursor: 'pointer',
+                    }}
+                  >
+                    <div style={{ width: 28, height: 28, borderRadius: 6, background: p.c }} />
+                  </button>
+                );
+              })}
+              <div style={{ width: 1, height: 32, background: 'var(--ink-200)', marginInline: 4 }} />
+              <input
+                type="color"
+                value={brandColor}
+                onChange={e => setBrandColor(e.target.value)}
+                style={{ width: 38, height: 38, borderRadius: 10, border: '1px solid var(--ink-200)', cursor: 'pointer', padding: 0 }}
+              />
+              <input
+                value={brandColor}
+                onChange={e => setBrandColor(e.target.value)}
+                className="input-field"
+                style={{ flex: 1, minWidth: 110, maxWidth: 180 }}
+                placeholder="#02B376"
+              />
+            </div>
+          </div>
+
+          {/* 4. Section visibility + densify */}
+          <div style={{ marginBottom: 14 }}>
+            <div style={{ fontSize: 11, fontWeight: 900, letterSpacing: '.1em', textTransform: 'uppercase', color: 'var(--ink-500)', marginBottom: 10 }}>
+              Show in report
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+              {toggleList.map(t => (
+                <button
+                  key={t.key}
+                  onClick={() => !t.disabled && t.set(!t.value)}
+                  disabled={t.disabled}
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 6,
+                    padding: '7px 14px', borderRadius: 999,
+                    fontSize: 12, fontWeight: 700,
+                    background: t.disabled ? 'var(--ink-50)' : (t.value ? 'var(--calo-50)' : '#fff'),
+                    color: t.disabled ? 'var(--ink-400)' : (t.value ? 'var(--calo-800)' : 'var(--ink-600)'),
+                    border: t.value ? '1px solid var(--calo-200)' : '1px solid var(--ink-200)',
+                    cursor: t.disabled ? 'not-allowed' : 'pointer',
+                    transition: 'all .15s',
+                  }}
+                  title={t.disabled ? `Not available in ${variant} layout` : ''}
+                >
+                  <span style={{
+                    width: 12, height: 12, borderRadius: 2,
+                    background: t.value && !t.disabled ? 'var(--calo-500)' : 'transparent',
+                    border: t.value && !t.disabled ? 'none' : '1px solid var(--ink-300)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    color: '#fff', fontSize: 9, fontWeight: 900,
+                  }}>{t.value && !t.disabled ? '✓' : ''}</span>
+                  {t.label}
+                </button>
+              ))}
+            </div>
+            {/* Densify toggle (only on variants where it's meaningful) */}
+            {(variant === 'dashboard' || variant === 'editorial') && (
+              <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, marginTop: 10, cursor: 'pointer', fontSize: 12, color: 'var(--ink-600)', fontWeight: 700 }}>
+                <input
+                  type="checkbox"
+                  checked={densifySections}
+                  onChange={e => setDensifySections(e.target.checked)}
+                  style={{ accentColor: 'var(--calo-500)' }}
+                />
+                <span>Summarize sections (keep data blocks, trim long notes)</span>
+              </label>
+            )}
+          </div>
+
+          <div style={{ display: 'flex', gap: 8, paddingTop: 14, borderTop: '1px solid var(--ink-100)' }}>
             <button
               onClick={handleSaveTweaks}
               disabled={savingTweaks}
@@ -660,14 +820,15 @@ export default function ReportPreviewPage() {
               {savingTweaks ? 'Saving…' : 'Save tweaks'}
             </button>
             <button
-              onClick={() => { setVariant('editorial'); setBrandColor('#02B376'); }}
+              onClick={() => applyVariant('editorial')}
               className="btn-secondary"
+              title="Reset all tweaks to Editorial defaults"
             >
               Reset
             </button>
           </div>
           <div style={{ fontSize: 11, color: 'var(--ink-500)', marginTop: 8, textAlign: 'center' }}>
-            Changes preview instantly. Save to lock them into the published report and exports.
+            Preview updates live. Save locks changes into published exports, Netlify, and password-gated copies.
           </div>
         </div>
       )}

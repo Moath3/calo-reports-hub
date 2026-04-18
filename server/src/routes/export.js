@@ -6,14 +6,16 @@ import { getDb } from "../db/database.js";
 
 const router = Router();
 
-// HTML export — supports optional password protection + variant
+// HTML export — supports optional password protection + full tweak options
 router.post("/html", requireAuth, (req, res) => {
   try {
-    const { reportData, brandColor, title, password, variant } = req.body;
+    const { reportData, brandColor, title, password, variant, tweaks } = req.body;
     if (!reportData) return res.status(400).json({ error: "reportData is required" });
     const options = {};
     if (password) options.password = password;
     if (variant) options.variant = variant;
+    // Merge explicit tweaks into options (density, pageWidth, showHero, showKpis, etc.)
+    if (tweaks && typeof tweaks === 'object') Object.assign(options, tweaks);
     res.json({ html: buildStandaloneHTML(reportData, brandColor, title, options) });
   } catch (err) {
     console.error("HTML export error:", err);

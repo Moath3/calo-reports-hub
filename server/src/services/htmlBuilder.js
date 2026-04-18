@@ -15,6 +15,57 @@ function caloLogoSvg(fill, height) {
   return `<svg viewBox="0 0 746 320" height="${height}" style="display:inline-block;vertical-align:middle" xmlns="http://www.w3.org/2000/svg"><g fill="${fill}">${paths}</g></svg>`;
 }
 
+// ─── Modular tweak helpers ───────────────────────────────────────────────────
+
+const DENSITY_SCALE = { compact: 0.82, comfortable: 1.0, spacious: 1.18 };
+const WIDTH_PX      = { narrow: 760, medium: 960, wide: 1120 };
+
+function resolveTweaks(options, variant) {
+  // Variant-aware defaults — these match the user's intent:
+  //   editorial = generous, all content
+  //   dashboard = compact, summarized (short hero + KPIs + filtered sections + insights)
+  //   minimal   = paper middle-ground, all content, print-ready
+  //   brief     = single-page (no sections, just KPIs + summary + insights)
+  const presets = {
+    editorial: { density: 'spacious',    pageWidth: 'medium', showHero: true, showKpis: true,  showSummary: true, showSections: true, showInsights: true, showFooter: true, densifySections: false },
+    dashboard: { density: 'compact',     pageWidth: 'wide',   showHero: true, showKpis: true,  showSummary: true, showSections: true, showInsights: true, showFooter: true, densifySections: true  },
+    minimal:   { density: 'comfortable', pageWidth: 'narrow', showHero: true, showKpis: true,  showSummary: true, showSections: true, showInsights: true, showFooter: true, densifySections: false },
+    brief:     { density: 'comfortable', pageWidth: 'narrow', showHero: true, showKpis: true,  showSummary: true, showSections: false, showInsights: true, showFooter: true, densifySections: false },
+  };
+  const base = presets[variant] || presets.editorial;
+  // Explicit overrides from options take precedence
+  const t = { ...base };
+  if (options.density) t.density = options.density;
+  if (options.pageWidth) t.pageWidth = options.pageWidth;
+  ['showHero','showKpis','showSummary','showSections','showInsights','showFooter','densifySections'].forEach(k => {
+    if (typeof options[k] === 'boolean') t[k] = options[k];
+  });
+  t.scale = DENSITY_SCALE[t.density] || 1;
+  t.widthPx = WIDTH_PX[t.pageWidth] || 960;
+  return t;
+}
+
+// For "dashboard" / "densifySections" — strip notes-heavy sections, keep the
+// data-rich ones. Shows tables, metrics, comparisons, callouts, charts; skips
+// a section if it's ONLY notes/badges and contributes little to a dense layout.
+function filterSectionsDense(sections) {
+  const dataBlocks = new Set(['metrics','table','comparison','callout','chart','keyvalue','image']);
+  return (sections || []).filter(s => {
+    const blocks = s.blocks || [];
+    if (blocks.length === 0) return false;
+    return blocks.some(b => dataBlocks.has(b.type));
+  }).map(s => ({
+    ...s,
+    // Also trim notes blocks that have more than 4 items to 4
+    blocks: (s.blocks || []).map(b => {
+      if (b.type === 'notes' && (b.items || []).length > 4) {
+        return { ...b, items: b.items.slice(0, 4) };
+      }
+      return b;
+    }),
+  }));
+}
+
 // ─── Shared block renderer (reused across all variants) ──────────────────────
 
 function renderBlock(b, color, colorDark) {
@@ -206,8 +257,7 @@ var PW_SCRIPT = `
   input.focus();
 })();`;
 
-// Shared HTML shell — head + body open + optional password gate
-function htmlShell(title, css, innerBody, accessPassword, extraScript) {
+function htmlShell(title, css, innerHtml, accessPassword, color, extraScript) {
   var o = "";
   o += '<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">';
   o += '<meta name="robots" content="noindex,nofollow">';
@@ -216,16 +266,18 @@ function htmlShell(title, css, innerBody, accessPassword, extraScript) {
   o += '<link href="https://fonts.googleapis.com/css2?family=Lato:wght@300;400;700;900&display=swap" rel="stylesheet">';
   o += '<script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"><\/script>';
   o += "<style>" + css + "</style></head><body>";
-  if (accessPassword) o += passwordGateHTML((innerBody && innerBody.color) || '#02B376', accessPassword);
-  o += innerBody.html;
+  if (accessPassword) o += passwordGateHTML(color, accessPassword);
+  o += innerHtml;
   if (extraScript) o += "<script>" + extraScript + "</script>";
   if (accessPassword) o += "<script>" + PW_SCRIPT + "</script>";
   o += "</body></html>";
   return o;
 }
 
+function px(n, scale) { return Math.round(n * (scale || 1)) + 'px'; }
+
 // ─── VARIANT: Editorial ──────────────────────────────────────────────────────
-function buildEditorialHTML(r, color, colorDark, colorDeepest, title, accessPassword) {
+function buildEditorialHTML(r, color, colorDark, colorDeepest, title, accessPassword, t) {
   var gi = r.generalInfo || {};
   var reportTitle = gi.title || r.title || title;
   var reportDate = gi.reportDate || r.reportDate || '';
@@ -236,30 +288,31 @@ function buildEditorialHTML(r, color, colorDark, colorDeepest, title, accessPass
   var sections = r.sections || [];
   var summary = r.summary || '';
   var insights = r.insights || [];
+  var s = t.scale;
 
   var css = "*{margin:0;padding:0;box-sizing:border-box}";
   css += "body{font-family:'Lato',system-ui,sans-serif;background:#F4F4F0;color:#0A1F17;line-height:1.6;-webkit-font-smoothing:antialiased}";
   css += ".num{font-variant-numeric:tabular-nums;font-feature-settings:'tnum'}";
-  css += ".ctr{max-width:960px;margin:0 auto;padding:32px 20px}";
+  css += ".ctr{max-width:" + t.widthPx + "px;margin:0 auto;padding:32px 20px}";
   css += ".paper{background:#fff;border-radius:20px;overflow:hidden;box-shadow:0 24px 60px rgba(10,31,23,.10),0 8px 24px rgba(10,31,23,.06)}";
-  css += ".hero{background:linear-gradient(135deg," + colorDeepest + " 0%," + colorDark + " 45%," + color + " 100%);color:#fff;padding:56px 48px;position:relative;overflow:hidden}";
+  css += ".hero{background:linear-gradient(135deg," + colorDeepest + " 0%," + colorDark + " 45%," + color + " 100%);color:#fff;padding:" + px(56, s) + " " + px(48, s) + ";position:relative;overflow:hidden}";
   css += ".hero *{position:relative;z-index:1}";
-  css += ".hero-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:40px;flex-wrap:wrap;gap:12px}";
+  css += ".hero-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:" + px(40, s) + ";flex-wrap:wrap;gap:12px}";
   css += ".hero-eyebrow{font-size:11px;font-weight:900;letter-spacing:.2em;opacity:.8}";
   css += ".hero-sub{font-size:12px;font-weight:900;letter-spacing:.18em;opacity:.85;margin-bottom:12px}";
-  css += ".hero h1{font-size:56px;font-weight:900;letter-spacing:-0.04em;line-height:1.02;margin:0;max-width:700px}";
-  css += ".hero-meta{display:flex;flex-wrap:wrap;gap:28px;margin-top:36px;padding-top:22px;border-top:1px solid rgba(255,255,255,.2)}";
+  css += ".hero h1{font-size:" + px(56, s) + ";font-weight:900;letter-spacing:-0.04em;line-height:1.02;margin:0;max-width:700px}";
+  css += ".hero-meta{display:flex;flex-wrap:wrap;gap:28px;margin-top:" + px(36, s) + ";padding-top:22px;border-top:1px solid rgba(255,255,255,.2)}";
   css += ".meta-item{min-width:120px}.meta-label{font-size:10px;font-weight:900;opacity:.7;letter-spacing:.16em;text-transform:uppercase}.meta-value{font-size:14px;font-weight:900;margin-top:3px}";
-  css += ".kpi-strip{background:#fff;padding:32px 48px;border-bottom:1px solid #F4F4F0}";
+  css += ".kpi-strip{background:#fff;padding:" + px(32, s) + " " + px(48, s) + ";border-bottom:1px solid #F4F4F0}";
   css += ".kpi-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:22px}";
   css += ".kpi-label{font-size:11px;font-weight:900;color:#787C72;letter-spacing:.1em;text-transform:uppercase}";
-  css += ".kpi-value{font-size:42px;font-weight:900;letter-spacing:-0.04em;line-height:1;margin-top:6px}";
+  css += ".kpi-value{font-size:" + px(42, s) + ";font-weight:900;letter-spacing:-0.04em;line-height:1;margin-top:6px}";
   css += ".kpi-unit{font-size:18px;color:#787C72;font-weight:700;margin-left:3px}";
   css += ".kpi-trend{font-size:12px;font-weight:700;margin-top:4px;display:inline-flex;align-items:center;gap:4px}";
   css += ".kpi-up{color:#029A66}.kpi-down{color:#D94F4F}.kpi-stable{color:#787C72}";
-  css += ".sec{padding:36px 48px;border-top:1px solid #F4F4F0}";
+  css += ".sec{padding:" + px(36, s) + " " + px(48, s) + ";border-top:1px solid #F4F4F0}";
   css += ".sec-eyebrow{font-size:11px;font-weight:900;color:" + color + ";letter-spacing:.18em;text-transform:uppercase;margin-bottom:8px}";
-  css += ".sec-title{font-size:32px;font-weight:900;letter-spacing:-0.03em;margin:0 0 22px;line-height:1.1;color:#0A1F17;cursor:pointer;user-select:none;display:flex;align-items:center;justify-content:space-between;gap:10px}";
+  css += ".sec-title{font-size:" + px(32, s) + ";font-weight:900;letter-spacing:-0.03em;margin:0 0 22px;line-height:1.1;color:#0A1F17;cursor:pointer;user-select:none;display:flex;align-items:center;justify-content:space-between;gap:10px}";
   css += ".sec-title .chev{font-size:16px;color:#A8ABA1;transition:transform .2s;flex-shrink:0}";
   css += ".sec-title.collapsed .chev{transform:rotate(-90deg)}";
   css += ".sec-body{transition:max-height .35s ease,opacity .25s}";
@@ -268,35 +321,44 @@ function buildEditorialHTML(r, color, colorDark, colorDeepest, title, accessPass
   css += ".summary strong{font-weight:900;color:" + colorDark + "}";
   css += ".insights{display:flex;flex-direction:column;gap:12px}";
   css += ".insight{padding:16px 20px;background:#E6F9F1;border-left:4px solid " + color + ";border-radius:0 14px 14px 0;font-size:14px;color:#016040;line-height:1.6;font-weight:400}";
-  css += ".footer{padding:32px 48px;border-top:1px solid #F4F4F0;background:#FAFAF7;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px}";
+  css += ".footer{padding:" + px(32, s) + " " + px(48, s) + ";border-top:1px solid #F4F4F0;background:#FAFAF7;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px}";
   css += ".footer-brand{display:flex;align-items:center;gap:14px}.footer-brand-text{font-size:12px;font-weight:700;color:#2F332C}.footer-brand-sub{font-size:11px;color:#787C72;margin-top:2px}";
   css += ".footer-tag{font-size:11px;color:#787C72;font-weight:700;letter-spacing:.08em;text-transform:uppercase}";
   css += ".trow:hover{background:#E6F9F1!important}";
+  css += ".thin-hero{background:#fff;color:#0A1F17;padding:" + px(24, s) + " " + px(48, s) + ";border-bottom:1px solid #F4F4F0;display:flex;align-items:center;gap:18px}";
+  css += ".thin-hero h1{font-size:" + px(28, s) + ";font-weight:900;letter-spacing:-0.02em;margin:0}";
   css += "@media print{body{background:white}.ctr{padding:0;max-width:100%}.paper{box-shadow:none;border-radius:0}.sec-body.hidden{max-height:none!important;opacity:1}.sec-title{cursor:default}.sec-title .chev{display:none}}";
   css += "@media(max-width:768px){.hero{padding:40px 28px}.hero h1{font-size:38px}.kpi-strip{padding:24px 28px}.kpi-value{font-size:32px}.sec{padding:28px 28px}.sec-title{font-size:24px}.footer{padding:22px 28px}.hero-meta{gap:16px}.meta-item{min-width:100px}}";
   if (accessPassword) css += passwordGateCSS(color);
 
   var o = '<div id="pw-content" class="ctr"><div class="paper">';
-  // Hero
-  o += '<div class="hero">';
-  o += '<div class="hero-top">' + caloLogoSvg('#ffffff', 28);
-  if (prevMonth || reportDate) o += '<div class="hero-eyebrow">' + (prevMonth || reportDate) + '</div>';
-  o += '</div>';
-  if (reportSubtitle) o += '<div class="hero-sub">' + reportSubtitle + '</div>';
-  o += '<h1>' + reportTitle + '</h1>';
-  var metaItems = [];
-  if (reportDate && !prevMonth) metaItems.push({ l: 'Date', v: reportDate });
-  if (prevMonth && reportDate) metaItems.push({ l: 'Published', v: reportDate });
-  if (companyName) metaItems.push({ l: 'Organization', v: companyName });
-  metaItems.push({ l: 'Sections', v: sections.length || 0 });
-  if (metaItems.length) {
-    o += '<div class="hero-meta">';
-    metaItems.forEach(function(m) { o += '<div class="meta-item"><div class="meta-label">' + m.l + '</div><div class="meta-value">' + m.v + '</div></div>'; });
+  // Hero (full or thin depending on tweak)
+  if (t.showHero) {
+    o += '<div class="hero">';
+    o += '<div class="hero-top">' + caloLogoSvg('#ffffff', 28);
+    if (prevMonth || reportDate) o += '<div class="hero-eyebrow">' + (prevMonth || reportDate) + '</div>';
     o += '</div>';
+    if (reportSubtitle) o += '<div class="hero-sub">' + reportSubtitle + '</div>';
+    o += '<h1>' + reportTitle + '</h1>';
+    var metaItems = [];
+    if (reportDate && !prevMonth) metaItems.push({ l: 'Date', v: reportDate });
+    if (prevMonth && reportDate) metaItems.push({ l: 'Published', v: reportDate });
+    if (companyName) metaItems.push({ l: 'Organization', v: companyName });
+    metaItems.push({ l: 'Sections', v: t.showSections ? (sections.length || 0) : 0 });
+    if (metaItems.length) {
+      o += '<div class="hero-meta">';
+      metaItems.forEach(function(m) { o += '<div class="meta-item"><div class="meta-label">' + m.l + '</div><div class="meta-value">' + m.v + '</div></div>'; });
+      o += '</div>';
+    }
+    o += '</div>';
+  } else {
+    o += '<div class="thin-hero">' + caloLogoSvg(color, 20);
+    o += '<div style="flex:1"><h1>' + reportTitle + '</h1>';
+    if (prevMonth || reportDate) o += '<div style="font-size:11px;color:#787C72;font-weight:700;letter-spacing:.1em;text-transform:uppercase;margin-top:4px">' + (prevMonth || reportDate) + '</div>';
+    o += '</div></div>';
   }
-  o += '</div>';
   // KPIs
-  if (kpis && kpis.length) {
+  if (t.showKpis && kpis && kpis.length) {
     o += '<div class="kpi-strip"><div class="kpi-grid">';
     kpis.forEach(function(k) {
       var trendClass = k.trend === 'up' ? 'kpi-up' : k.trend === 'down' ? 'kpi-down' : 'kpi-stable';
@@ -315,96 +377,103 @@ function buildEditorialHTML(r, color, colorDark, colorDeepest, title, accessPass
     });
     o += '</div></div>';
   }
-  // Sections
-  if (summary) {
+  // Summary
+  if (t.showSummary && summary) {
     o += '<div class="sec"><div class="sec-eyebrow">Executive summary</div><h2 class="sec-title"><span>Highlights</span><span class="chev">&#9662;</span></h2>';
     o += '<div class="sec-body"><div class="summary">' + summary + '</div></div></div>';
   }
-  sections.forEach(function(s, idx) {
-    o += '<div class="sec"><div class="sec-eyebrow">Section · ' + String(idx + 1).padStart(2, '0') + '</div>';
-    o += '<h2 class="sec-title"><span>' + (s.icon ? s.icon + ' ' : '') + (s.title || '') + '</span><span class="chev">&#9662;</span></h2>';
-    o += '<div class="sec-body">';
-    (s.blocks || []).forEach(function(b) { o += renderBlock(b, color, colorDark); });
-    o += '</div></div>';
-  });
-  if (insights && insights.length) {
-    o += '<div class="sec"><div class="sec-eyebrow">Next quarter</div><h2 class="sec-title"><span>Key insights</span><span class="chev">&#9662;</span></h2>';
+  // Sections
+  if (t.showSections) {
+    sections.forEach(function(sec, idx) {
+      o += '<div class="sec"><div class="sec-eyebrow">Section · ' + String(idx + 1).padStart(2, '0') + '</div>';
+      o += '<h2 class="sec-title"><span>' + (sec.icon ? sec.icon + ' ' : '') + (sec.title || '') + '</span><span class="chev">&#9662;</span></h2>';
+      o += '<div class="sec-body">';
+      (sec.blocks || []).forEach(function(b) { o += renderBlock(b, color, colorDark); });
+      o += '</div></div>';
+    });
+  }
+  // Insights
+  if (t.showInsights && insights && insights.length) {
+    o += '<div class="sec"><div class="sec-eyebrow">Takeaways</div><h2 class="sec-title"><span>Key insights</span><span class="chev">&#9662;</span></h2>';
     o += '<div class="sec-body"><div class="insights">';
     insights.forEach(function(i) { o += '<div class="insight">' + i + '</div>'; });
     o += '</div></div></div>';
   }
   // Footer
-  o += '<div class="footer"><div class="footer-brand">' + caloLogoSvg('#A8ABA1', 18);
-  o += '<div><div class="footer-brand-text">Calo Reports Platform</div>';
-  o += '<div class="footer-brand-sub">Prepared with care' + (reportDate ? ' · ' + reportDate : '') + '</div></div></div>';
-  o += '<div class="footer-tag">Confidential · Internal use only</div></div>';
+  if (t.showFooter) {
+    o += '<div class="footer"><div class="footer-brand">' + caloLogoSvg('#A8ABA1', 18);
+    o += '<div><div class="footer-brand-text">Calo Reports Platform</div>';
+    o += '<div class="footer-brand-sub">Prepared with care' + (reportDate ? ' · ' + reportDate : '') + '</div></div></div>';
+    o += '<div class="footer-tag">Confidential · Internal use only</div></div>';
+  }
   o += '</div></div>';
 
   return { html: o, css, color };
 }
 
-// ─── VARIANT: Dashboard ──────────────────────────────────────────────────────
-function buildDashboardHTML(r, color, colorDark, colorDeepest, title, accessPassword) {
+// ─── VARIANT: Dashboard (compact, data-dense, summarizes) ────────────────────
+function buildDashboardHTML(r, color, colorDark, colorDeepest, title, accessPassword, t) {
   var gi = r.generalInfo || {};
   var reportTitle = gi.title || r.title || title;
   var reportDate = gi.reportDate || r.reportDate || '';
   var reportSubtitle = gi.subtitle || r.subtitle || '';
   var prevMonth = gi.prevMonth || '';
   var kpis = gi.kpiStrip || r.kpis || [];
-  var sections = r.sections || [];
+  var sections = t.densifySections ? filterSectionsDense(r.sections || []) : (r.sections || []);
   var summary = r.summary || '';
   var insights = r.insights || [];
+  var s = t.scale;
 
   var css = "*{margin:0;padding:0;box-sizing:border-box}";
   css += "body{font-family:'Lato',system-ui,sans-serif;background:#F4F4F0;color:#0A1F17;line-height:1.55;-webkit-font-smoothing:antialiased}";
   css += ".num{font-variant-numeric:tabular-nums;font-feature-settings:'tnum'}";
-  css += ".ctr{max-width:1100px;margin:0 auto;padding:24px 20px}";
+  css += ".ctr{max-width:" + t.widthPx + "px;margin:0 auto;padding:" + px(24, s) + " 20px}";
   css += ".paper{background:#fff;border-radius:18px;overflow:hidden;box-shadow:0 24px 60px rgba(10,31,23,.10),0 8px 24px rgba(10,31,23,.06)}";
-  css += ".dash-header{padding:24px 40px;background:#0A1F17;color:#fff;display:flex;align-items:center;gap:20px;flex-wrap:wrap}";
+  css += ".dash-header{padding:" + px(20, s) + " " + px(40, s) + ";background:#0A1F17;color:#fff;display:flex;align-items:center;gap:20px;flex-wrap:wrap}";
   css += ".dash-header .divider{width:1px;height:26px;background:rgba(255,255,255,.2)}";
   css += ".dash-eyebrow{font-size:11px;font-weight:900;color:#66D7A5;letter-spacing:.16em;text-transform:uppercase}";
-  css += ".dash-title{font-size:22px;font-weight:900;letter-spacing:-0.02em;margin-top:2px}";
+  css += ".dash-title{font-size:" + px(22, s) + ";font-weight:900;letter-spacing:-0.02em;margin-top:2px}";
   css += ".live-pill{background:" + color + ";color:#fff;padding:6px 12px;border-radius:999px;font-size:11px;font-weight:900;letter-spacing:-0.01em;display:inline-flex;align-items:center;gap:6px;margin-left:auto}";
-  css += ".kpi-strip{padding:20px 40px;border-bottom:1px solid #F4F4F0;display:grid;grid-template-columns:repeat(6,1fr);gap:20px}";
+  css += ".kpi-strip{padding:" + px(18, s) + " " + px(40, s) + ";border-bottom:1px solid #F4F4F0;display:grid;grid-template-columns:repeat(6,1fr);gap:20px}";
   css += ".kpi-col{border-right:1px solid #F4F4F0;padding-right:16px}.kpi-col:last-child{border-right:none;padding-right:0}";
   css += ".kpi-label{font-size:10px;font-weight:900;color:#787C72;letter-spacing:.1em;text-transform:uppercase}";
-  css += ".kpi-value{font-size:26px;font-weight:900;letter-spacing:-0.03em;margin-top:3px}";
-  css += ".kpi-unit{font-size:14px;color:#787C72;font-weight:700;margin-left:2px}";
+  css += ".kpi-value{font-size:" + px(24, s) + ";font-weight:900;letter-spacing:-0.03em;margin-top:3px}";
+  css += ".kpi-unit{font-size:13px;color:#787C72;font-weight:700;margin-left:2px}";
   css += ".kpi-change{font-size:11px;color:#029A66;font-weight:700;margin-top:2px}";
   css += ".section-label{display:flex;align-items:baseline;gap:10px;margin-bottom:14px}";
-  css += ".section-num{font-size:22px;font-weight:900;color:" + color + ";letter-spacing:-0.02em;min-width:30px}";
-  css += ".section-title{font-size:18px;font-weight:900;letter-spacing:-0.02em;color:#0A1F17}";
+  css += ".section-num{font-size:" + px(22, s) + ";font-weight:900;color:" + color + ";letter-spacing:-0.02em;min-width:30px}";
+  css += ".section-title{font-size:" + px(17, s) + ";font-weight:900;letter-spacing:-0.02em;color:#0A1F17}";
   css += ".section-rule{flex:1;height:1px;background:#E8E9E3}";
-  css += ".dash-grid{padding:32px 40px;display:grid;grid-template-columns:1fr 1fr;gap:24px}";
+  css += ".dash-grid{padding:" + px(28, s) + " " + px(40, s) + ";display:grid;grid-template-columns:1fr 1fr;gap:20px}";
   css += ".dash-full{grid-column:span 2}";
-  css += ".dash-box{padding:20px;background:#fff;border:1px solid #E8E9E3;border-radius:14px}";
-  css += ".summary{padding:24px;background:linear-gradient(135deg,#E6F9F1,#fff);border:1px solid #CFF3E3;border-radius:14px;font-size:15px;line-height:1.55;color:#2F332C;font-weight:400}";
+  css += ".summary{padding:18px 22px;background:linear-gradient(135deg,#E6F9F1,#fff);border:1px solid #CFF3E3;border-radius:12px;font-size:14px;line-height:1.55;color:#2F332C;font-weight:400}";
   css += ".summary strong{font-weight:900;color:" + colorDark + "}";
   css += ".insights{display:flex;flex-direction:column;gap:8px}";
-  css += ".insight{padding:12px 16px;background:#FAFAF7;border-left:3px solid " + color + ";border-radius:0 10px 10px 0;font-size:13px;color:#2F332C}";
-  css += ".footer{padding:22px 40px;border-top:1px solid #F4F4F0;background:#FAFAF7;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px}";
+  css += ".insight{padding:10px 14px;background:#FAFAF7;border-left:3px solid " + color + ";border-radius:0 10px 10px 0;font-size:13px;color:#2F332C}";
+  css += ".footer{padding:" + px(18, s) + " " + px(40, s) + ";border-top:1px solid #F4F4F0;background:#FAFAF7;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px}";
   css += ".footer-brand{display:flex;align-items:center;gap:14px}.footer-brand-text{font-size:12px;font-weight:700;color:#2F332C}.footer-brand-sub{font-size:11px;color:#787C72;margin-top:2px}";
   css += ".footer-tag{font-size:11px;color:#787C72;font-weight:700;letter-spacing:.08em;text-transform:uppercase}";
   css += ".trow:hover{background:#E6F9F1!important}";
   css += "@media print{body{background:white}.ctr{padding:0;max-width:100%}.paper{box-shadow:none;border-radius:0}}";
   css += "@media(max-width:900px){.kpi-strip{grid-template-columns:repeat(3,1fr)}.kpi-col:nth-child(3n){border-right:none}.dash-grid{grid-template-columns:1fr}.dash-full{grid-column:span 1}}";
-  css += "@media(max-width:500px){.kpi-strip{grid-template-columns:repeat(2,1fr)}.kpi-col{border-right:none}.dash-header{padding:18px 24px}.dash-grid{padding:24px 24px}.footer{padding:18px 24px}}";
+  css += "@media(max-width:500px){.kpi-strip{grid-template-columns:repeat(2,1fr)}.kpi-col{border-right:none}.dash-header{padding:16px 22px}.dash-grid{padding:22px 22px}.footer{padding:16px 22px}}";
   if (accessPassword) css += passwordGateCSS(color);
 
   var o = '<div id="pw-content" class="ctr"><div class="paper">';
-  // Header
-  o += '<div class="dash-header">' + caloLogoSvg('#ffffff', 24);
-  o += '<div class="divider"></div>';
-  o += '<div style="flex:1;min-width:200px"><div class="dash-eyebrow">' + (reportSubtitle || prevMonth || 'REPORT') + '</div>';
-  o += '<div class="dash-title">' + reportTitle + '</div></div>';
-  o += '<span class="live-pill">' + (reportDate || 'LIVE') + '</span></div>';
+  if (t.showHero) {
+    o += '<div class="dash-header">' + caloLogoSvg('#ffffff', 22);
+    o += '<div class="divider"></div>';
+    o += '<div style="flex:1;min-width:200px"><div class="dash-eyebrow">' + (reportSubtitle || prevMonth || 'REPORT') + '</div>';
+    o += '<div class="dash-title">' + reportTitle + '</div></div>';
+    if (reportDate) o += '<span class="live-pill">' + reportDate + '</span>';
+    o += '</div>';
+  }
 
-  // KPI strip (6-col)
-  if (kpis && kpis.length) {
+  if (t.showKpis && kpis && kpis.length) {
     var ks = kpis.slice(0, 6);
     while (ks.length < 6) ks.push({ label: '', value: '' });
     o += '<div class="kpi-strip">';
-    ks.forEach(function(k, i) {
+    ks.forEach(function(k) {
       o += '<div class="kpi-col">';
       o += '<div class="kpi-label">' + (k.label || '') + '</div>';
       if (k.value) {
@@ -418,24 +487,25 @@ function buildDashboardHTML(r, color, colorDark, colorDeepest, title, accessPass
     o += '</div>';
   }
 
-  // Content grid — alternating full / half layouts
   o += '<div class="dash-grid">';
   var slot = 0;
-  if (summary) {
+  if (t.showSummary && summary) {
     o += '<div class="dash-full"><div class="section-label"><span class="section-num">01</span><span class="section-title">Executive summary</span><span class="section-rule"></span></div>';
     o += '<div class="summary">' + summary + '</div></div>';
     slot = 1;
   }
-  sections.forEach(function(s, idx) {
-    var isFull = (s.blocks || []).some(function(b) { return b.type === 'table' || b.type === 'chart' || b.type === 'comparison'; }) || (s.blocks || []).length > 2;
-    var wrap = isFull ? 'dash-full' : '';
-    var numStr = String(slot + idx + 1).padStart(2, '0');
-    o += '<div class="' + wrap + '"><div class="section-label"><span class="section-num">' + numStr + '</span><span class="section-title">' + (s.icon ? s.icon + ' ' : '') + (s.title || '') + '</span><span class="section-rule"></span></div>';
-    (s.blocks || []).forEach(function(b) { o += renderBlock(b, color, colorDark); });
-    o += '</div>';
-  });
-  if (insights && insights.length) {
-    var insNum = String(slot + sections.length + 1).padStart(2, '0');
+  if (t.showSections) {
+    sections.forEach(function(sec, idx) {
+      var isFull = (sec.blocks || []).some(function(b) { return b.type === 'table' || b.type === 'chart' || b.type === 'comparison'; }) || (sec.blocks || []).length > 2;
+      var wrap = isFull ? 'dash-full' : '';
+      var numStr = String(slot + idx + 1).padStart(2, '0');
+      o += '<div class="' + wrap + '"><div class="section-label"><span class="section-num">' + numStr + '</span><span class="section-title">' + (sec.icon ? sec.icon + ' ' : '') + (sec.title || '') + '</span><span class="section-rule"></span></div>';
+      (sec.blocks || []).forEach(function(b) { o += renderBlock(b, color, colorDark); });
+      o += '</div>';
+    });
+  }
+  if (t.showInsights && insights && insights.length) {
+    var insNum = String(slot + (t.showSections ? sections.length : 0) + 1).padStart(2, '0');
     o += '<div class="dash-full"><div class="section-label"><span class="section-num">' + insNum + '</span><span class="section-title">Key insights</span><span class="section-rule"></span></div>';
     o += '<div class="insights">';
     insights.forEach(function(i) { o += '<div class="insight">' + i + '</div>'; });
@@ -443,19 +513,19 @@ function buildDashboardHTML(r, color, colorDark, colorDeepest, title, accessPass
   }
   o += '</div>';
 
-  // Footer
-  o += '<div class="footer"><div class="footer-brand">' + caloLogoSvg('#A8ABA1', 18);
-  o += '<div><div class="footer-brand-text">Calo Reports Platform</div>';
-  o += '<div class="footer-brand-sub">Dashboard view' + (reportDate ? ' · ' + reportDate : '') + '</div></div></div>';
-  o += '<div class="footer-tag">Confidential · Internal use only</div></div>';
+  if (t.showFooter) {
+    o += '<div class="footer"><div class="footer-brand">' + caloLogoSvg('#A8ABA1', 18);
+    o += '<div><div class="footer-brand-text">Calo Reports Platform</div>';
+    o += '<div class="footer-brand-sub">Dashboard view' + (reportDate ? ' · ' + reportDate : '') + '</div></div></div>';
+    o += '<div class="footer-tag">Confidential · Internal use only</div></div>';
+  }
 
   o += '</div></div>';
-
   return { html: o, css, color };
 }
 
 // ─── VARIANT: Minimal ────────────────────────────────────────────────────────
-function buildMinimalHTML(r, color, colorDark, colorDeepest, title, accessPassword) {
+function buildMinimalHTML(r, color, colorDark, colorDeepest, title, accessPassword, t) {
   var gi = r.generalInfo || {};
   var reportTitle = gi.title || r.title || title;
   var reportDate = gi.reportDate || r.reportDate || '';
@@ -465,38 +535,38 @@ function buildMinimalHTML(r, color, colorDark, colorDeepest, title, accessPasswo
   var sections = r.sections || [];
   var summary = r.summary || '';
   var insights = r.insights || [];
+  var s = t.scale;
 
   var css = "*{margin:0;padding:0;box-sizing:border-box}";
   css += "body{font-family:'Lato',system-ui,sans-serif;background:#F4F4F0;color:#0A1F17;line-height:1.55;-webkit-font-smoothing:antialiased}";
   css += ".num{font-variant-numeric:tabular-nums;font-feature-settings:'tnum'}";
-  css += ".ctr{max-width:760px;margin:0 auto;padding:40px 20px}";
-  css += ".paper{background:#FDFDFA;border-radius:6px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.08);padding:72px 72px 56px;min-height:900px}";
-  css += ".min-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:72px}";
+  css += ".ctr{max-width:" + t.widthPx + "px;margin:0 auto;padding:40px 20px}";
+  css += ".paper{background:#FDFDFA;border-radius:6px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.08);padding:" + px(72, s) + " " + px(72, s) + " " + px(56, s) + ";min-height:900px}";
+  css += ".min-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:" + px(64, s) + "}";
   css += ".min-stamp{font-size:10px;font-weight:700;letter-spacing:.2em;color:#787C72;text-transform:uppercase}";
   css += ".eyebrow{font-size:11px;font-weight:900;letter-spacing:.22em;color:" + color + ";text-transform:uppercase;margin-bottom:14px}";
-  css += "h1.min-title{font-size:48px;font-weight:900;letter-spacing:-0.04em;line-height:1.02;margin:0 0 40px;color:#0A1F17}";
-  css += ".kpi-rule{display:grid;grid-template-columns:repeat(4,1fr);gap:20px;padding:22px 0;border-top:2px solid #0A1F17;border-bottom:1px solid #D5D6CF;margin-bottom:36px}";
+  css += "h1.min-title{font-size:" + px(48, s) + ";font-weight:900;letter-spacing:-0.04em;line-height:1.02;margin:0 0 " + px(40, s) + ";color:#0A1F17}";
+  css += ".kpi-rule{display:grid;grid-template-columns:repeat(4,1fr);gap:20px;padding:22px 0;border-top:2px solid #0A1F17;border-bottom:1px solid #D5D6CF;margin-bottom:" + px(36, s) + "}";
   css += ".kpi-label{font-size:10px;font-weight:700;color:#787C72;letter-spacing:.12em;text-transform:uppercase}";
-  css += ".kpi-value{font-size:28px;font-weight:900;letter-spacing:-0.03em;margin-top:4px}";
-  css += ".kpi-unit{font-size:16px;color:#787C72;font-weight:700;margin-left:2px}";
-  css += ".min-sec{margin-bottom:32px}";
+  css += ".kpi-value{font-size:" + px(28, s) + ";font-weight:900;letter-spacing:-0.03em;margin-top:4px}";
+  css += ".kpi-unit{font-size:15px;color:#787C72;font-weight:700;margin-left:2px}";
+  css += ".min-sec{margin-bottom:" + px(32, s) + "}";
   css += ".min-sec-label{font-size:11px;font-weight:900;letter-spacing:.16em;color:" + color + ";text-transform:uppercase;margin-bottom:12px}";
-  css += ".min-sec-title{font-size:22px;font-weight:900;letter-spacing:-0.02em;color:#0A1F17;margin-bottom:14px}";
   css += ".min-body{font-size:16px;line-height:1.65;color:#1A1D17;font-weight:300;margin-bottom:16px}";
   css += ".min-body strong{font-weight:900;color:#0A1F17}";
-  css += ".min-foot{margin-top:40px;padding-top:20px;border-top:1px solid #D5D6CF;font-size:11px;color:#787C72;font-weight:700;display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px}";
+  css += ".min-foot{margin-top:" + px(40, s) + ";padding-top:20px;border-top:1px solid #D5D6CF;font-size:11px;color:#787C72;font-weight:700;display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px}";
   css += "@media print{body{background:white}.ctr{padding:0;max-width:100%}.paper{box-shadow:none;border-radius:0;padding:48px 56px}}";
-  css += "@media(max-width:640px){.paper{padding:36px 28px}h1.min-title{font-size:36px}.kpi-rule{grid-template-columns:repeat(2,1fr)}.min-top{margin-bottom:36px}}";
+  css += "@media(max-width:640px){.paper{padding:36px 28px}h1.min-title{font-size:32px}.kpi-rule{grid-template-columns:repeat(2,1fr)}.min-top{margin-bottom:36px}}";
   if (accessPassword) css += passwordGateCSS(color);
 
   var o = '<div id="pw-content" class="ctr"><div class="paper">';
-  // Top
-  o += '<div class="min-top">' + caloLogoSvg(colorDark, 18);
-  o += '<div class="min-stamp">' + (prevMonth || reportDate || 'Internal') + '</div></div>';
-  o += '<div class="eyebrow">' + (reportSubtitle || 'Report') + '</div>';
-  o += '<h1 class="min-title">' + reportTitle + '</h1>';
-  // KPI rule
-  if (kpis && kpis.length) {
+  if (t.showHero) {
+    o += '<div class="min-top">' + caloLogoSvg(colorDark, 18);
+    o += '<div class="min-stamp">' + (prevMonth || reportDate || 'Internal') + '</div></div>';
+    o += '<div class="eyebrow">' + (reportSubtitle || 'Report') + '</div>';
+    o += '<h1 class="min-title">' + reportTitle + '</h1>';
+  }
+  if (t.showKpis && kpis && kpis.length) {
     var ks = kpis.slice(0, 4);
     o += '<div class="kpi-rule">';
     ks.forEach(function(k) {
@@ -510,36 +580,126 @@ function buildMinimalHTML(r, color, colorDark, colorDeepest, title, accessPasswo
     });
     o += '</div>';
   }
-  // Summary (as inline paragraph)
-  if (summary) {
+  if (t.showSummary && summary) {
     o += '<div class="min-sec"><div class="min-sec-label">§ 01 — Summary</div>';
     o += '<p class="min-body">' + summary + '</p></div>';
   }
-  // Sections
-  sections.forEach(function(s, idx) {
-    var num = String(idx + (summary ? 2 : 1)).padStart(2, '0');
-    o += '<div class="min-sec"><div class="min-sec-label">§ ' + num + ' — ' + (s.title || 'Section') + '</div>';
-    (s.blocks || []).forEach(function(b) { o += renderBlock(b, color, colorDark); });
-    o += '</div>';
-  });
-  // Insights
-  if (insights && insights.length) {
-    var insNum = String(sections.length + (summary ? 2 : 1)).padStart(2, '0');
+  if (t.showSections) {
+    sections.forEach(function(sec, idx) {
+      var num = String(idx + (t.showSummary && summary ? 2 : 1)).padStart(2, '0');
+      o += '<div class="min-sec"><div class="min-sec-label">§ ' + num + ' — ' + (sec.title || 'Section') + '</div>';
+      (sec.blocks || []).forEach(function(b) { o += renderBlock(b, color, colorDark); });
+      o += '</div>';
+    });
+  }
+  if (t.showInsights && insights && insights.length) {
+    var secCount = t.showSections ? sections.length : 0;
+    var insNum = String(secCount + (t.showSummary && summary ? 2 : 1)).padStart(2, '0');
     o += '<div class="min-sec"><div class="min-sec-label">§ ' + insNum + ' — Takeaways</div>';
     o += '<ul style="margin:0;padding-left:20px;font-size:15px;line-height:1.65;color:#2F332C;font-weight:300">';
     insights.forEach(function(i) { o += '<li style="margin-bottom:8px">' + i + '</li>'; });
     o += '</ul></div>';
   }
-  // Footer
-  o += '<div class="min-foot"><span>Calo Reports · Prepared' + (reportDate ? ' ' + reportDate : '') + '</span>';
-  o += '<span>Confidential · Internal use only</span></div>';
-
+  if (t.showFooter) {
+    o += '<div class="min-foot"><span>Calo Reports · Prepared' + (reportDate ? ' ' + reportDate : '') + '</span>';
+    o += '<span>Confidential · Internal use only</span></div>';
+  }
   o += '</div></div>';
 
   return { html: o, css, color };
 }
 
-// ─── Public entry point — dispatches on generalInfo.variant ──────────────────
+// ─── VARIANT: Brief (single-page executive one-sheet) ────────────────────────
+function buildBriefHTML(r, color, colorDark, colorDeepest, title, accessPassword, t) {
+  var gi = r.generalInfo || {};
+  var reportTitle = gi.title || r.title || title;
+  var reportDate = gi.reportDate || r.reportDate || '';
+  var reportSubtitle = gi.subtitle || r.subtitle || '';
+  var prevMonth = gi.prevMonth || '';
+  var companyName = gi.companyName || '';
+  var kpis = gi.kpiStrip || r.kpis || [];
+  var summary = r.summary || '';
+  var insights = r.insights || [];
+
+  var css = "*{margin:0;padding:0;box-sizing:border-box}";
+  css += "body{font-family:'Lato',system-ui,sans-serif;background:#F4F4F0;color:#0A1F17;line-height:1.55;-webkit-font-smoothing:antialiased}";
+  css += ".num{font-variant-numeric:tabular-nums;font-feature-settings:'tnum'}";
+  css += ".ctr{max-width:" + t.widthPx + "px;margin:0 auto;padding:40px 20px}";
+  css += ".paper{background:#fff;border-radius:20px;overflow:hidden;box-shadow:0 24px 60px rgba(10,31,23,.10),0 8px 24px rgba(10,31,23,.06)}";
+  css += ".brief-hero{padding:40px 44px 28px;background:linear-gradient(135deg," + colorDeepest + " 0%," + color + " 100%);color:#fff;position:relative;overflow:hidden}";
+  css += ".brief-hero-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:22px}";
+  css += ".brief-hero h1{font-size:36px;font-weight:900;letter-spacing:-0.03em;line-height:1.05;margin:0;max-width:580px}";
+  css += ".brief-hero-sub{font-size:12px;font-weight:900;letter-spacing:.2em;opacity:.85;text-transform:uppercase;margin-bottom:10px}";
+  css += ".brief-kpis{padding:24px 44px;display:grid;grid-template-columns:repeat(4,1fr);gap:24px;border-bottom:1px solid #F4F4F0}";
+  css += ".brief-kpi-label{font-size:10px;font-weight:900;color:#787C72;letter-spacing:.1em;text-transform:uppercase}";
+  css += ".brief-kpi-value{font-size:30px;font-weight:900;letter-spacing:-0.03em;margin-top:4px}";
+  css += ".brief-kpi-unit{font-size:14px;color:#787C72;font-weight:700;margin-left:2px}";
+  css += ".brief-kpi-change{font-size:11px;color:#029A66;font-weight:700;margin-top:2px}";
+  css += ".brief-summary{padding:28px 44px;border-bottom:1px solid #F4F4F0}";
+  css += ".brief-summary .lbl{font-size:11px;font-weight:900;color:" + color + ";letter-spacing:.14em;text-transform:uppercase;margin-bottom:10px}";
+  css += ".brief-summary p{font-size:17px;line-height:1.6;color:#1A1D17;font-weight:300}";
+  css += ".brief-summary strong{font-weight:900;color:" + colorDark + "}";
+  css += ".brief-insights{padding:28px 44px;border-bottom:1px solid #F4F4F0}";
+  css += ".brief-insights .lbl{font-size:11px;font-weight:900;color:" + color + ";letter-spacing:.14em;text-transform:uppercase;margin-bottom:12px}";
+  css += ".brief-insights ol{list-style:none;counter-reset:briefn;margin:0;padding:0;display:flex;flex-direction:column;gap:10px}";
+  css += ".brief-insights li{counter-increment:briefn;padding-left:36px;position:relative;font-size:14px;line-height:1.55;color:#2F332C}";
+  css += ".brief-insights li::before{content:counter(briefn,decimal-leading-zero);position:absolute;left:0;top:0;font-size:14px;font-weight:900;color:" + color + ";letter-spacing:-0.02em}";
+  css += ".brief-foot{padding:22px 44px;background:#FAFAF7;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px}";
+  css += ".brief-foot-brand{display:flex;align-items:center;gap:12px;font-size:12px;color:#787C72;font-weight:700}";
+  css += ".brief-foot-tag{font-size:11px;color:#787C72;font-weight:700;letter-spacing:.08em;text-transform:uppercase}";
+  css += "@media print{body{background:white}.ctr{padding:0}.paper{box-shadow:none;border-radius:0}}";
+  css += "@media(max-width:720px){.brief-hero,.brief-kpis,.brief-summary,.brief-insights,.brief-foot{padding-left:24px;padding-right:24px}.brief-hero h1{font-size:26px}.brief-kpis{grid-template-columns:repeat(2,1fr);gap:16px}.brief-kpi-value{font-size:24px}}";
+  if (accessPassword) css += passwordGateCSS(color);
+
+  var o = '<div id="pw-content" class="ctr"><div class="paper">';
+  // Hero
+  if (t.showHero) {
+    o += '<div class="brief-hero"><div class="brief-hero-top">' + caloLogoSvg('#ffffff', 22);
+    o += '<span style="font-size:11px;font-weight:900;letter-spacing:.16em;opacity:.8;text-transform:uppercase">Brief · ' + (reportDate || 'Internal') + '</span></div>';
+    if (reportSubtitle || prevMonth) o += '<div class="brief-hero-sub">' + (reportSubtitle || prevMonth) + '</div>';
+    o += '<h1>' + reportTitle + '</h1>';
+    if (companyName) o += '<div style="font-size:13px;font-weight:700;opacity:.8;margin-top:10px">' + companyName + '</div>';
+    o += '</div>';
+  }
+  // KPIs (up to 4)
+  if (t.showKpis && kpis && kpis.length) {
+    var ks = kpis.slice(0, 4);
+    o += '<div class="brief-kpis">';
+    ks.forEach(function(k) {
+      o += '<div><div class="brief-kpi-label">' + (k.label || '') + '</div>';
+      if (k.value) {
+        o += '<div class="brief-kpi-value num">' + k.value;
+        if (k.unit) o += '<span class="brief-kpi-unit">' + k.unit + '</span>';
+        o += '</div>';
+      }
+      if (k.change) o += '<div class="brief-kpi-change">' + k.change + '</div>';
+      o += '</div>';
+    });
+    o += '</div>';
+  }
+  // Summary
+  if (t.showSummary && summary) {
+    o += '<div class="brief-summary"><div class="lbl">Executive summary</div>';
+    o += '<p>' + summary + '</p></div>';
+  }
+  // Insights (numbered)
+  if (t.showInsights && insights && insights.length) {
+    o += '<div class="brief-insights"><div class="lbl">Key takeaways</div><ol>';
+    insights.slice(0, 5).forEach(function(i) { o += '<li>' + i + '</li>'; });
+    o += '</ol></div>';
+  }
+  // Footer
+  if (t.showFooter) {
+    o += '<div class="brief-foot"><div class="brief-foot-brand">' + caloLogoSvg('#A8ABA1', 16);
+    o += '<span>Calo Reports · One-page brief' + (reportDate ? ' · ' + reportDate : '') + '</span></div>';
+    o += '<div class="brief-foot-tag">Confidential · Internal use only</div></div>';
+  }
+  o += '</div></div>';
+
+  return { html: o, css, color };
+}
+
+// ─── Public entry point — dispatches on variant + tweaks ─────────────────────
 
 export function buildStandaloneHTML(reportData, brandColor, title, options = {}) {
   const r = reportData || {};
@@ -551,12 +711,16 @@ export function buildStandaloneHTML(reportData, brandColor, title, options = {})
   const accessPassword = options.password || null;
   const variant = (options.variant || gi.variant || r.variant || 'editorial').toLowerCase();
 
-  let body;
-  if (variant === 'dashboard') body = buildDashboardHTML(r, color, colorDark, colorDeepest, rt, accessPassword);
-  else if (variant === 'minimal') body = buildMinimalHTML(r, color, colorDark, colorDeepest, rt, accessPassword);
-  else body = buildEditorialHTML(r, color, colorDark, colorDeepest, rt, accessPassword);
+  // Build effective tweaks from generalInfo defaults + explicit overrides
+  const savedTweaks = gi.tweaks || {};
+  const t = resolveTweaks({ ...savedTweaks, ...options }, variant);
 
-  // Editorial supports section collapse; dashboard + minimal don't
-  const hasCollapse = variant === 'editorial' || !variant;
-  return htmlShell(rt, body.css, body, accessPassword, chartAndCollapseScript(hasCollapse));
+  let body;
+  if (variant === 'dashboard')      body = buildDashboardHTML(r, color, colorDark, colorDeepest, rt, accessPassword, t);
+  else if (variant === 'minimal')   body = buildMinimalHTML(r, color, colorDark, colorDeepest, rt, accessPassword, t);
+  else if (variant === 'brief')     body = buildBriefHTML(r, color, colorDark, colorDeepest, rt, accessPassword, t);
+  else                              body = buildEditorialHTML(r, color, colorDark, colorDeepest, rt, accessPassword, t);
+
+  const hasCollapse = variant === 'editorial' && t.showSections;
+  return htmlShell(rt, body.css, body.html, accessPassword, body.color, chartAndCollapseScript(hasCollapse));
 }

@@ -354,11 +354,15 @@ export default function NewReportPage() {
 
             <div style={{ marginTop: 14 }}>
               <label className="label">Layout</label>
-              <div style={{ display: 'flex', gap: 6 }}>
-                <StylePick label="Editorial"  sub="Magazine hero"        selected={variant === 'editorial'}  onClick={() => setVariant('editorial')} />
-                <StylePick label="Dashboard"  sub="Dense, numbered"      selected={variant === 'dashboard'}  onClick={() => setVariant('dashboard')} />
-                <StylePick label="Minimal"    sub="Paper, print-ready"   selected={variant === 'minimal'}    onClick={() => setVariant('minimal')} />
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 6 }}>
+                <StylePick label="Editorial"  sub="Magazine, in-depth"     selected={variant === 'editorial'}  onClick={() => setVariant('editorial')} />
+                <StylePick label="Dashboard"  sub="Compact, data-first"    selected={variant === 'dashboard'}  onClick={() => setVariant('dashboard')} />
+                <StylePick label="Minimal"    sub="Paper, print-ready"     selected={variant === 'minimal'}    onClick={() => setVariant('minimal')} />
+                <StylePick label="Brief"      sub="One-page summary"       selected={variant === 'brief'}      onClick={() => setVariant('brief')} />
               </div>
+              <p style={{ fontSize: 11, color: 'var(--ink-500)', marginTop: 4 }}>
+                You can switch layout anytime from the Tweaks panel in Preview.
+              </p>
             </div>
 
             <div style={{ marginTop: 14 }}>

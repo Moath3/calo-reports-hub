@@ -1,106 +1,128 @@
-const TIMEOUT_MS = 90000;
+const TIMEOUT_MS = 120000; // 2 min — Opus full reports can take a while
+
+// Model IDs. Override via env if needed.
+const SONNET_MODEL = process.env.CLAUDE_SONNET_MODEL || "claude-sonnet-4-5-20250929";
+const OPUS_MODEL   = process.env.CLAUDE_OPUS_MODEL   || "claude-opus-4-1-20250805";
+
+/**
+ * Smart routing: pick the right Claude model for the job.
+ *  - analyze: Opus (heavy-duty — reasoning over a full file, building full report)
+ *  - refine:  Sonnet (focused, fast — single section edits)
+ *  - chat:    Sonnet (back-and-forth edits)
+ *
+ * User can override via `provider` param (e.g. "claude-opus" forces Opus for chat).
+ */
+function pickModel(provider, requestType) {
+  if (provider === "claude-opus") return OPUS_MODEL;
+  if (provider === "claude-sonnet") return SONNET_MODEL;
+  // Auto / default → smart routing based on request type
+  if (requestType === "analyze") return OPUS_MODEL;
+  return SONNET_MODEL;
+}
 
 export function getAvailableProviders() {
-  const providers = [];
-  if (process.env.CLAUDE_API_KEY) providers.push({ id: "claude", name: "Anthropic Claude", available: true });
-  if (process.env.GEMINI_API_KEY) providers.push({ id: "gemini", name: "Google Gemini 2.0 Flash", available: true });
-  if (process.env.PERPLEXITY_API_KEY) providers.push({ id: "perplexity", name: "Perplexity AI", available: true });
-  return providers;
+  const hasKey = Boolean(process.env.CLAUDE_API_KEY);
+  if (!hasKey) return [];
+  return [
+    { id: "claude-sonnet", name: "Claude Sonnet 4.5 — fast & smart",      model: SONNET_MODEL, available: true },
+    { id: "claude-opus",   name: "Claude Opus 4.1 — heavy-duty reasoning", model: OPUS_MODEL,   available: true },
+  ];
 }
 
 export function extractJSON(text) {
   if (!text || typeof text !== "string") return null;
-  try { return JSON.parse(text); } catch(e) {}
-  const m = text.match(/\`\`\`(?:json)?\s*\n?([\s\S]*?)\n?\s*\`\`\`/);
-  if (m) { try { return JSON.parse(m[1].trim()); } catch(e) {} }
+  try { return JSON.parse(text); } catch (e) {}
+  const m = text.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/);
+  if (m) { try { return JSON.parse(m[1].trim()); } catch (e) {} }
   const j = text.match(/\{[\s\S]*\}/);
-  if (j) { try { return JSON.parse(j[0]); } catch(e) {} }
+  if (j) { try { return JSON.parse(j[0]); } catch (e) {} }
   return null;
 }
 
-async function callGemini(systemPrompt, userMessage, options = {}) {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) throw new Error("Gemini API key not configured");
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), options.timeout || TIMEOUT_MS);
-  try {
-    const genConfig = { temperature: options.temperature || 0.3, maxOutputTokens: options.maxTokens || 8192 };
-    if (options.jsonMode) genConfig.responseMimeType = "application/json";
-    const res = await fetch(
-      "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=" + apiKey,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: userMessage }] }],
-          systemInstruction: { parts: [{ text: systemPrompt }] },
-          generationConfig: genConfig
-        }),
-        signal: controller.signal
-      }
-    );
-    if (!res.ok) { const err = await res.text(); throw new Error("Gemini API error (" + res.status + "): " + err); }
-    const data = await res.json();
-    const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
-    return { text, raw: data, tokensIn: data?.usageMetadata?.promptTokenCount, tokensOut: data?.usageMetadata?.candidatesTokenCount };
-  } finally { clearTimeout(timer); }
-}
-
-async function callClaude(systemPrompt, userMessage, options = {}) {
+/**
+ * Low-level Anthropic API call.
+ * Uses prompt caching on the system prompt so repeated calls (especially
+ * in AI chat) pay 90% off on the cached tokens.
+ */
+async function callClaude({ model, systemPrompt, userMessage, maxTokens = 8192, timeout = TIMEOUT_MS }) {
   const apiKey = process.env.CLAUDE_API_KEY;
-  if (!apiKey) throw new Error("Claude API key not configured");
+  if (!apiKey) throw new Error("CLAUDE_API_KEY not configured");
+
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), options.timeout || TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), timeout);
+
   try {
+    // System prompt as a cacheable block so Anthropic can reuse it across calls.
+    // (Min block size is 1024 tokens — our system prompts are ~2K–8K so they qualify.)
+    const system = [
+      { type: "text", text: systemPrompt, cache_control: { type: "ephemeral" } }
+    ];
+
     const res = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
-      headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+      },
       body: JSON.stringify({
-        model: options.model || "claude-sonnet-4-5-20250929",
-        max_tokens: options.maxTokens || 8192,
-        system: systemPrompt,
-        messages: [{ role: "user", content: userMessage }]
+        model,
+        max_tokens: maxTokens,
+        system,
+        messages: [{ role: "user", content: userMessage }],
       }),
-      signal: controller.signal
+      signal: controller.signal,
     });
-    if (!res.ok) { const err = await res.text(); throw new Error("Claude API error (" + res.status + "): " + err); }
+
+    if (!res.ok) {
+      const err = await res.text();
+      throw new Error("Claude API error (" + res.status + "): " + err);
+    }
+
     const data = await res.json();
     const text = data?.content?.[0]?.text || "";
-    return { text, raw: data, tokensIn: data?.usage?.input_tokens, tokensOut: data?.usage?.output_tokens };
-  } finally { clearTimeout(timer); }
-}
-
-async function callPerplexity(systemPrompt, userMessage, options = {}) {
-  const apiKey = process.env.PERPLEXITY_API_KEY;
-  if (!apiKey) throw new Error("Perplexity API key not configured");
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), options.timeout || TIMEOUT_MS);
-  try {
-    const res = await fetch("https://api.perplexity.ai/chat/completions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "Authorization": "Bearer " + apiKey },
-      body: JSON.stringify({
-        model: options.model || "sonar-pro",
-        messages: [{ role: "system", content: systemPrompt }, { role: "user", content: userMessage }],
-        max_tokens: options.maxTokens || 8192, temperature: options.temperature || 0.3
-      }),
-      signal: controller.signal
-    });
-    if (!res.ok) { const err = await res.text(); throw new Error("Perplexity API error (" + res.status + "): " + err); }
-    const data = await res.json();
-    const text = data?.choices?.[0]?.message?.content || "";
-    return { text, raw: data, tokensIn: data?.usage?.prompt_tokens, tokensOut: data?.usage?.completion_tokens };
-  } finally { clearTimeout(timer); }
-}
-
-export async function callAI(provider, systemPrompt, userMessage, options = {}) {
-  const p = provider || process.env.DEFAULT_AI_PROVIDER || "gemini";
-  switch (p) {
-    case "gemini": return callGemini(systemPrompt, userMessage, options);
-    case "claude": return callClaude(systemPrompt, userMessage, options);
-    case "perplexity": return callPerplexity(systemPrompt, userMessage, options);
-    default: throw new Error("Unknown AI provider: " + p);
+    const usage = data?.usage || {};
+    return {
+      text,
+      raw: data,
+      model,
+      tokensIn:         (usage.input_tokens || 0) + (usage.cache_creation_input_tokens || 0),
+      tokensOut:         usage.output_tokens || 0,
+      cachedReadTokens: usage.cache_read_input_tokens || 0,
+      cacheWriteTokens: usage.cache_creation_input_tokens || 0,
+    };
+  } finally {
+    clearTimeout(timer);
   }
+}
+
+/**
+ * Public entry point. `provider` is optional — omit it to let smart
+ * routing pick the right model for the `requestType`.
+ *
+ * Supported providers: "claude-sonnet", "claude-opus", or undefined (auto).
+ *
+ * Legacy IDs ("gemini", "perplexity", "claude") are accepted and mapped
+ * to Sonnet so older clients keep working.
+ */
+export async function callAI(provider, systemPrompt, userMessage, options = {}) {
+  const normalized = normalizeProvider(provider);
+  const model = pickModel(normalized, options.requestType);
+  return callClaude({
+    model,
+    systemPrompt,
+    userMessage,
+    maxTokens: options.maxTokens || 8192,
+    timeout: options.timeout,
+  });
+}
+
+function normalizeProvider(p) {
+  if (!p) return undefined;
+  if (p === "claude-sonnet" || p === "claude-opus") return p;
+  // Legacy aliases → Sonnet (safe default)
+  if (p === "claude" || p === "gemini" || p === "perplexity") return "claude-sonnet";
+  return undefined;
 }
 
 export function buildReportSystemPrompt(dataSummary, templateData) {
@@ -162,7 +184,7 @@ When the user asks you to make changes, include the updates:
 }
 
 The "updates" object can contain:
-- "generalInfo": { field: value } - update general info (title, reportDate, companyName, prevMonth, brandColor, kpiStrip)
+- "generalInfo": { field: value } - update general info (title, reportDate, companyName, prevMonth, brandColor, kpiStrip, variant)
 - "sections": sparse array where null = unchanged, object = replace/merge that section at index
 
 BLOCK TYPE SCHEMAS (ALL values MUST be strings):

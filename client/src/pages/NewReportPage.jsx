@@ -108,13 +108,14 @@ export default function NewReportPage() {
   const [dataSummary, setDataSummary] = useState(null);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
-  const [provider, setProvider] = useState('claude');
+  const [provider, setProvider] = useState(''); // '' = auto (smart routing)
   const [customPrompt, setCustomPrompt] = useState('');
   const [providers, setProviders] = useState([]);
   const [loading, setLoading] = useState(false);
   const [templates, setTemplates] = useState([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState('');
   const [style, setStyle] = useState('standard');
+  const [variant, setVariant] = useState('editorial'); // visual output layout
 
   const onDrop = useCallback(async (accepted) => {
     if (!accepted.length) return;
@@ -128,7 +129,7 @@ export default function NewReportPage() {
       try {
         const pRes = await api.getProviders();
         setProviders(pRes.providers || []);
-        if (pRes.providers?.length) setProvider(pRes.providers[0].id);
+        // Keep provider as '' (auto) unless user explicitly picks one
       } catch { /* ignore */ }
       try {
         const tRes = await api.getTemplates();
@@ -165,6 +166,8 @@ export default function NewReportPage() {
       const extra = [customPrompt, style !== 'standard' ? `Style: ${style}` : ''].filter(Boolean).join('\n\n') || undefined;
       const res = await api.analyzeData(dataSummary, provider, extra, selectedTemplateId || undefined);
       const aiReport = res.reportData || res.report || {};
+      // Bake chosen visual variant into generalInfo
+      aiReport.generalInfo = { ...(aiReport.generalInfo || {}), variant };
       const createRes = await api.createReport({
         title: title.trim(),
         description: description.trim(),
@@ -189,7 +192,7 @@ export default function NewReportPage() {
       const createRes = await api.createReport({
         title: title.trim(),
         description: description.trim(),
-        reportData: { generalInfo: { title: title.trim(), brandColor: '#02B376' }, sections: [] },
+        reportData: { generalInfo: { title: title.trim(), brandColor: '#02B376', variant }, sections: [] },
         sourceFilename: file?.name || '',
         sourceData: dataSummary,
         tags: [],
@@ -341,11 +344,20 @@ export default function NewReportPage() {
             </div>
 
             <div style={{ marginTop: 14 }}>
-              <label className="label">Style</label>
+              <label className="label">Tone</label>
               <div style={{ display: 'flex', gap: 6 }}>
                 <StylePick label="Executive" sub="Short & visual"     selected={style === 'executive'} onClick={() => setStyle('executive')} />
                 <StylePick label="Standard"  sub="Balanced"            selected={style === 'standard'}  onClick={() => setStyle('standard')} />
                 <StylePick label="Detailed"  sub="All the data"        selected={style === 'detailed'}  onClick={() => setStyle('detailed')} />
+              </div>
+            </div>
+
+            <div style={{ marginTop: 14 }}>
+              <label className="label">Layout</label>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <StylePick label="Editorial"  sub="Magazine hero"        selected={variant === 'editorial'}  onClick={() => setVariant('editorial')} />
+                <StylePick label="Dashboard"  sub="Dense, numbered"      selected={variant === 'dashboard'}  onClick={() => setVariant('dashboard')} />
+                <StylePick label="Minimal"    sub="Paper, print-ready"   selected={variant === 'minimal'}    onClick={() => setVariant('minimal')} />
               </div>
             </div>
 
@@ -356,16 +368,19 @@ export default function NewReportPage() {
                 onChange={e => setProvider(e.target.value)}
                 className="input-field"
               >
+                <option value="">Auto — Opus for generation, Sonnet for edits</option>
                 {providers.length > 0 ? providers.map(p => (
                   <option key={p.id} value={p.id}>{p.name}</option>
                 )) : (
                   <>
-                    <option value="claude">Claude Sonnet 4.5 — best quality</option>
-                    <option value="gemini">Gemini 2.0 Flash — fastest</option>
-                    <option value="perplexity">Perplexity — web research</option>
+                    <option value="claude-sonnet">Claude Sonnet 4.5 — fast & smart</option>
+                    <option value="claude-opus">Claude Opus 4.1 — heavy-duty reasoning</option>
                   </>
                 )}
               </select>
+              <p style={{ fontSize: 11, color: 'var(--ink-500)', marginTop: 4 }}>
+                Leave as Auto for smart routing. Opus costs ~5× more — pick it only for complex files.
+              </p>
             </div>
 
             {templates.length > 0 && (

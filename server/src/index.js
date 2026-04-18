@@ -35,10 +35,8 @@ if (process.env.NODE_ENV === 'production') {
     process.exit(1);
   }
   // Warn about optional but recommended keys
-  const recommended = ['GEMINI_API_KEY', 'CLAUDE_API_KEY', 'PERPLEXITY_API_KEY'];
-  const missingOptional = recommended.filter(k => !process.env[k]);
-  if (missingOptional.length) {
-    console.warn(`[WARN] Missing optional env vars (AI providers): ${missingOptional.join(', ')}`);
+  if (!process.env.CLAUDE_API_KEY) {
+    console.warn('[WARN] CLAUDE_API_KEY is not set — all AI features will be disabled.');
   }
 }
 

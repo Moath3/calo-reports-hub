@@ -6,12 +6,14 @@ import { getDb } from "../db/database.js";
 
 const router = Router();
 
-// HTML export — supports optional password protection
+// HTML export — supports optional password protection + variant
 router.post("/html", requireAuth, (req, res) => {
   try {
-    const { reportData, brandColor, title, password } = req.body;
+    const { reportData, brandColor, title, password, variant } = req.body;
     if (!reportData) return res.status(400).json({ error: "reportData is required" });
-    const options = password ? { password } : {};
+    const options = {};
+    if (password) options.password = password;
+    if (variant) options.variant = variant;
     res.json({ html: buildStandaloneHTML(reportData, brandColor, title, options) });
   } catch (err) {
     console.error("HTML export error:", err);

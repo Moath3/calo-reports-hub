@@ -1,11 +1,31 @@
 import { Router } from "express";
 import { getDb } from "../db/database.js";
 import { requireAuth } from "../middleware/auth.js";
-import { callAI, buildReportSystemPrompt, buildChatSystemPrompt, buildRefineSystemPrompt, getAvailableProviders, extractJSON } from "../services/aiService.js";
+import {
+  callAI, buildReportSystemPrompt, buildChatSystemPrompt, buildRefineSystemPrompt,
+  getAvailableProviders, extractJSON,
+} from "../services/aiService.js";
 
 const router = Router();
 
-// POST /analyze
+function logUsage(userId, provider, result, requestType, duration) {
+  try {
+    const db = getDb();
+    db.prepare("INSERT INTO ai_usage (user_id, provider, tokens_in, tokens_out, request_type, duration_ms) VALUES (?,?,?,?,?,?)")
+      .run(
+        userId,
+        provider || "claude-auto",
+        result?.tokensIn || 0,
+        result?.tokensOut || 0,
+        requestType,
+        duration || 0,
+      );
+  } catch (e) {
+    console.error("AI usage log error:", e.message);
+  }
+}
+
+// POST /analyze — heavy-duty one-shot: Opus by default (smart routing)
 router.post("/analyze", requireAuth, async (req, res) => {
   try {
     const { dataSummary, provider, customPrompt, templateId } = req.body;
@@ -17,9 +37,7 @@ router.post("/analyze", requireAuth, async (req, res) => {
       try {
         const db = getDb();
         const tmpl = db.prepare("SELECT template_data FROM templates WHERE id = ?").get(templateId);
-        if (tmpl && tmpl.template_data) {
-          templateData = JSON.parse(tmpl.template_data);
-        }
+        if (tmpl && tmpl.template_data) templateData = JSON.parse(tmpl.template_data);
       } catch (e) {
         console.error("Template fetch error:", e.message);
       }
@@ -30,29 +48,26 @@ router.post("/analyze", requireAuth, async (req, res) => {
     if (customPrompt) userMessage += "\n\nAdditional instructions: " + customPrompt;
 
     const startTime = Date.now();
-    const result = await callAI(provider, systemPrompt, userMessage, { jsonMode: true });
+    const result = await callAI(provider, systemPrompt, userMessage, { requestType: "analyze" });
     const duration = Date.now() - startTime;
 
     const report = extractJSON(result.text);
     if (!report) {
-      return res.status(422).json({ error: "AI did not return valid JSON. Please try again.", rawResponse: result.text?.slice(0, 2000) });
+      return res.status(422).json({
+        error: "AI did not return valid JSON. Please try again.",
+        rawResponse: (result.text || "").slice(0, 2000),
+      });
     }
 
-    // Log usage
-    try {
-      const db = getDb();
-      db.prepare("INSERT INTO ai_usage (user_id, provider, tokens_in, tokens_out, request_type, duration_ms) VALUES (?,?,?,?,?,?)")
-        .run(req.user.id, provider || "gemini", result.tokensIn || 0, result.tokensOut || 0, "analyze", duration);
-    } catch (e) { console.error("AI usage log error:", e.message); }
-
-    res.json({ report, reportData: report, provider: provider || "gemini", duration });
+    logUsage(req.user.id, provider, result, "analyze", duration);
+    res.json({ report, reportData: report, provider: provider || "claude-auto", model: result.model, duration });
   } catch (err) {
     console.error("AI analyze error:", err);
     res.status(500).json({ error: "AI analysis failed: " + err.message });
   }
 });
 
-// POST /chat
+// POST /chat — fast iteration: Sonnet by default
 router.post("/chat", requireAuth, async (req, res) => {
   try {
     const { message, reportContext, provider, history } = req.body;
@@ -65,7 +80,9 @@ router.post("/chat", requireAuth, async (req, res) => {
       userMessage = "Previous conversation:\n" + contextMsgs + "\n\nUser: " + message;
     }
 
-    const result = await callAI(provider, systemPrompt, userMessage, { jsonMode: provider === "gemini" });
+    const startTime = Date.now();
+    const result = await callAI(provider, systemPrompt, userMessage, { requestType: "chat" });
+    const duration = Date.now() - startTime;
 
     // Parse structured response: { message, updates }
     const parsed = extractJSON(result.text);
@@ -74,27 +91,26 @@ router.post("/chat", requireAuth, async (req, res) => {
 
     if (parsed && typeof parsed === "object") {
       responseMessage = parsed.message || parsed.response || result.text;
-      if (parsed.updates && typeof parsed.updates === "object") {
-        updates = parsed.updates;
-      }
+      if (parsed.updates && typeof parsed.updates === "object") updates = parsed.updates;
     } else {
       responseMessage = result.text;
     }
 
-    try {
-      const db = getDb();
-      db.prepare("INSERT INTO ai_usage (user_id, provider, tokens_in, tokens_out, request_type) VALUES (?,?,?,?,?)")
-        .run(req.user.id, provider || "gemini", result.tokensIn || 0, result.tokensOut || 0, "chat");
-    } catch (e) {}
-
-    res.json({ response: responseMessage, message: responseMessage, updates, provider: provider || "gemini" });
+    logUsage(req.user.id, provider, result, "chat", duration);
+    res.json({
+      response: responseMessage,
+      message: responseMessage,
+      updates,
+      provider: provider || "claude-auto",
+      model: result.model,
+    });
   } catch (err) {
     console.error("AI chat error:", err);
     res.status(500).json({ error: "AI chat failed: " + err.message });
   }
 });
 
-// POST /refine
+// POST /refine — single-section edit: Sonnet by default
 router.post("/refine", requireAuth, async (req, res) => {
   try {
     const { reportData, sectionIndex, instruction, provider } = req.body;
@@ -106,27 +122,25 @@ router.post("/refine", requireAuth, async (req, res) => {
     if (!section) return res.status(400).json({ error: "Section not found at index " + sectionIndex });
 
     const systemPrompt = buildRefineSystemPrompt(section, instruction);
-    const result = await callAI(provider, systemPrompt, "Refine the section as instructed. Return only JSON.", { jsonMode: true });
+
+    const startTime = Date.now();
+    const result = await callAI(provider, systemPrompt, "Refine the section as instructed. Return only JSON.", { requestType: "refine" });
+    const duration = Date.now() - startTime;
 
     const updatedSection = extractJSON(result.text);
     if (!updatedSection) {
       return res.status(422).json({ error: "AI did not return valid JSON for the refined section." });
     }
 
-    try {
-      const db = getDb();
-      db.prepare("INSERT INTO ai_usage (user_id, provider, tokens_in, tokens_out, request_type) VALUES (?,?,?,?,?)")
-        .run(req.user.id, provider || "gemini", result.tokensIn || 0, result.tokensOut || 0, "refine");
-    } catch (e) {}
-
-    res.json({ updatedSection, section: updatedSection, provider: provider || "gemini" });
+    logUsage(req.user.id, provider, result, "refine", duration);
+    res.json({ updatedSection, section: updatedSection, provider: provider || "claude-auto", model: result.model });
   } catch (err) {
     console.error("AI refine error:", err);
     res.status(500).json({ error: "AI refinement failed: " + err.message });
   }
 });
 
-// GET /providers
+// GET /providers — lists Claude Sonnet + Opus
 router.get("/providers", requireAuth, (req, res) => {
   res.json({ providers: getAvailableProviders() });
 });

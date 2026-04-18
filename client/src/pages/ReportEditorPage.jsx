@@ -396,7 +396,7 @@ export default function ReportEditorPage() {
   const [aiChat, setAiChat] = useState([]);
   const [aiLoading, setAiLoading] = useState(false);
   const [showAddBlock, setShowAddBlock] = useState(false);
-  const [aiProvider, setAiProvider] = useState('claude');
+  const [aiProvider, setAiProvider] = useState(''); // '' = auto (smart routing: Sonnet for chat)
   const [aiProviders, setAiProviders] = useState([]);
   const [showPasteBox, setShowPasteBox] = useState(false);
   const [pasteText, setPasteText] = useState('');
@@ -409,10 +409,7 @@ export default function ReportEditorPage() {
       .catch(() => { toast.error('Report not found'); navigate('/reports'); })
       .finally(() => setLoading(false));
     api.getProviders()
-      .then(res => {
-        setAiProviders(res.providers || []);
-        if (res.providers?.length) setAiProvider(res.providers[0].id);
-      })
+      .then(res => { setAiProviders(res.providers || []); })
       .catch(() => {});
   }, [id, navigate]);
 
@@ -734,13 +731,13 @@ export default function ReportEditorPage() {
           <div className="px-5 py-3 border-b border-gray-100 flex items-center gap-2">
             <Brain className="h-5 w-5 text-purple-600" />
             <span className="font-semibold text-gray-900">AI Assistant</span>
-            <select className="ml-auto text-xs border border-gray-200 rounded-lg px-2 py-1 bg-white" value={aiProvider} onChange={e => setAiProvider(e.target.value)}>
+            <select className="ml-auto text-xs border border-gray-200 rounded-lg px-2 py-1 bg-white" value={aiProvider} onChange={e => setAiProvider(e.target.value)} title="AI model — Auto picks Sonnet for chat, Opus for heavy lifts">
+              <option value="">Auto (Sonnet)</option>
               {aiProviders.length > 0 ? aiProviders.map(p => (
                 <option key={p.id} value={p.id}>{p.name}</option>
               )) : <>
-                <option value="claude">Anthropic Claude</option>
-                <option value="gemini">Google Gemini</option>
-                <option value="perplexity">Perplexity AI</option>
+                <option value="claude-sonnet">Claude Sonnet 4.5</option>
+                <option value="claude-opus">Claude Opus 4.1</option>
               </>}
             </select>
           </div>

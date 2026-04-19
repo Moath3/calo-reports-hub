@@ -98,8 +98,12 @@ export default function Layout() {
           @media (max-width: 1023px) {
             aside {
               position: fixed !important;
+              top: 0 !important;
+              left: 0 !important;
+              bottom: 0 !important;
               transform: translateX(-100%);
               width: 240px !important;
+              z-index: 40 !important;
             }
             aside.sidebar-open { transform: translateX(0); }
           }
@@ -222,25 +226,48 @@ export default function Layout() {
 
       {/* Main */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-        {/* Mobile top bar */}
+        {/* Mobile top bar — hamburger opens drawer, logo goes home */}
         <header
           className="lg:hidden"
           style={{
             height: 56, borderBottom: '1px solid var(--ink-200)',
             background: '#fff', display: 'flex', alignItems: 'center',
-            padding: '0 16px', flexShrink: 0,
+            padding: '0 8px', flexShrink: 0,
+            position: 'sticky', top: 0, zIndex: 20,
           }}
         >
           <button
             onClick={() => setSideOpen(true)}
-            style={{ padding: 6, border: 'none', background: 'none', cursor: 'pointer', color: 'var(--ink-700)' }}
+            aria-label="Open menu"
+            title="Open menu"
+            style={{
+              width: 44, height: 44, display: 'inline-flex',
+              alignItems: 'center', justifyContent: 'center',
+              border: 'none', background: 'none', cursor: 'pointer',
+              color: 'var(--ink-700)', borderRadius: 10,
+              transition: 'background .15s',
+            }}
+            onMouseEnter={e => e.currentTarget.style.background = 'var(--ink-100)'}
+            onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
           >
             <Menu size={22} />
           </button>
-          <div style={{ marginLeft: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
+          <button
+            onClick={() => navigate('/')}
+            aria-label="Go to home"
+            title="Go to home"
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 8,
+              marginLeft: 4, padding: '8px 12px',
+              border: 'none', background: 'none', cursor: 'pointer', borderRadius: 10,
+              transition: 'background .15s',
+            }}
+            onMouseEnter={e => e.currentTarget.style.background = 'var(--ink-100)'}
+            onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+          >
             <CaloLogo size={18} color="var(--calo-500)" />
             <span style={{ fontSize: 11, fontWeight: 900, letterSpacing: '.16em', color: 'var(--ink-500)' }}>REPORTS</span>
-          </div>
+          </button>
         </header>
 
         <main style={{ flex: 1, padding: '28px 40px', minWidth: 0, overflowX: 'hidden' }}>

@@ -71,10 +71,21 @@ export default function Layout() {
 
   return (
     <div style={{ display: 'flex', minHeight: '100vh', background: 'var(--ink-50)' }}>
+      {/* Mobile-only CSS — inline styles were winning over Tailwind's lg:hidden,
+          so we use an explicit media query instead. */}
+      <style>{`
+        .calo-mobile-only { display: flex; }
+        .calo-mobile-overlay { display: block; }
+        @media (min-width: 1024px) {
+          .calo-mobile-only { display: none !important; }
+          .calo-mobile-overlay { display: none !important; }
+        }
+      `}</style>
+
       {/* Mobile overlay */}
       {sideOpen && (
         <div
-          className="lg:hidden"
+          className="calo-mobile-overlay"
           style={{ position: 'fixed', inset: 0, background: 'rgba(10,31,23,.35)', zIndex: 30 }}
           onClick={() => setSideOpen(false)}
         />
@@ -226,12 +237,13 @@ export default function Layout() {
 
       {/* Main */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-        {/* Mobile top bar — hamburger opens drawer, logo goes home */}
+        {/* Mobile top bar — hamburger opens drawer, logo goes home.
+            Uses .calo-mobile-only so inline styles don't fight the media query. */}
         <header
-          className="lg:hidden"
+          className="calo-mobile-only"
           style={{
             height: 56, borderBottom: '1px solid var(--ink-200)',
-            background: '#fff', display: 'flex', alignItems: 'center',
+            background: '#fff', alignItems: 'center',
             padding: '0 8px', flexShrink: 0,
             position: 'sticky', top: 0, zIndex: 20,
           }}

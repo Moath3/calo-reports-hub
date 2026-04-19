@@ -103,10 +103,83 @@ export default function DashboardPage() {
         actions={
           <>
             <Btn variant="secondary" icon="LayoutTemplate" onClick={() => navigate('/templates')}>Templates</Btn>
-            <Btn variant="primary" icon="Plus" onClick={() => navigate('/new')}>New report</Btn>
+            <Btn variant="primary" size="lg" icon="Plus" onClick={() => navigate('/new')}>New report</Btn>
           </>
         }
       />
+
+      {/* Hero CTA — "0 effort" entry point */}
+      <div
+        style={{
+          background: 'linear-gradient(135deg, #01432D 0%, #016040 45%, #02B376 100%)',
+          color: '#fff',
+          borderRadius: 'var(--r-xl)',
+          padding: '32px 36px',
+          marginBottom: 24,
+          position: 'relative', overflow: 'hidden',
+          boxShadow: 'var(--shadow-lg)',
+        }}
+      >
+        {/* Decorative leaf pattern */}
+        <svg style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', opacity: .08, pointerEvents: 'none' }} viewBox="0 0 800 300" preserveAspectRatio="xMidYMid slice">
+          <defs>
+            <pattern id="hero-leaf" x="0" y="0" width="80" height="80" patternUnits="userSpaceOnUse">
+              <circle cx="40" cy="40" r="1.5" fill="#fff" />
+              <path d="M14 66 Q 40 42 66 66" stroke="#fff" strokeWidth="1.2" fill="none" opacity=".4" />
+            </pattern>
+          </defs>
+          <rect width="800" height="300" fill="url(#hero-leaf)" />
+        </svg>
+
+        <div style={{ position: 'relative', zIndex: 1, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 28, flexWrap: 'wrap' }}>
+          <div style={{ flex: 1, minWidth: 260 }}>
+            <div style={{ fontSize: 11, fontWeight: 900, letterSpacing: '.18em', opacity: .8, marginBottom: 6 }}>START HERE</div>
+            <h2 style={{ fontSize: 32, fontWeight: 900, letterSpacing: '-0.03em', lineHeight: 1.1, margin: 0 }}>
+              Create a report in <span style={{ color: '#CFF3E3' }}>under a minute</span>
+            </h2>
+            <p style={{ fontSize: 14, color: 'rgba(255,255,255,.85)', margin: '8px 0 0', maxWidth: 480, lineHeight: 1.55 }}>
+              Chat with Calo AI or drop a file. We'll build the sections, KPIs and insights.
+            </p>
+          </div>
+
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+            <button
+              onClick={() => navigate('/new?mode=chat')}
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 8,
+                padding: '14px 22px', fontSize: 15, fontWeight: 900,
+                borderRadius: 'var(--r-pill)',
+                background: '#fff', color: 'var(--ink-900)',
+                border: 'none', cursor: 'pointer', letterSpacing: '-0.01em',
+                boxShadow: '0 6px 20px rgba(0,0,0,.18)',
+                whiteSpace: 'nowrap',
+              }}
+              onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-1px)'; e.currentTarget.style.boxShadow = '0 8px 24px rgba(0,0,0,.22)'; }}
+              onMouseLeave={e => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = '0 6px 20px rgba(0,0,0,.18)'; }}
+            >
+              <Icon name="Sparkles" size={18} color="var(--calo-700)" />
+              Chat with Calo AI
+            </button>
+            <button
+              onClick={() => navigate('/new')}
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 8,
+                padding: '14px 22px', fontSize: 15, fontWeight: 900,
+                borderRadius: 'var(--r-pill)',
+                background: 'rgba(255,255,255,.14)', color: '#fff',
+                border: '1px solid rgba(255,255,255,.25)',
+                cursor: 'pointer', letterSpacing: '-0.01em', whiteSpace: 'nowrap',
+                backdropFilter: 'blur(4px)',
+              }}
+              onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,.22)'}
+              onMouseLeave={e => e.currentTarget.style.background = 'rgba(255,255,255,.14)'}
+            >
+              <Icon name="Upload" size={18} />
+              Upload data
+            </button>
+          </div>
+        </div>
+      </div>
 
       {/* 6-col KPI strip */}
       <div

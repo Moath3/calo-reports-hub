@@ -1,5 +1,5 @@
-import { useState, useCallback, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState, useCallback, useEffect, useRef } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useDropzone } from 'react-dropzone';
 import api from '../utils/api';
 import toast from 'react-hot-toast';
@@ -103,7 +103,13 @@ function GenerationProgress() {
 
 export default function NewReportPage() {
   const navigate = useNavigate();
-  const [phase, setPhase] = useState('drop'); // drop | preview | gen
+  const [searchParams] = useSearchParams();
+  const chatTextareaRef = useRef(null);
+
+  // URL param ?mode=chat auto-focuses the chat box on mount
+  const initialMode = searchParams.get('mode');
+
+  const [phase, setPhase] = useState('start'); // start | preview | gen
   const [file, setFile] = useState(null);
   const [dataSummary, setDataSummary] = useState(null);
   const [title, setTitle] = useState('');
@@ -116,6 +122,22 @@ export default function NewReportPage() {
   const [selectedTemplateId, setSelectedTemplateId] = useState('');
   const [style, setStyle] = useState('standard');
   const [variant, setVariant] = useState('editorial'); // visual output layout
+
+  // Chat-first creation: user just types what they need
+  const [chatText, setChatText] = useState('');
+  const [chatTitle, setChatTitle] = useState('');
+
+  useEffect(() => {
+    if (initialMode === 'chat' && chatTextareaRef.current) {
+      chatTextareaRef.current.focus();
+    }
+  }, [initialMode]);
+
+  // Load providers + templates on mount so chat mode has them
+  useEffect(() => {
+    api.getProviders().then(r => setProviders(r.providers || [])).catch(() => {});
+    api.getTemplates().then(r => setTemplates(r.templates || [])).catch(() => {});
+  }, []);
 
   const onDrop = useCallback(async (accepted) => {
     if (!accepted.length) return;
@@ -219,6 +241,42 @@ export default function NewReportPage() {
     finally { setLoading(false); }
   };
 
+  // Zero-effort entry: user types what they want, AI builds the whole report.
+  // Uses Opus (smart routing defaults analyze → Opus) for quality.
+  const handleChatGenerate = async () => {
+    const text = chatText.trim();
+    if (text.length < 8) { toast.error('Add a bit more detail (at least a sentence)'); return; }
+    setPhase('gen');
+    setLoading(true);
+    try {
+      // Wrap the user's description so the AI knows it's a description, not tabular data
+      const dataPayload = {
+        mode: 'chat',
+        userDescription: text,
+        note: 'The user provided a plain-English description of the report they want. Synthesize realistic structure, KPIs, sections and plausible placeholder numbers where specific data was not provided. Be helpful — build the full report.',
+      };
+      const res = await api.analyzeData(dataPayload, provider || 'claude-opus', undefined, selectedTemplateId || undefined);
+      const aiReport = res.reportData || res.report || {};
+      // Bake user-chosen variant + auto-derived title (from first line) into the report
+      aiReport.generalInfo = { ...(aiReport.generalInfo || {}), variant };
+      const derivedTitle = chatTitle.trim() || (aiReport.title || aiReport.generalInfo?.title || (text.split(/\n|[.!?]/)[0] || '').slice(0, 80) || 'Untitled report');
+      const createRes = await api.createReport({
+        title: derivedTitle,
+        description: 'Created from chat: ' + text.slice(0, 140),
+        reportData: aiReport,
+        sourceFilename: '',
+        sourceData: dataPayload,
+        aiProvider: provider || 'claude-opus',
+        tags: ['from-chat'],
+      });
+      toast.success('Report generated!');
+      navigate(`/reports/${createRes.id}`);
+    } catch (err) {
+      toast.error(err.message || 'AI generation failed');
+      setPhase('start');
+    } finally { setLoading(false); }
+  };
+
   return (
     <div className="animate-slide-up" style={{ maxWidth: 880, margin: '0 auto' }}>
       <div style={{ marginBottom: 28 }}>
@@ -232,65 +290,172 @@ export default function NewReportPage() {
           <div>
             <h1 style={{ margin: 0, fontSize: 40, fontWeight: 900, letterSpacing: '-0.03em', lineHeight: 1.05 }}>New report</h1>
             <p style={{ fontSize: 16, color: 'var(--ink-500)', margin: '8px 0 0', maxWidth: 560 }}>
-              Drop a file. Calo AI reads it and builds your report in about 30 seconds.
+              Describe what you need — Calo AI builds the whole report. No file required.
             </p>
           </div>
           <Btn variant="ghost" onClick={handleBlank}>Blank report</Btn>
         </div>
       </div>
 
-      {phase === 'drop' && (
-        <div
-          {...getRootProps()}
-          style={{
-            background: isDragActive ? 'var(--calo-50)' : '#fff',
-            border: `2px dashed ${isDragActive ? 'var(--calo-500)' : 'var(--ink-300)'}`,
-            borderRadius: 'var(--r-xl)',
-            padding: '72px 40px',
-            textAlign: 'center',
-            cursor: 'pointer',
-            transition: 'all .2s ease',
-            opacity: loading ? 0.6 : 1,
-            pointerEvents: loading ? 'none' : 'auto',
-          }}
-        >
-          <input {...getInputProps()} />
-          {loading ? (
-            <>
-              <div style={{ width: 56, height: 56, margin: '0 auto 20px', borderRadius: 16, background: 'var(--calo-50)', display: 'grid', placeItems: 'center' }}>
-                <div style={{ width: 28, height: 28, borderRadius: 14, border: '3px solid var(--calo-200)', borderTopColor: 'var(--calo-500)', animation: 'spinner 1s linear infinite' }} />
+      {phase === 'start' && (
+        <>
+          {/* CHAT-FIRST — 0 effort: type and go */}
+          <Card padding={24} style={{ position: 'relative', overflow: 'hidden', marginBottom: 16 }}>
+            {/* Tiny corner accent */}
+            <div style={{ position: 'absolute', top: -30, right: -30, width: 180, height: 180, borderRadius: '50%', background: 'var(--calo-50)', opacity: .6, pointerEvents: 'none' }} />
+
+            <div style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>
+              <div style={{ width: 44, height: 44, borderRadius: 14, background: 'linear-gradient(135deg, var(--calo-500), var(--calo-700))', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 14px rgba(2,179,118,.3)' }}>
+                <Icon name="Sparkles" size={22} />
               </div>
-              <div style={{ fontSize: 18, fontWeight: 900, letterSpacing: '-0.02em' }}>Reading your file…</div>
-            </>
-          ) : (
-            <>
-              <div style={{
-                width: 72, height: 72, margin: '0 auto 20px',
-                borderRadius: 20, background: 'var(--calo-50)',
-                color: 'var(--calo-700)',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-              }}>
-                <Icon name="Upload" size={32} />
+              <div style={{ flex: 1 }}>
+                <div className="eyebrow" style={{ marginBottom: 2 }}>FASTEST WAY</div>
+                <div style={{ fontSize: 20, fontWeight: 900, letterSpacing: '-0.02em' }}>Chat with Calo AI</div>
               </div>
-              <div style={{ fontSize: 22, fontWeight: 900, letterSpacing: '-0.02em', marginBottom: 6 }}>Drop your file here</div>
-              <div style={{ fontSize: 14, color: 'var(--ink-500)', marginBottom: 20 }}>
-                or click to browse — Excel, CSV, JSON, or plain text
-              </div>
-              <div style={{
-                display: 'inline-flex', alignItems: 'center', gap: 14,
-                padding: '12px 18px', background: 'var(--ink-50)',
-                borderRadius: 'var(--r-pill)',
-                fontSize: 12, fontWeight: 700, color: 'var(--ink-500)',
-              }}>
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                  <Icon name="Lock" size={12} /> Your data stays private
-                </span>
-                <span style={{ width: 3, height: 3, borderRadius: 2, background: 'var(--ink-400)' }} />
-                <span>Up to 25 MB</span>
-              </div>
-            </>
-          )}
-        </div>
+              <Pill tone="solid" size="sm" icon="Zap">30 sec</Pill>
+            </div>
+
+            <p style={{ position: 'relative', fontSize: 14, color: 'var(--ink-600)', marginBottom: 14, lineHeight: 1.5 }}>
+              Tell me what you need and I'll build the whole report — KPIs, sections, tables, and a summary. No file required.
+            </p>
+
+            <textarea
+              ref={chatTextareaRef}
+              value={chatText}
+              onChange={e => setChatText(e.target.value)}
+              placeholder="e.g. Q1 production report for our 6 KSA kitchens — meals produced, waste %, on-time delivery, NPS. Compare to Q4 2025. Highlight Riyadh's new automation cell."
+              rows={5}
+              disabled={loading}
+              className="input-field"
+              style={{
+                position: 'relative',
+                fontFamily: 'inherit', resize: 'vertical',
+                fontSize: 14, lineHeight: 1.5,
+                padding: 14,
+              }}
+            />
+
+            {/* Quick prompts */}
+            <div style={{ position: 'relative', display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 10 }}>
+              {[
+                'Q1 2026 production report for our KSA kitchens',
+                'Weekly ops review — deliveries, waste, NPS',
+                'HR performance report — headcount, turnover, open roles',
+                'Customer survey summary with NPS trend and top themes',
+                'Marketing monthly — campaign performance, CAC, ROI',
+              ].map(q => (
+                <button
+                  key={q}
+                  onClick={() => setChatText(q)}
+                  disabled={loading}
+                  style={{
+                    padding: '6px 12px', borderRadius: 999,
+                    background: 'var(--ink-50)', color: 'var(--ink-700)',
+                    border: '1px solid var(--ink-200)',
+                    fontSize: 12, fontWeight: 700, cursor: 'pointer',
+                    letterSpacing: '-0.01em',
+                  }}
+                  onMouseEnter={e => { e.currentTarget.style.background = 'var(--calo-50)'; e.currentTarget.style.borderColor = 'var(--calo-200)'; e.currentTarget.style.color = 'var(--calo-800)'; }}
+                  onMouseLeave={e => { e.currentTarget.style.background = 'var(--ink-50)'; e.currentTarget.style.borderColor = 'var(--ink-200)'; e.currentTarget.style.color = 'var(--ink-700)'; }}
+                >
+                  {q}
+                </button>
+              ))}
+            </div>
+
+            {/* Layout quick-picker for chat flow */}
+            <div style={{ position: 'relative', display: 'flex', gap: 10, marginTop: 14, alignItems: 'center', flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 11, fontWeight: 900, color: 'var(--ink-500)', letterSpacing: '.1em', textTransform: 'uppercase' }}>Layout:</span>
+              {[
+                { id: 'editorial', label: 'Editorial' },
+                { id: 'dashboard', label: 'Dashboard' },
+                { id: 'minimal',   label: 'Minimal' },
+                { id: 'brief',     label: 'Brief' },
+              ].map(v => (
+                <button
+                  key={v.id}
+                  onClick={() => setVariant(v.id)}
+                  style={{
+                    padding: '6px 12px', borderRadius: 999,
+                    fontSize: 12, fontWeight: 700, border: 'none', cursor: 'pointer',
+                    background: variant === v.id ? 'var(--ink-900)' : 'var(--ink-100)',
+                    color: variant === v.id ? '#fff' : 'var(--ink-700)',
+                  }}
+                >{v.label}</button>
+              ))}
+            </div>
+
+            <button
+              onClick={handleChatGenerate}
+              disabled={loading || chatText.trim().length < 8}
+              style={{
+                position: 'relative',
+                marginTop: 16, width: '100%',
+                background: chatText.trim().length < 8 ? 'var(--ink-200)' : 'var(--calo-500)',
+                color: chatText.trim().length < 8 ? 'var(--ink-500)' : '#fff',
+                padding: '16px 20px', borderRadius: 'var(--r-pill)',
+                fontSize: 15, fontWeight: 900, letterSpacing: '-0.01em',
+                display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                boxShadow: chatText.trim().length >= 8 ? '0 4px 14px rgba(2,179,118,.35)' : 'none',
+                border: 'none',
+                cursor: chatText.trim().length < 8 ? 'not-allowed' : 'pointer',
+                transition: 'all .15s ease',
+              }}
+            >
+              <Icon name="Sparkles" size={17} />
+              Generate report
+              <Icon name="ArrowRight" size={17} />
+            </button>
+            <div style={{ position: 'relative', textAlign: 'center', marginTop: 8, fontSize: 11, color: 'var(--ink-500)' }}>
+              Runs on Claude Opus · Takes about 20–40 seconds
+            </div>
+          </Card>
+
+          {/* Divider */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, margin: '18px 0' }}>
+            <div style={{ flex: 1, height: 1, background: 'var(--ink-200)' }} />
+            <span style={{ fontSize: 11, fontWeight: 900, color: 'var(--ink-500)', letterSpacing: '.16em', textTransform: 'uppercase' }}>or have data?</span>
+            <div style={{ flex: 1, height: 1, background: 'var(--ink-200)' }} />
+          </div>
+
+          {/* SECONDARY — File upload, compact */}
+          <div
+            {...getRootProps()}
+            style={{
+              background: isDragActive ? 'var(--calo-50)' : '#fff',
+              border: `2px dashed ${isDragActive ? 'var(--calo-500)' : 'var(--ink-300)'}`,
+              borderRadius: 'var(--r-lg)',
+              padding: '32px 28px',
+              textAlign: 'center',
+              cursor: 'pointer',
+              transition: 'all .2s ease',
+              opacity: loading ? 0.6 : 1,
+              pointerEvents: loading ? 'none' : 'auto',
+              display: 'flex', alignItems: 'center', gap: 18, justifyContent: 'center',
+            }}
+          >
+            <input {...getInputProps()} />
+            {loading ? (
+              <>
+                <div style={{ width: 44, height: 44, borderRadius: 14, background: 'var(--calo-50)', display: 'grid', placeItems: 'center' }}>
+                  <div style={{ width: 22, height: 22, borderRadius: 11, border: '3px solid var(--calo-200)', borderTopColor: 'var(--calo-500)', animation: 'spinner 1s linear infinite' }} />
+                </div>
+                <div style={{ fontSize: 15, fontWeight: 900, letterSpacing: '-0.01em' }}>Reading your file…</div>
+              </>
+            ) : (
+              <>
+                <div style={{ width: 48, height: 48, borderRadius: 14, background: 'var(--ink-100)', color: 'var(--ink-700)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                  <Icon name="Upload" size={22} />
+                </div>
+                <div style={{ textAlign: 'left', flex: 1 }}>
+                  <div style={{ fontSize: 15, fontWeight: 900, letterSpacing: '-0.01em' }}>Upload Excel, CSV, JSON or text</div>
+                  <div style={{ fontSize: 12, color: 'var(--ink-500)', marginTop: 2 }}>Drop here or click — up to 25 MB, data stays private</div>
+                </div>
+                <Icon name="ArrowRight" size={18} color="var(--ink-400)" />
+              </>
+            )}
+          </div>
+        </>
       )}
 
       {phase === 'preview' && file && (

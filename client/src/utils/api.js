@@ -126,6 +126,13 @@ class ApiClient {
     });
   }
 
+  async planChat(history, provider) {
+    return this.request('/ai/plan', {
+      method: 'POST',
+      body: JSON.stringify({ history, provider }),
+    });
+  }
+
   async refineSection(reportData, sectionIndex, instruction, provider) {
     return this.request('/ai/refine', {
       method: 'POST',

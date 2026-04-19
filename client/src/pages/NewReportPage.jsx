@@ -123,9 +123,34 @@ export default function NewReportPage() {
   const [style, setStyle] = useState('standard');
   const [variant, setVariant] = useState('editorial'); // visual output layout
 
-  // Chat-first creation: user just types what they need
-  const [chatText, setChatText] = useState('');
-  const [chatTitle, setChatTitle] = useState('');
+  // Chat-first creation: multi-turn conversation before generation
+  const [chatInput, setChatInput] = useState('');
+  const [chatMessages, setChatMessages] = useState([]); // [{ role: 'user'|'ai', content }]
+  const [planning, setPlanning] = useState(false);       // true while /plan is in flight
+  const [planReady, setPlanReady] = useState(false);
+  const [brief, setBrief] = useState('');
+  const [suggestedTitle, setSuggestedTitle] = useState('');
+  const chatMsgsEndRef = useRef(null);
+
+  // LocalStorage-backed personal prompt history
+  const [promptHistory, setPromptHistory] = useState(() => {
+    try {
+      const raw = localStorage.getItem('calo-chat-prompts');
+      return raw ? JSON.parse(raw) : [];
+    } catch { return []; }
+  });
+
+  // LocalStorage-backed default share preference
+  const [shareVisibility, setShareVisibility] = useState(() => {
+    try { return localStorage.getItem('calo-default-share') || 'private'; } catch { return 'private'; }
+  });
+  const [shareUsers, setShareUsers] = useState([]);           // all users (for Specific picker)
+  const [shareSelected, setShareSelected] = useState([]);     // user IDs picked
+  const [shareSearch, setShareSearch] = useState('');
+
+  useEffect(() => {
+    try { localStorage.setItem('calo-default-share', shareVisibility); } catch {}
+  }, [shareVisibility]);
 
   useEffect(() => {
     if (initialMode === 'chat' && chatTextareaRef.current) {
@@ -133,11 +158,43 @@ export default function NewReportPage() {
     }
   }, [initialMode]);
 
-  // Load providers + templates on mount so chat mode has them
+  // Load providers + templates + share users on mount
   useEffect(() => {
     api.getProviders().then(r => setProviders(r.providers || [])).catch(() => {});
     api.getTemplates().then(r => setTemplates(r.templates || [])).catch(() => {});
+    api.getUsersForShare().then(r => setShareUsers(r.users || [])).catch(() => {});
   }, []);
+
+  // Auto-scroll chat when messages grow
+  useEffect(() => { chatMsgsEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [chatMessages, planning]);
+
+  // Remember a successful prompt in localStorage (last 10, deduplicated)
+  const rememberPrompt = useCallback((text) => {
+    const entry = { text, ts: Date.now() };
+    setPromptHistory(prev => {
+      const next = [entry, ...prev.filter(p => p.text !== text)].slice(0, 10);
+      try { localStorage.setItem('calo-chat-prompts', JSON.stringify(next)); } catch {}
+      return next;
+    });
+  }, []);
+
+  const removePromptFromHistory = (text) => {
+    setPromptHistory(prev => {
+      const next = prev.filter(p => p.text !== text);
+      try { localStorage.setItem('calo-chat-prompts', JSON.stringify(next)); } catch {}
+      return next;
+    });
+  };
+
+  const toggleShareUser = (uid) => {
+    setShareSelected(prev => prev.includes(uid) ? prev.filter(x => x !== uid) : [...prev, uid]);
+  };
+
+  const filteredShareUsers = shareUsers.filter(u =>
+    !shareSearch ||
+    u.name.toLowerCase().includes(shareSearch.toLowerCase()) ||
+    u.email.toLowerCase().includes(shareSearch.toLowerCase())
+  );
 
   const onDrop = useCallback(async (accepted) => {
     if (!accepted.length) return;
@@ -241,36 +298,103 @@ export default function NewReportPage() {
     finally { setLoading(false); }
   };
 
-  // Zero-effort entry: user types what they want, AI builds the whole report.
-  // Uses Opus (smart routing defaults analyze → Opus) for quality.
-  const handleChatGenerate = async () => {
-    const text = chatText.trim();
-    if (text.length < 8) { toast.error('Add a bit more detail (at least a sentence)'); return; }
+  // Multi-turn chat state machine — user types, AI asks clarifying Qs (up to 3),
+  // then declares ready:true with a synthesized brief. Frontend then calls
+  // /analyze with the brief to build the report.
+  const handleChatSubmit = async () => {
+    const text = chatInput.trim();
+    if (!text) return;
+    if (planning) return;
+
+    const nextHistory = [...chatMessages, { role: 'user', content: text }];
+    setChatMessages(nextHistory);
+    setChatInput('');
+    setPlanning(true);
+    try {
+      const res = await api.planChat(nextHistory);
+      // Append AI response
+      setChatMessages(prev => [...prev, { role: 'ai', content: res.message || '' }]);
+      if (res.ready) {
+        setPlanReady(true);
+        setBrief(res.brief || text);
+        setSuggestedTitle(res.suggestedTitle || '');
+      }
+    } catch (err) {
+      setChatMessages(prev => [...prev, { role: 'ai', content: 'Sorry — had trouble there. Try again?' }]);
+      toast.error(err.message || 'Plan failed');
+    } finally { setPlanning(false); }
+  };
+
+  const handleChatReset = () => {
+    setChatMessages([]);
+    setPlanReady(false);
+    setBrief('');
+    setSuggestedTitle('');
+    setChatInput('');
+    setTimeout(() => chatTextareaRef.current?.focus(), 50);
+  };
+
+  // When the user clicks "Build report" — take the brief + full convo and
+  // call /analyze to produce the actual report, then create it with the
+  // chosen share preference and navigate to the editor with chat history
+  // preserved for refinement.
+  const handleBuildFromBrief = async () => {
+    const finalBrief = brief || chatMessages.filter(m => m.role === 'user').map(m => m.content).join('\n\n');
+    if (!finalBrief) { toast.error('Need some chat input first'); return; }
+
+    rememberPrompt(chatMessages.find(m => m.role === 'user')?.content || finalBrief.slice(0, 140));
     setPhase('gen');
     setLoading(true);
     try {
-      // Wrap the user's description so the AI knows it's a description, not tabular data
       const dataPayload = {
         mode: 'chat',
-        userDescription: text,
-        note: 'The user provided a plain-English description of the report they want. Synthesize realistic structure, KPIs, sections and plausible placeholder numbers where specific data was not provided. Be helpful — build the full report.',
+        userDescription: finalBrief,
+        conversation: chatMessages.map(m => ({ role: m.role, content: m.content })),
+        note: 'The user had a short planning chat with you. Build the full report from the brief below. Synthesize realistic structure, KPIs, sections and plausible placeholder numbers where specific data was not provided.',
       };
       const res = await api.analyzeData(dataPayload, provider || 'claude-opus', undefined, selectedTemplateId || undefined);
       const aiReport = res.reportData || res.report || {};
-      // Bake user-chosen variant + auto-derived title (from first line) into the report
       aiReport.generalInfo = { ...(aiReport.generalInfo || {}), variant };
-      const derivedTitle = chatTitle.trim() || (aiReport.title || aiReport.generalInfo?.title || (text.split(/\n|[.!?]/)[0] || '').slice(0, 80) || 'Untitled report');
+
+      const firstUserMsg = chatMessages.find(m => m.role === 'user')?.content || finalBrief;
+      const derivedTitle = suggestedTitle ||
+        aiReport.title ||
+        aiReport.generalInfo?.title ||
+        (firstUserMsg.split(/\n|[.!?]/)[0] || '').slice(0, 80) ||
+        'Untitled report';
+
       const createRes = await api.createReport({
         title: derivedTitle,
-        description: 'Created from chat: ' + text.slice(0, 140),
+        description: 'Created from chat: ' + firstUserMsg.slice(0, 140),
         reportData: aiReport,
         sourceFilename: '',
         sourceData: dataPayload,
         aiProvider: provider || 'claude-opus',
         tags: ['from-chat'],
       });
+
+      // Apply chosen share preference
+      if (shareVisibility !== 'private') {
+        try {
+          await api.shareReport(createRes.id, {
+            visibility: shareVisibility,
+            sharedWith: shareVisibility === 'specific' ? shareSelected : [],
+          });
+        } catch (err) {
+          console.warn('Share-preference apply failed:', err);
+        }
+      }
+
       toast.success('Report generated!');
-      navigate(`/reports/${createRes.id}`);
+      // Carry the chat history into the editor so the refinement chat picks up naturally
+      navigate(`/reports/${createRes.id}`, {
+        state: {
+          initialChat: [
+            ...chatMessages,
+            { role: 'ai', content: "Done — your report is ready. What should I adjust?" },
+          ],
+        },
+      });
     } catch (err) {
       toast.error(err.message || 'AI generation failed');
       setPhase('start');
@@ -299,12 +423,13 @@ export default function NewReportPage() {
 
       {phase === 'start' && (
         <>
-          {/* CHAT-FIRST — 0 effort: type and go */}
-          <Card padding={24} style={{ position: 'relative', overflow: 'hidden', marginBottom: 16 }}>
-            {/* Tiny corner accent */}
+          {/* CHAT-FIRST — multi-turn conversation */}
+          <Card padding={0} style={{ position: 'relative', overflow: 'hidden', marginBottom: 16 }}>
+            {/* Corner accent */}
             <div style={{ position: 'absolute', top: -30, right: -30, width: 180, height: 180, borderRadius: '50%', background: 'var(--calo-50)', opacity: .6, pointerEvents: 'none' }} />
 
-            <div style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>
+            {/* Header */}
+            <div style={{ position: 'relative', padding: '20px 24px 16px', display: 'flex', alignItems: 'center', gap: 12, borderBottom: chatMessages.length > 0 ? '1px solid var(--ink-100)' : 'none' }}>
               <div style={{ width: 44, height: 44, borderRadius: 14, background: 'linear-gradient(135deg, var(--calo-500), var(--calo-700))', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 14px rgba(2,179,118,.3)' }}>
                 <Icon name="Sparkles" size={22} />
               </div>
@@ -312,102 +437,285 @@ export default function NewReportPage() {
                 <div className="eyebrow" style={{ marginBottom: 2 }}>FASTEST WAY</div>
                 <div style={{ fontSize: 20, fontWeight: 900, letterSpacing: '-0.02em' }}>Chat with Calo AI</div>
               </div>
-              <Pill tone="solid" size="sm" icon="Zap">30 sec</Pill>
+              {chatMessages.length > 0 && (
+                <button
+                  onClick={handleChatReset}
+                  style={{ padding: '6px 10px', fontSize: 12, fontWeight: 700, color: 'var(--ink-500)', background: 'transparent', border: '1px solid var(--ink-200)', borderRadius: 999, cursor: 'pointer' }}
+                  title="Start over"
+                >
+                  <Icon name="RotateCcw" size={12} /> New
+                </button>
+              )}
             </div>
 
-            <p style={{ position: 'relative', fontSize: 14, color: 'var(--ink-600)', marginBottom: 14, lineHeight: 1.5 }}>
-              Tell me what you need and I'll build the whole report — KPIs, sections, tables, and a summary. No file required.
-            </p>
+            {/* Empty-state intro + suggested prompts */}
+            {chatMessages.length === 0 && (
+              <div style={{ position: 'relative', padding: '4px 24px 16px' }}>
+                <p style={{ fontSize: 14, color: 'var(--ink-600)', marginBottom: 14, lineHeight: 1.5 }}>
+                  Tell me what you need — I might ask a clarifying question, then I'll build the whole report (KPIs, sections, summary, insights).
+                </p>
 
-            <textarea
-              ref={chatTextareaRef}
-              value={chatText}
-              onChange={e => setChatText(e.target.value)}
-              placeholder="e.g. Q1 production report for our 6 KSA kitchens — meals produced, waste %, on-time delivery, NPS. Compare to Q4 2025. Highlight Riyadh's new automation cell."
-              rows={5}
-              disabled={loading}
-              className="input-field"
-              style={{
-                position: 'relative',
-                fontFamily: 'inherit', resize: 'vertical',
-                fontSize: 14, lineHeight: 1.5,
-                padding: 14,
-              }}
-            />
+                {/* User's personal quick-chips (from localStorage) */}
+                {promptHistory.length > 0 && (
+                  <div style={{ marginBottom: 12 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6, fontSize: 11, fontWeight: 900, color: 'var(--ink-500)', letterSpacing: '.08em', textTransform: 'uppercase' }}>
+                      <Icon name="History" size={12} /> Recent prompts
+                    </div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                      {promptHistory.slice(0, 5).map(p => (
+                        <div key={p.ts} style={{ display: 'inline-flex', alignItems: 'center', background: 'var(--calo-50)', border: '1px solid var(--calo-100)', borderRadius: 999, fontSize: 12, fontWeight: 700 }}>
+                          <button
+                            onClick={() => setChatInput(p.text)}
+                            style={{ padding: '6px 4px 6px 12px', background: 'none', border: 'none', color: 'var(--calo-800)', cursor: 'pointer', maxWidth: 280, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', letterSpacing: '-0.01em' }}
+                            title={p.text}
+                          >{p.text}</button>
+                          <button
+                            onClick={() => removePromptFromHistory(p.text)}
+                            style={{ padding: '6px 10px 6px 4px', background: 'none', border: 'none', color: 'var(--calo-700)', cursor: 'pointer', opacity: .6 }}
+                            title="Forget this prompt"
+                          ><Icon name="X" size={11} /></button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
-            {/* Quick prompts */}
-            <div style={{ position: 'relative', display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 10 }}>
-              {[
-                'Q1 2026 production report for our KSA kitchens',
-                'Weekly ops review — deliveries, waste, NPS',
-                'HR performance report — headcount, turnover, open roles',
-                'Customer survey summary with NPS trend and top themes',
-                'Marketing monthly — campaign performance, CAC, ROI',
-              ].map(q => (
+                {/* Hardcoded starter prompts (only if user has no history yet) */}
+                {promptHistory.length === 0 && (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                    {[
+                      'Q1 2026 production report for our KSA kitchens',
+                      'Weekly ops review — deliveries, waste, NPS',
+                      'HR performance report — headcount, turnover, open roles',
+                      'Customer survey summary with NPS trend and top themes',
+                      'Marketing monthly — campaign performance, CAC, ROI',
+                    ].map(q => (
+                      <button
+                        key={q}
+                        onClick={() => setChatInput(q)}
+                        disabled={loading || planning}
+                        style={{
+                          padding: '6px 12px', borderRadius: 999,
+                          background: 'var(--ink-50)', color: 'var(--ink-700)',
+                          border: '1px solid var(--ink-200)',
+                          fontSize: 12, fontWeight: 700, cursor: 'pointer',
+                          letterSpacing: '-0.01em',
+                        }}
+                        onMouseEnter={e => { e.currentTarget.style.background = 'var(--calo-50)'; e.currentTarget.style.borderColor = 'var(--calo-200)'; e.currentTarget.style.color = 'var(--calo-800)'; }}
+                        onMouseLeave={e => { e.currentTarget.style.background = 'var(--ink-50)'; e.currentTarget.style.borderColor = 'var(--ink-200)'; e.currentTarget.style.color = 'var(--ink-700)'; }}
+                      >
+                        {q}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Message thread */}
+            {chatMessages.length > 0 && (
+              <div style={{ position: 'relative', padding: '18px 24px', maxHeight: 360, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 12 }}>
+                {chatMessages.map((m, i) => (
+                  m.role === 'user' ? (
+                    <div key={i} style={{ alignSelf: 'flex-end', maxWidth: '80%' }}>
+                      <div style={{ padding: '10px 14px', background: 'var(--ink-900)', color: '#fff', borderRadius: '14px 14px 2px 14px', fontSize: 13, fontWeight: 700, lineHeight: 1.45 }}>
+                        {m.content}
+                      </div>
+                    </div>
+                  ) : (
+                    <div key={i} style={{ alignSelf: 'flex-start', maxWidth: '80%' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                        <div style={{ width: 18, height: 18, borderRadius: 9, background: 'linear-gradient(135deg, var(--calo-500), var(--calo-700))', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                          <Icon name="Sparkles" size={10} color="#fff" />
+                        </div>
+                        <span style={{ fontSize: 11, fontWeight: 900, color: 'var(--calo-700)' }}>Calo AI</span>
+                      </div>
+                      <div style={{ padding: '10px 14px', background: 'var(--calo-50)', border: '1px solid var(--calo-100)', color: 'var(--calo-900)', borderRadius: '2px 14px 14px 14px', fontSize: 13, lineHeight: 1.5 }}>
+                        {m.content}
+                      </div>
+                    </div>
+                  )
+                ))}
+                {planning && (
+                  <div style={{ alignSelf: 'flex-start', display: 'inline-flex', alignItems: 'center', gap: 8, padding: '10px 14px', background: 'var(--calo-50)', border: '1px solid var(--calo-100)', borderRadius: '2px 14px 14px 14px' }}>
+                    <div style={{ width: 14, height: 14, borderRadius: 7, border: '2px solid var(--calo-500)', borderTopColor: 'transparent', animation: 'spinner 1s linear infinite' }} />
+                    <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--calo-800)' }}>Thinking…</span>
+                  </div>
+                )}
+                <div ref={chatMsgsEndRef} />
+              </div>
+            )}
+
+            {/* Ready-to-build bar */}
+            {planReady && (
+              <div style={{ position: 'relative', padding: '14px 24px', borderTop: '1px solid var(--ink-100)', background: '#FAFAF7', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                <Pill tone="solid" size="sm" icon="Check">Ready</Pill>
+                <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--ink-700)', flex: 1, minWidth: 160 }}>
+                  {suggestedTitle ? `"${suggestedTitle}"` : 'Ready to build'}
+                </span>
                 <button
-                  key={q}
-                  onClick={() => setChatText(q)}
+                  onClick={handleBuildFromBrief}
                   disabled={loading}
                   style={{
-                    padding: '6px 12px', borderRadius: 999,
-                    background: 'var(--ink-50)', color: 'var(--ink-700)',
-                    border: '1px solid var(--ink-200)',
-                    fontSize: 12, fontWeight: 700, cursor: 'pointer',
-                    letterSpacing: '-0.01em',
+                    background: 'var(--calo-500)', color: '#fff',
+                    padding: '11px 20px', borderRadius: 999,
+                    fontSize: 14, fontWeight: 900, letterSpacing: '-0.01em',
+                    display: 'inline-flex', alignItems: 'center', gap: 8,
+                    boxShadow: '0 4px 14px rgba(2,179,118,.35)',
+                    border: 'none', cursor: 'pointer',
                   }}
-                  onMouseEnter={e => { e.currentTarget.style.background = 'var(--calo-50)'; e.currentTarget.style.borderColor = 'var(--calo-200)'; e.currentTarget.style.color = 'var(--calo-800)'; }}
-                  onMouseLeave={e => { e.currentTarget.style.background = 'var(--ink-50)'; e.currentTarget.style.borderColor = 'var(--ink-200)'; e.currentTarget.style.color = 'var(--ink-700)'; }}
                 >
-                  {q}
+                  <Icon name="Sparkles" size={15} />
+                  Build report
+                  <Icon name="ArrowRight" size={15} />
                 </button>
-              ))}
-            </div>
+              </div>
+            )}
 
-            {/* Layout quick-picker for chat flow */}
-            <div style={{ position: 'relative', display: 'flex', gap: 10, marginTop: 14, alignItems: 'center', flexWrap: 'wrap' }}>
-              <span style={{ fontSize: 11, fontWeight: 900, color: 'var(--ink-500)', letterSpacing: '.1em', textTransform: 'uppercase' }}>Layout:</span>
-              {[
-                { id: 'editorial', label: 'Editorial' },
-                { id: 'dashboard', label: 'Dashboard' },
-                { id: 'minimal',   label: 'Minimal' },
-                { id: 'brief',     label: 'Brief' },
-              ].map(v => (
-                <button
-                  key={v.id}
-                  onClick={() => setVariant(v.id)}
-                  style={{
-                    padding: '6px 12px', borderRadius: 999,
-                    fontSize: 12, fontWeight: 700, border: 'none', cursor: 'pointer',
-                    background: variant === v.id ? 'var(--ink-900)' : 'var(--ink-100)',
-                    color: variant === v.id ? '#fff' : 'var(--ink-700)',
+            {/* Input bar */}
+            <div style={{ position: 'relative', padding: '12px 16px', borderTop: '1px solid var(--ink-100)', background: '#fff' }}>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
+                <textarea
+                  ref={chatTextareaRef}
+                  value={chatInput}
+                  onChange={e => setChatInput(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      handleChatSubmit();
+                    }
                   }}
-                >{v.label}</button>
-              ))}
+                  placeholder={chatMessages.length === 0 ? "e.g. Q1 production report for our 6 KSA kitchens…" : "Type your reply… (⏎ to send, ⇧⏎ for new line)"}
+                  rows={chatMessages.length === 0 ? 3 : 1}
+                  disabled={loading || planning}
+                  className="input-field"
+                  style={{
+                    flex: 1,
+                    fontFamily: 'inherit', resize: 'none',
+                    fontSize: 14, lineHeight: 1.5, padding: 12,
+                    maxHeight: 140,
+                  }}
+                />
+                <button
+                  onClick={handleChatSubmit}
+                  disabled={loading || planning || !chatInput.trim()}
+                  style={{
+                    background: !chatInput.trim() ? 'var(--ink-200)' : 'var(--calo-500)',
+                    color: !chatInput.trim() ? 'var(--ink-500)' : '#fff',
+                    padding: '11px 16px', borderRadius: 999,
+                    border: 'none', cursor: !chatInput.trim() ? 'not-allowed' : 'pointer',
+                    display: 'inline-flex', alignItems: 'center', gap: 6,
+                    fontSize: 13, fontWeight: 900,
+                  }}
+                >
+                  <Icon name="ArrowUp" size={14} />
+                  Send
+                </button>
+              </div>
             </div>
 
-            <button
-              onClick={handleChatGenerate}
-              disabled={loading || chatText.trim().length < 8}
-              style={{
-                position: 'relative',
-                marginTop: 16, width: '100%',
-                background: chatText.trim().length < 8 ? 'var(--ink-200)' : 'var(--calo-500)',
-                color: chatText.trim().length < 8 ? 'var(--ink-500)' : '#fff',
-                padding: '16px 20px', borderRadius: 'var(--r-pill)',
-                fontSize: 15, fontWeight: 900, letterSpacing: '-0.01em',
-                display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-                boxShadow: chatText.trim().length >= 8 ? '0 4px 14px rgba(2,179,118,.35)' : 'none',
-                border: 'none',
-                cursor: chatText.trim().length < 8 ? 'not-allowed' : 'pointer',
-                transition: 'all .15s ease',
-              }}
-            >
-              <Icon name="Sparkles" size={17} />
-              Generate report
-              <Icon name="ArrowRight" size={17} />
-            </button>
-            <div style={{ position: 'relative', textAlign: 'center', marginTop: 8, fontSize: 11, color: 'var(--ink-500)' }}>
-              Runs on Claude Opus · Takes about 20–40 seconds
+            {/* Layout picker + share preference — always visible */}
+            <div style={{ position: 'relative', padding: '12px 24px 18px', borderTop: '1px solid var(--ink-100)', background: '#FAFAF7' }}>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                <span style={{ fontSize: 11, fontWeight: 900, color: 'var(--ink-500)', letterSpacing: '.1em', textTransform: 'uppercase' }}>Layout</span>
+                {[
+                  { id: 'editorial', label: 'Editorial' },
+                  { id: 'dashboard', label: 'Dashboard' },
+                  { id: 'minimal',   label: 'Minimal' },
+                  { id: 'brief',     label: 'Brief' },
+                ].map(v => (
+                  <button
+                    key={v.id}
+                    onClick={() => setVariant(v.id)}
+                    style={{
+                      padding: '6px 12px', borderRadius: 999,
+                      fontSize: 12, fontWeight: 700, border: 'none', cursor: 'pointer',
+                      background: variant === v.id ? 'var(--ink-900)' : '#fff',
+                      color: variant === v.id ? '#fff' : 'var(--ink-700)',
+                      boxShadow: variant === v.id ? 'none' : 'inset 0 0 0 1px var(--ink-200)',
+                    }}
+                  >{v.label}</button>
+                ))}
+              </div>
+
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 10 }}>
+                <span style={{ fontSize: 11, fontWeight: 900, color: 'var(--ink-500)', letterSpacing: '.1em', textTransform: 'uppercase' }}>Share</span>
+                {[
+                  { id: 'private',  label: 'Private',       icon: 'LockKeyhole',  desc: 'Only me + admins' },
+                  { id: 'shared',   label: 'Whole team',    icon: 'Users',        desc: 'Everyone on Calo' },
+                  { id: 'specific', label: 'Specific people', icon: 'UserCheck',  desc: 'Pick who can view' },
+                ].map(s => (
+                  <button
+                    key={s.id}
+                    onClick={() => setShareVisibility(s.id)}
+                    title={s.desc}
+                    style={{
+                      padding: '6px 12px', borderRadius: 999,
+                      fontSize: 12, fontWeight: 700, border: 'none', cursor: 'pointer',
+                      background: shareVisibility === s.id ? 'var(--ink-900)' : '#fff',
+                      color: shareVisibility === s.id ? '#fff' : 'var(--ink-700)',
+                      boxShadow: shareVisibility === s.id ? 'none' : 'inset 0 0 0 1px var(--ink-200)',
+                      display: 'inline-flex', alignItems: 'center', gap: 5,
+                    }}
+                  >
+                    <Icon name={s.icon} size={12} />
+                    {s.label}
+                  </button>
+                ))}
+                <span style={{ fontSize: 11, color: 'var(--ink-400)', fontWeight: 700, marginLeft: 'auto' }}>
+                  Saved as your default
+                </span>
+              </div>
+
+              {/* Specific-user picker */}
+              {shareVisibility === 'specific' && (
+                <div style={{ marginTop: 10, padding: 10, background: '#fff', border: '1px solid var(--ink-200)', borderRadius: 12 }}>
+                  <div style={{ position: 'relative', marginBottom: 8 }}>
+                    <Icon name="Search" size={13} color="var(--ink-400)" style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)' }} />
+                    <input
+                      type="text"
+                      value={shareSearch}
+                      onChange={e => setShareSearch(e.target.value)}
+                      placeholder="Search people by name or email"
+                      className="input-field"
+                      style={{ paddingLeft: 32, fontSize: 13 }}
+                    />
+                  </div>
+                  <div style={{ maxHeight: 180, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 2 }}>
+                    {filteredShareUsers.length === 0 && (
+                      <div style={{ padding: 12, textAlign: 'center', fontSize: 12, color: 'var(--ink-400)' }}>No people found.</div>
+                    )}
+                    {filteredShareUsers.map(u => {
+                      const checked = shareSelected.includes(u.id);
+                      return (
+                        <label key={u.id} style={{
+                          display: 'flex', alignItems: 'center', gap: 10,
+                          padding: '8px 10px', borderRadius: 8, cursor: 'pointer',
+                          background: checked ? 'var(--calo-50)' : 'transparent',
+                          border: checked ? '1px solid var(--calo-200)' : '1px solid transparent',
+                        }}>
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => toggleShareUser(u.id)}
+                            style={{ accentColor: 'var(--calo-500)' }}
+                          />
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--ink-900)' }}>{u.name}</div>
+                            <div style={{ fontSize: 11, color: 'var(--ink-500)' }}>{u.email}</div>
+                          </div>
+                          {u.department && <span style={{ fontSize: 11, padding: '2px 8px', background: 'var(--ink-100)', color: 'var(--ink-600)', borderRadius: 999, fontWeight: 700 }}>{u.department}</span>}
+                        </label>
+                      );
+                    })}
+                  </div>
+                  {shareSelected.length > 0 && (
+                    <div style={{ marginTop: 8, fontSize: 11, color: 'var(--calo-700)', fontWeight: 700 }}>
+                      {shareSelected.length} person{shareSelected.length === 1 ? '' : 's'} selected
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </Card>
 

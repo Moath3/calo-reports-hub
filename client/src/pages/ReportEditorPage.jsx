@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import api from '../utils/api';
 import toast from 'react-hot-toast';
 import {
@@ -388,12 +388,27 @@ function Field({ label, value, onChange, type = 'text' }) {
 export default function ReportEditorPage() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
+
+  // If we arrived from the chat-first creation flow, useLocation().state carries
+  // { initialChat: [...messages] } — seed the AI tab with that history and open
+  // the AI tab by default so refinement feels like a continuation.
+  const initialChatFromState = location.state?.initialChat || null;
+
   const [report, setReport] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [tab, setTab] = useState('sections');
+  const [tab, setTab] = useState(initialChatFromState ? 'ai' : 'sections');
   const [aiMsg, setAiMsg] = useState('');
-  const [aiChat, setAiChat] = useState([]);
+  const [aiChat, setAiChat] = useState(() => {
+    if (!initialChatFromState) return [];
+    // Normalize shape: editor uses { role: 'user'|'assistant', content }
+    return initialChatFromState.map(m => ({
+      role: m.role === 'ai' ? 'assistant' : m.role,
+      content: m.content,
+      hasUpdates: false,
+    }));
+  });
   const [aiLoading, setAiLoading] = useState(false);
   const [showAddBlock, setShowAddBlock] = useState(false);
   const [aiProvider, setAiProvider] = useState(''); // '' = auto (smart routing: Sonnet for chat)
@@ -411,7 +426,11 @@ export default function ReportEditorPage() {
     api.getProviders()
       .then(res => { setAiProviders(res.providers || []); })
       .catch(() => {});
-  }, [id, navigate]);
+    // Clear navigation state so browser back/refresh doesn't re-seed
+    if (initialChatFromState) {
+      window.history.replaceState({}, '');
+    }
+  }, [id, navigate, initialChatFromState]);
 
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [aiChat]);
 

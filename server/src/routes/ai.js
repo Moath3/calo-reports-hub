@@ -2,7 +2,7 @@ import { Router } from "express";
 import { getDb } from "../db/database.js";
 import { requireAuth } from "../middleware/auth.js";
 import {
-  callAI, buildReportSystemPrompt, buildChatSystemPrompt, buildRefineSystemPrompt,
+  callAI, buildReportSystemPrompt, buildChatSystemPrompt, buildRefineSystemPrompt, buildPlanSystemPrompt,
   getAvailableProviders, extractJSON,
 } from "../services/aiService.js";
 
@@ -137,6 +137,42 @@ router.post("/refine", requireAuth, async (req, res) => {
   } catch (err) {
     console.error("AI refine error:", err);
     res.status(500).json({ error: "AI refinement failed: " + err.message });
+  }
+});
+
+// POST /plan — multi-turn clarification chat BEFORE generation
+// Sonnet (fast) because clarifying questions don't need Opus-level reasoning.
+router.post("/plan", requireAuth, async (req, res) => {
+  try {
+    const { history, provider } = req.body;
+    if (!Array.isArray(history) || history.length === 0) {
+      return res.status(400).json({ error: "history is required (array of messages)" });
+    }
+
+    const systemPrompt = buildPlanSystemPrompt();
+    const convo = history.slice(-8).map(m => `${m.role === 'ai' ? 'Assistant' : 'User'}: ${m.content}`).join("\n\n");
+    const userMessage = "Conversation so far:\n\n" + convo + "\n\nReply with your JSON response.";
+
+    const startTime = Date.now();
+    const result = await callAI(provider, systemPrompt, userMessage, { requestType: "chat" });
+    const duration = Date.now() - startTime;
+
+    const parsed = extractJSON(result.text);
+    if (!parsed) {
+      return res.status(422).json({ error: "AI did not return valid plan JSON.", rawResponse: (result.text || "").slice(0, 1000) });
+    }
+
+    logUsage(req.user.id, provider, result, "chat", duration);
+    res.json({
+      message: parsed.message || '',
+      ready: parsed.ready === true,
+      brief: parsed.brief || '',
+      suggestedTitle: parsed.suggestedTitle || '',
+      model: result.model,
+    });
+  } catch (err) {
+    console.error("AI plan error:", err);
+    res.status(500).json({ error: "AI plan failed: " + err.message });
   }
 });
 

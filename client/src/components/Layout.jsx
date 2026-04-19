@@ -7,8 +7,8 @@ import { Menu, X, LogOut, Settings as SettingsIcon } from 'lucide-react';
 
 const mainNav = [
   { to: '/',           icon: 'Home',            label: 'Home' },
-  { to: '/reports',    icon: 'FolderOpen',      label: 'My Reports' },
   { to: '/new',        icon: 'Plus',            label: 'New Report', accent: true },
+  { to: '/reports',    icon: 'FolderOpen',      label: 'My Reports' },
   { to: '/templates',  icon: 'LayoutTemplate',  label: 'Templates' },
 ];
 

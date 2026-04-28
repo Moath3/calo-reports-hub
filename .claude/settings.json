@@ -5,8 +5,8 @@
         "matcher": "Edit|Write",
         "hooks": [
           {
-            "type": "intercept",
-            "command": "node -e \"const t=process.env.TOOL_INPUT||'{}';try{const o=JSON.parse(t);const f=o.file_path||o.filePath||'';if(/(\\.env|\\.db$|credentials|secrets\\.|\\.key$)/.test(f)){console.log('BLOCK: Cannot edit sensitive files (.env, .db, credentials, secrets, .key)');process.exit(1)}}catch(e){}\""
+            "type": "command",
+            "command": "node -e \"let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{try{const f=(JSON.parse(d).tool_input||{}).file_path||'';if(/(\\.env|\\.db$|credentials|secrets\\.|\\.key$)/.test(f)){console.error('BLOCK: sensitive file '+f);process.exit(2)}}catch(e){}})\""
           }
         ]
       }
@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node -e \"const t=process.env.TOOL_INPUT||'{}';try{const o=JSON.parse(t);const f=o.file_path||o.filePath||'';if(/\\.(js|jsx|ts|tsx|json|css|md)$/.test(f)){require('child_process').execSync('npx prettier --write '+JSON.stringify(f),{stdio:'ignore'})};}catch(e){}\""
+            "command": "node -e \"let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{try{const f=(JSON.parse(d).tool_input||{}).file_path||'';if(/\\.(js|jsx|ts|tsx|json|css|md)$/.test(f)){require('child_process').execSync('npx prettier --write '+JSON.stringify(f),{stdio:'ignore'})}}catch(e){}})\""
           }
         ]
       }

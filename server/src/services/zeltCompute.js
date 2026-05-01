@@ -387,31 +387,39 @@ function readEntity(u) {
   );
 }
 
-// Debug helper: returns one user with all top-level keys masked except names of fields,
-// so we can identify field shape without leaking data. Used by /api/zelt/debug/sample.
+// Debug helper. Returns FULL raw shape of first user — admin only, HR data
+// is already what this app exposes. Used to map field paths.
 export async function debugSampleUser() {
   const users = await fetchUsersFirstPages(1);
   if (!users.length) return { error: 'No users returned' };
   const u = users[0];
-  const shape = describeShape(u);
+  // Find any keys that mention "id", "allowance", "days", "leave", "employee"
+  // anywhere in the object — case-insensitive — to spot what we're missing.
+  const interesting = findKeysByPattern(u, /id|allowance|days|leave|employee|contract/i);
   return {
-    sampleKeys: Object.keys(u),
-    shape,
+    rawUser: u,
     extracted: {
       userId: u.userId || u.id,
       employeeId: readEmployeeId(u),
       name: readName(u),
       entity: readEntity(u),
-      hasUserContract: !!u.userContract,
-      hasRole: !!u.role,
-      hasLifecycle: !!u.lifecycle,
-      allowanceCandidates: {
-        userContractAllowance: u?.userContract?.allowance,
-        contractAllowance: u?.contract?.allowance,
-        allowance: u?.allowance,
-      },
     },
+    keysContainingIdOrAllowance: interesting,
   };
+}
+
+function findKeysByPattern(obj, re, prefix = '', depth = 0, acc = []) {
+  if (depth > 4 || obj === null || typeof obj !== 'object') return acc;
+  for (const [k, v] of Object.entries(obj)) {
+    const path = prefix ? `${prefix}.${k}` : k;
+    if (re.test(k)) {
+      acc.push({ path, value: typeof v === 'object' && v !== null ? '[object]' : v });
+    }
+    if (typeof v === 'object' && v !== null) {
+      findKeysByPattern(v, re, path, depth + 1, acc);
+    }
+  }
+  return acc;
 }
 
 function describeShape(o, depth = 0) {

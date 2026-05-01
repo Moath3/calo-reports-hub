@@ -17,7 +17,7 @@ import { getDb, persistNow } from '../db/database.js';
 
 const ZELT_BASE = 'https://go.zelt.app';
 const TOKEN_URL = `${ZELT_BASE}/apiv2/oauth/authorize/token`;
-const AUTHORIZE_URL = `${ZELT_BASE}/oauth/authorize`;
+const AUTHORIZE_URL = `${ZELT_BASE}/apiv2/oauth/authorize`;
 const REQUEST_TIMEOUT_MS = 10_000;
 
 // ---- Crypto -----------------------------------------------------------

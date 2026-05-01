@@ -24,6 +24,7 @@ export default function ZeltLeavePage() {
   const [error, setError] = useState(null);
   const [search, setSearch] = useState('');
   const [sort, setSort] = useState({ key: 'name', dir: 'asc' });
+  const [bootstrap, setBootstrap] = useState(null);
 
   // Initial: probe status
   useEffect(() => {
@@ -61,10 +62,20 @@ export default function ZeltLeavePage() {
 
   const handleConnect = useCallback(async () => {
     try {
-      const { authorizeUrl } = await api.zeltOauthInit();
-      window.location.href = authorizeUrl;
+      const instr = await api.zeltOauthInit();
+      setBootstrap(instr);
     } catch (e) {
-      setError(formatErr(e, 'Failed to start OAuth flow'));
+      setError(formatErr(e, 'Failed to fetch bootstrap instructions'));
+    }
+  }, []);
+
+  const handleCheckConnected = useCallback(async () => {
+    try {
+      const s = await api.zeltStatus();
+      setStatus({ loading: false, ...s });
+      if (s.connected) setBootstrap(null);
+    } catch (e) {
+      setError(formatErr(e, 'Status check failed'));
     }
   }, []);
 
@@ -117,7 +128,15 @@ export default function ZeltLeavePage() {
     return (
       <PageWrap>
         <Header />
-        <EmptyConnect onConnect={handleConnect} isAdmin={isAdmin} />
+        {bootstrap ? (
+          <BootstrapCard
+            instructions={bootstrap}
+            onCheck={handleCheckConnected}
+            onCancel={() => setBootstrap(null)}
+          />
+        ) : (
+          <EmptyConnect onConnect={handleConnect} isAdmin={isAdmin} />
+        )}
       </PageWrap>
     );
   }
@@ -273,6 +292,52 @@ function Header({ connected, lastRefresh, onDisconnect }) {
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+function BootstrapCard({ instructions, onCheck, onCancel }) {
+  const [copied, setCopied] = useState(false);
+  const copy = () => {
+    navigator.clipboard.writeText(instructions.redirectUri);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+  return (
+    <div style={{ ...panel, padding: 36 }}>
+      <h2 style={{ fontSize: 22, fontWeight: 900, color: 'var(--ink-900)', margin: '0 0 8px 0', letterSpacing: '-0.02em' }}>
+        Connect Zelt
+      </h2>
+      <p style={{ fontSize: 14, color: 'var(--ink-500)', margin: '0 0 24px' }}>
+        Zelt's authorization is a manual flow. Follow these steps inside Zelt admin:
+      </p>
+
+      <ol style={{ paddingLeft: 22, margin: 0, color: 'var(--ink-900)', lineHeight: 1.7, fontSize: 14 }}>
+        {instructions.steps.map((s, i) => (
+          <li key={i} style={{ marginBottom: 4 }}>{s}</li>
+        ))}
+      </ol>
+
+      <div style={{ marginTop: 24, padding: 16, background: 'var(--ink-50)', borderRadius: 'var(--r-md)', border: '1px solid var(--ink-200)' }}>
+        <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--ink-500)', marginBottom: 8 }}>
+          Redirection URI (must match Zelt app config exactly)
+        </div>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <code style={{ flex: 1, minWidth: 240, padding: '10px 12px', background: '#fff', border: '1px solid var(--ink-200)', borderRadius: 'var(--r-sm)', fontFamily: 'ui-monospace, SFMono-Regular, monospace', fontSize: 12, color: 'var(--ink-900)', overflow: 'auto' }}>
+            {instructions.redirectUri}
+          </code>
+          <button onClick={copy} style={ghostBtn}>{copied ? 'Copied' : 'Copy'}</button>
+        </div>
+      </div>
+
+      <div style={{ marginTop: 24, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        <button onClick={onCheck} style={primaryBtn(false)}>I clicked Allow access — check connection</button>
+        <button onClick={onCancel} style={ghostBtn}>Cancel</button>
+      </div>
+
+      <p style={{ marginTop: 16, fontSize: 12, color: 'var(--ink-500)' }}>
+        Tip: open Zelt in a new tab. After clicking <b>Allow access</b>, you'll land on a "Zelt connected" page — you can close that tab and click the button above.
+      </p>
     </div>
   );
 }

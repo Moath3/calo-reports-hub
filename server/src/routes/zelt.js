@@ -30,10 +30,8 @@ function logZeltAudit(userId, action, details = {}) {
   }
 }
 import {
-  buildAuthorizeUrl,
+  getBootstrapInstructions,
   exchangeCodeForTokens,
-  createOauthState,
-  consumeOauthState,
   getStatus,
   disconnect,
 } from '../services/zeltApi.js';
@@ -55,15 +53,15 @@ const statusLimiter = rateLimit({
 
 // ---- Bootstrap (admin only) ------------------------------------------
 
+// Zelt's flow is manual — return instructions, not a URL to redirect to.
 router.post('/oauth/init', oauthLimiter, requireAuth, requireAdmin, (req, res) => {
   try {
-    const state = createOauthState();
-    const authorizeUrl = buildAuthorizeUrl(state);
+    const instructions = getBootstrapInstructions();
     logZeltAudit(req.user.id, 'zelt.oauth.init');
-    res.json({ authorizeUrl });
+    res.json(instructions);
   } catch (err) {
     console.error('[zelt/oauth/init]', err.message);
-    res.status(500).json({ error: 'Failed to start OAuth flow' });
+    res.status(500).json({ error: 'Failed to fetch bootstrap instructions' });
   }
 });
 
@@ -76,8 +74,13 @@ router.post('/oauth/init', oauthLimiter, requireAuth, requireAdmin, (req, res) =
  *   2. Zelt only redirects to the registered URI
  *   3. The endpoint can only succeed once per state
  */
+// Zelt's manual code flow doesn't pass our `state` param, so state validation is
+// not enforceable on this redirect. Mitigations:
+//   - Bootstrap is rare (one-time per environment)
+//   - Re-bootstrap simply overwrites tokens; no privilege escalation possible
+//   - Admin verifies "Connected" badge in-hub after the flow
 router.get('/oauth/callback', oauthLimiter, async (req, res) => {
-  const { code, state, error } = req.query;
+  const { code, error } = req.query;
 
   if (error) {
     console.error('[zelt/oauth/callback] zelt rejected:', error);
@@ -87,18 +90,10 @@ router.get('/oauth/callback', oauthLimiter, async (req, res) => {
     }));
   }
 
-  if (!code || !state) {
+  if (!code) {
     return res.status(400).send(renderCallbackPage({
       ok: false,
-      message: 'Missing code or state in callback. Restart from the hub.',
-    }));
-  }
-
-  if (!consumeOauthState(state)) {
-    console.warn('[zelt/oauth/callback] state rejected', { state: String(state).slice(0, 8) });
-    return res.status(400).send(renderCallbackPage({
-      ok: false,
-      message: 'Invalid, expired, or already-used state token. Restart from the hub.',
+      message: 'Missing authorization code. Restart from Zelt admin and click "Code flow" → "Allow access".',
     }));
   }
 

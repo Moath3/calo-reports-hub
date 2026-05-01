@@ -198,12 +198,13 @@ const USERS_ENDPOINT_CANDIDATES = [
 ];
 let resolvedUsersEndpoint = null;
 
-// Try these for legal entities directly — much faster than scanning all users.
+// Try these for legal entities directly. NOTE: /apiv2/partner/sites returns
+// SITES (KSA Production, Jeddah Production), not legal entities (Mountain Peak
+// KSA, Basecamp KSA). Excluded — we want entities, not sites.
 const ENTITY_ENDPOINT_CANDIDATES = [
   '/apiv2/partner/entities',
   '/apiv2/partner/legal-entities',
   '/apiv2/partner/companies/entities',
-  '/apiv2/partner/sites',
 ];
 
 async function fetchUsersFirstPages(maxPages) {

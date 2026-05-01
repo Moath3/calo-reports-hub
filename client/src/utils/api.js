@@ -43,6 +43,21 @@ class ApiClient {
       return res.blob();
     }
 
+    // If the upstream proxy / render returns HTML (timeout, 502, etc), JSON.parse
+    // chokes with a useless 'Unexpected token <' message. Detect and translate.
+    const ct = res.headers.get('content-type') || '';
+    if (!ct.includes('application/json')) {
+      const text = await res.text();
+      const isHtml = /<!doctype|<html/i.test(text);
+      const error = new Error(
+        isHtml
+          ? `Server returned HTML instead of JSON (likely a timeout or proxy error). Status ${res.status}.`
+          : `Unexpected response (status ${res.status})`
+      );
+      error.status = res.status;
+      throw error;
+    }
+
     const data = await res.json();
 
     if (!res.ok) {

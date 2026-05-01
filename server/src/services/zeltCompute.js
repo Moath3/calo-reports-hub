@@ -234,13 +234,16 @@ async function fetchAllUsers() {
 }
 
 async function fetchAbsencesByUser(userIds) {
-  // Batch in chunks of 50 user ids per request (comma-separated per Zelt docs).
   const map = new Map();
   if (!userIds.length) return map;
 
   const year = new Date().getFullYear();
-  for (let i = 0; i < userIds.length; i += 50) {
-    const chunk = userIds.slice(i, i + 50);
+  // Run chunks IN PARALLEL — was serial, costing 5-10s per chunk × N chunks.
+  const chunks = [];
+  for (let i = 0; i < userIds.length; i += 50) chunks.push(userIds.slice(i, i + 50));
+
+  const results = await Promise.all(chunks.map(async (chunk) => {
+    const all = [];
     let page = 1;
     while (true) {
       const json = await zeltGet('/apiv2/partner/absences', {
@@ -250,13 +253,7 @@ async function fetchAbsencesByUser(userIds) {
         pageSize: PAGE_SIZE,
       });
       const items = json.items || json.data || (Array.isArray(json) ? json : []);
-      for (const ab of items) {
-        const uid = ab.userId || ab.user?.id || ab.user;
-        if (uid == null) continue;
-        const arr = map.get(uid) || [];
-        arr.push(ab);
-        map.set(uid, arr);
-      }
+      all.push(...items);
       const totalPages = json.totalPages ?? null;
       if (totalPages != null) {
         if (page >= totalPages) break;
@@ -265,6 +262,17 @@ async function fetchAbsencesByUser(userIds) {
       }
       page++;
       if (page > 50) break;
+    }
+    return all;
+  }));
+
+  for (const items of results) {
+    for (const ab of items) {
+      const uid = ab.userId || ab.user?.id || ab.user;
+      if (uid == null) continue;
+      const arr = map.get(uid) || [];
+      arr.push(ab);
+      map.set(uid, arr);
     }
   }
   return map;

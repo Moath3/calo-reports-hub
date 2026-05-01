@@ -76,12 +76,20 @@ export async function getBalancesForEntity(entityName) {
   const yearStart = new Date(new Date().getFullYear(), 0, 1);
   const yearEnd = new Date(new Date().getFullYear(), 11, 31, 23, 59, 59);
 
+  // Dedupe — partner endpoint sometimes returns one row per contract.
+  const seen = new Map();
+  for (const u of users) {
+    const k = u.userId || u.id || u.employeeId || u.basicInfo?.employeeId || JSON.stringify(u).slice(0, 40);
+    if (!seen.has(k)) seen.set(k, u);
+  }
+  const deduped = Array.from(seen.values());
+
   // Filter to currently employed in the requested entity
-  const targets = users.filter(u => {
-    const status = u?.accountStatus || u?.status;
-    if (status === 'Deactivated') return false;
-    if (u?.leaveDate) return false; // mid-termination — exclude per locked scope rule
-    const e = u?.userContract?.entity?.legalName || u?.entity?.legalName || u?.entity;
+  const targets = deduped.filter(u => {
+    const status = u?.accountStatus || u?.status || u?.lifecycle?.status;
+    if (status === 'Deactivated' || status === 'Terminated') return false;
+    if (u?.leaveDate || u?.lifecycle?.leaveDate) return false;
+    const e = readEntity(u);
     return e && e.toLowerCase().trim() === key;
   });
 
@@ -91,8 +99,17 @@ export async function getBalancesForEntity(entityName) {
   const today = new Date();
   const rows = targets.map(u => {
     const userId = u.userId || u.id;
-    const allowance = numberOr(u?.userContract?.allowance ?? u?.allowance, null);
-    const carryOver = numberOr(u?.carryOver ?? u?.userContract?.carryOver, 0);
+    const allowance = numberOr(
+      u?.userContract?.allowance ??
+      u?.contract?.allowance ??
+      u?.allowance ??
+      u?.absencePolicy?.allowance,
+      null
+    );
+    const carryOver = numberOr(
+      u?.carryOver ?? u?.userContract?.carryOver ?? u?.absencePolicy?.carryOver,
+      0
+    );
     const userAbs = absencesByUser.get(userId) || [];
 
     let history = 0;
@@ -104,7 +121,7 @@ export async function getBalancesForEntity(entityName) {
       if (days <= 0) continue;
       const start = parseDateSafe(ab.start || ab.startDate);
       if (!start) { confidence = 'medium'; continue; }
-      if (!isAnnualLeave(ab)) continue; // only annual vacation reduces this balance
+      if (!isAnnualLeave(ab)) continue;
       if (start <= today) history += days;
       else upcoming += days;
     }
@@ -117,13 +134,13 @@ export async function getBalancesForEntity(entityName) {
     }
 
     return {
-      employeeId: u.employeeId || null,
+      employeeId: readEmployeeId(u),
       userId,
-      name: u.displayName || `${u.firstName || ''} ${u.lastName || ''}`.trim(),
-      site: u?.role?.site?.name || u?.site || null,
-      department: u?.role?.department?.name || u?.department || null,
-      jobTitle: u?.role?.jobPosition?.title || u?.jobTitle || null,
-      startDate: u.startDate || null,
+      name: readName(u),
+      site: u?.role?.site?.name || u?.site?.name || u?.site || null,
+      department: u?.role?.department?.name || u?.department?.name || u?.department || null,
+      jobTitle: u?.role?.jobPosition?.title || u?.jobTitle || u?.position || null,
+      startDate: u.startDate || u?.lifecycle?.startDate || null,
       allowance,
       carryOver,
       history: round1(history),
@@ -310,4 +327,76 @@ function numberOr(v, fallback) {
 function round1(v) {
   if (v == null || isNaN(v)) return v;
   return Math.round(v * 10) / 10;
+}
+
+function readEmployeeId(u) {
+  return (
+    u?.employeeId ??
+    u?.employeeNumber ??
+    u?.externalId ??
+    u?.basicInfo?.employeeId ??
+    u?.basic?.employeeId ??
+    u?.userBasic?.employeeId ??
+    null
+  );
+}
+
+function readName(u) {
+  if (u?.displayName) return u.displayName;
+  if (u?.fullName) return u.fullName;
+  if (u?.name) return u.name;
+  const fn = u?.firstName || u?.basicInfo?.firstName || u?.userBasic?.firstName || '';
+  const ln = u?.lastName || u?.basicInfo?.lastName || u?.userBasic?.lastName || '';
+  const composed = `${fn} ${ln}`.trim();
+  return composed || '(unnamed)';
+}
+
+function readEntity(u) {
+  return (
+    u?.userContract?.entity?.legalName ??
+    u?.contract?.entity?.legalName ??
+    u?.entity?.legalName ??
+    (typeof u?.entity === 'string' ? u.entity : null) ??
+    u?.legalEntity?.name ??
+    null
+  );
+}
+
+// Debug helper: returns one user with all top-level keys masked except names of fields,
+// so we can identify field shape without leaking data. Used by /api/zelt/debug/sample.
+export async function debugSampleUser() {
+  const users = await fetchUsersFirstPages(1);
+  if (!users.length) return { error: 'No users returned' };
+  const u = users[0];
+  const shape = describeShape(u);
+  return {
+    sampleKeys: Object.keys(u),
+    shape,
+    extracted: {
+      userId: u.userId || u.id,
+      employeeId: readEmployeeId(u),
+      name: readName(u),
+      entity: readEntity(u),
+      hasUserContract: !!u.userContract,
+      hasRole: !!u.role,
+      hasLifecycle: !!u.lifecycle,
+      allowanceCandidates: {
+        userContractAllowance: u?.userContract?.allowance,
+        contractAllowance: u?.contract?.allowance,
+        allowance: u?.allowance,
+      },
+    },
+  };
+}
+
+function describeShape(o, depth = 0) {
+  if (depth > 3) return '…';
+  if (o === null) return 'null';
+  if (Array.isArray(o)) return `array[${o.length}]`;
+  if (typeof o !== 'object') return typeof o;
+  const out = {};
+  for (const [k, v] of Object.entries(o)) {
+    out[k] = describeShape(v, depth + 1);
+  }
+  return out;
 }

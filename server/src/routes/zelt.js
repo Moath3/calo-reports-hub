@@ -35,7 +35,7 @@ import {
   getStatus,
   disconnect,
 } from '../services/zeltApi.js';
-import { listEntities, getBalancesForEntity, clearCaches } from '../services/zeltCompute.js';
+import { listEntities, getBalancesForEntity, clearCaches, debugSampleUser } from '../services/zeltCompute.js';
 
 const router = Router();
 
@@ -196,6 +196,19 @@ router.post('/balances/export', dataLimiter, requireAuth, async (req, res) => {
 router.post('/cache/clear', oauthLimiter, requireAuth, requireAdmin, (req, res) => {
   clearCaches();
   res.json({ ok: true });
+});
+
+// Admin-only: returns the shape of one user record from Zelt for debugging
+// field-name mismatches. No PII shape: only key names are returned, plus
+// our extracted-field results so admin can see what we're reading.
+router.get('/debug/sample', oauthLimiter, requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const sample = await debugSampleUser();
+    res.json(sample);
+  } catch (err) {
+    console.error('[zelt/debug/sample]', err.message);
+    res.status(500).json({ error: 'Sample failed', detail: err.message });
+  }
 });
 
 function toCsv(rows) {

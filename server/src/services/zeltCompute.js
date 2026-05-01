@@ -16,7 +16,7 @@
  */
 import { zeltGet } from './zeltApi.js';
 
-const ENTITIES_TTL_MS = 60 * 60 * 1000;
+const ENTITIES_TTL_MS = 6 * 60 * 60 * 1000; // 6h — entities barely change
 const BALANCES_TTL_MS = 5 * 60 * 1000;
 const PAGE_SIZE = 100;
 
@@ -31,7 +31,32 @@ export async function listEntities() {
   if (cache.entities.value && cache.entities.expiresAt > Date.now()) {
     return cache.entities.value;
   }
-  const users = await fetchAllUsers();
+  // Try a dedicated endpoint first — much faster than scanning all users.
+  for (const path of ENTITY_ENDPOINT_CANDIDATES) {
+    try {
+      const data = await zeltGet(path, { page: 1, pageSize: 200 });
+      const items = data.items || data.data || (Array.isArray(data) ? data : null);
+      if (items && items.length > 0) {
+        const set = new Set();
+        for (const it of items) {
+          const e = it.legalName || it.name || it.entity?.legalName;
+          if (e && typeof e === 'string') set.add(e.trim());
+        }
+        if (set.size > 0) {
+          const entities = Array.from(set).sort();
+          cache.entities = { value: entities, expiresAt: Date.now() + ENTITIES_TTL_MS };
+          console.log(`[zelt] entities loaded from ${path} (${entities.length} entities)`);
+          return entities;
+        }
+      }
+    } catch (err) {
+      console.warn(`[zelt] entities endpoint ${path} failed: ${err.status || ''} ${err.message}`);
+    }
+  }
+
+  // Fallback: scan users but cap at 5 pages (500 users) — usually enough to surface all entity names.
+  console.log('[zelt] no dedicated entity endpoint, falling back to user scan (capped at 500 users)');
+  const users = await fetchUsersFirstPages(5);
   const set = new Set();
   for (const u of users) {
     const e = u?.userContract?.entity?.legalName || u?.entity?.legalName || u?.entity;
@@ -131,6 +156,38 @@ const USERS_ENDPOINT_CANDIDATES = [
   '/apiv2/users/cache',
 ];
 let resolvedUsersEndpoint = null;
+
+// Try these for legal entities directly — much faster than scanning all users.
+const ENTITY_ENDPOINT_CANDIDATES = [
+  '/apiv2/partner/entities',
+  '/apiv2/partner/legal-entities',
+  '/apiv2/partner/companies/entities',
+  '/apiv2/partner/sites',
+];
+
+async function fetchUsersFirstPages(maxPages) {
+  const all = [];
+  if (!resolvedUsersEndpoint) {
+    // Run probe inline (same logic as fetchAllUsers, but cap pages).
+    for (const path of USERS_ENDPOINT_CANDIDATES) {
+      try {
+        const probe = await zeltGet(path, { page: 1, pageSize: 1 });
+        const items = probe.items || probe.data || (Array.isArray(probe) ? probe : null);
+        if (items != null) { resolvedUsersEndpoint = path; break; }
+      } catch { /* try next */ }
+    }
+    if (!resolvedUsersEndpoint) {
+      throw new Error('No working users endpoint found on Zelt partner API.');
+    }
+  }
+  for (let page = 1; page <= maxPages; page++) {
+    const json = await zeltGet(resolvedUsersEndpoint, { page, pageSize: PAGE_SIZE });
+    const items = json.items || json.data || (Array.isArray(json) ? json : []);
+    all.push(...items);
+    if (items.length < PAGE_SIZE) break;
+  }
+  return all;
+}
 
 async function fetchAllUsers() {
   let page = 1;

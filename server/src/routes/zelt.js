@@ -143,11 +143,13 @@ router.get('/entities', dataLimiter, requireAuth, async (req, res) => {
     const entities = await listEntities();
     res.json({ entities });
   } catch (err) {
-    console.error('[zelt/entities]', err.message);
+    console.error('[zelt/entities]', err.message, err.stack);
     if (err.message === 'NotConnected') {
       return res.status(503).json({ error: 'Zelt not connected', code: 'NOT_CONNECTED' });
     }
-    res.status(500).json({ error: 'Failed to fetch entities', detail: IS_PROD ? undefined : err.message });
+    // Always surface the upstream error message — this is HR-only data, not a public route.
+    // The detail helps diagnose endpoint/scope issues without spelunking render logs.
+    res.status(500).json({ error: 'Failed to fetch entities', detail: err.message });
   }
 });
 

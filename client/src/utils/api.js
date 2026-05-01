@@ -46,8 +46,10 @@ class ApiClient {
     const data = await res.json();
 
     if (!res.ok) {
-      const error = new Error(data.error || 'Request failed');
+      const msg = data.detail ? `${data.error || 'Request failed'} — ${data.detail}` : (data.error || 'Request failed');
+      const error = new Error(msg);
       error.status = res.status;
+      error.detail = data.detail;
       throw error;
     }
 

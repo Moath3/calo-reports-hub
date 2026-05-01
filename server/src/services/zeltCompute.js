@@ -122,21 +122,46 @@ export function clearCaches() {
 
 // ---- Internals -------------------------------------------------------
 
+// Candidate endpoint paths Zelt might expose. We try them in order.
+// First successful response wins; cache the winner for the rest of the session.
+const USERS_ENDPOINT_CANDIDATES = [
+  '/apiv2/partner/users',
+  '/apiv2/partner/companies/users',
+  '/apiv2/partner/findbycompanyid',
+  '/apiv2/users/cache',
+];
+let resolvedUsersEndpoint = null;
+
 async function fetchAllUsers() {
-  // Try the public partner endpoint first; fall back to /apiv2/users/cache shape if needed.
   let page = 1;
   const all = [];
-  while (true) {
-    let json;
-    try {
-      json = await zeltGet('/apiv2/partner/users', { page, pageSize: PAGE_SIZE });
-    } catch (err) {
-      if (page === 1 && err.status === 404) {
-        // Endpoint shape might differ — log and surface; don't keep guessing silently.
-        throw new Error(`Zelt partner users endpoint not found. Confirm path with Zelt CSM.`);
+  // Resolve endpoint on first call by probing each candidate
+  if (!resolvedUsersEndpoint) {
+    for (const path of USERS_ENDPOINT_CANDIDATES) {
+      try {
+        const probe = await zeltGet(path, { page: 1, pageSize: 1 });
+        // Sanity check: must have items array or be an array
+        const items = probe.items || probe.data || (Array.isArray(probe) ? probe : null);
+        if (items != null) {
+          resolvedUsersEndpoint = path;
+          console.log(`[zelt] resolved users endpoint: ${path}`);
+          break;
+        }
+      } catch (err) {
+        console.warn(`[zelt] users endpoint ${path} failed: ${err.status || ''} ${err.message}`);
       }
-      throw err;
     }
+    if (!resolvedUsersEndpoint) {
+      throw new Error(
+        'Could not find a working users endpoint on Zelt partner API. ' +
+        'Tried: ' + USERS_ENDPOINT_CANDIDATES.join(', ') +
+        '. Check render logs for upstream errors. May need scope confirmation from Zelt CSM.'
+      );
+    }
+  }
+
+  while (true) {
+    const json = await zeltGet(resolvedUsersEndpoint, { page, pageSize: PAGE_SIZE });
     const items = json.items || json.data || (Array.isArray(json) ? json : []);
     all.push(...items);
     const totalPages = json.totalPages ?? null;

@@ -84,13 +84,21 @@ export async function getBalancesForEntity(entityName) {
   }
   const deduped = Array.from(seen.values());
 
+  // Diagnostic — collect every entity name seen in user records so we can
+  // surface it back if the filter returns zero (mismatch debugging).
+  const entitiesSeen = new Set();
+
   // Filter to currently employed in the requested entity
   const targets = deduped.filter(u => {
     const status = u?.accountStatus || u?.status || u?.lifecycle?.status;
     if (status === 'Deactivated' || status === 'Terminated') return false;
     if (u?.leaveDate || u?.lifecycle?.leaveDate) return false;
     const e = readEntity(u);
-    return e && e.toLowerCase().trim() === key;
+    if (e) entitiesSeen.add(e);
+    if (!e) return false;
+    const eNorm = e.toLowerCase().trim();
+    // Exact first, then case-insensitive contains (handles minor variations)
+    return eNorm === key || eNorm.includes(key) || key.includes(eNorm);
   });
 
   // Fetch absences year-to-date once, then group by userId
@@ -152,7 +160,23 @@ export async function getBalancesForEntity(entityName) {
 
   rows.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
 
-  const payload = { entity: entityName, asOf: today.toISOString(), count: rows.length, rows };
+  const payload = {
+    entity: entityName,
+    asOf: today.toISOString(),
+    count: rows.length,
+    rows,
+    // Diagnostic: when 0 rows match, surface what entities WERE seen in user
+    // records so we can spot normalization or field-path mismatches.
+    diagnostic: rows.length === 0
+      ? {
+          reason: 'No employees matched the requested entity.',
+          totalUsers: users.length,
+          dedupedUsers: deduped.length,
+          entitiesSeenInUserRecords: Array.from(entitiesSeen).sort(),
+          requestedEntity: entityName,
+        }
+      : undefined,
+  };
   cache.balances.set(key, { value: payload, expiresAt: Date.now() + BALANCES_TTL_MS });
   return payload;
 }

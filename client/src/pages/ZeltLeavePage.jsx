@@ -180,8 +180,33 @@ export default function ZeltLeavePage() {
         </div>
       </div>
 
+      {/* Diagnostic when zero rows */}
+      {data && data.count === 0 && data.diagnostic && (
+        <div style={{ ...panel, background: '#FFF8E5', borderColor: '#F1D785' }}>
+          <h3 style={{ margin: 0, fontSize: 16, fontWeight: 800, color: '#9A6F0E' }}>
+            No employees matched "{data.diagnostic.requestedEntity}"
+          </h3>
+          <p style={{ fontSize: 13, color: '#6B5008', margin: '8px 0' }}>
+            Scanned {data.diagnostic.totalUsers} user records ({data.diagnostic.dedupedUsers} unique).
+            None had a matching entity. Below are the entities Zelt is actually returning in user
+            contracts — pick one of these instead, or the dropdown is reading from a different source.
+          </p>
+          {data.diagnostic.entitiesSeenInUserRecords.length === 0 ? (
+            <p style={{ fontSize: 13, color: '#9A6F0E', margin: 0 }}>
+              ⚠ Zelt returned <b>no entity field</b> on any user record. The partner API may not
+              include contract data with the basic users endpoint. We need a different scope or
+              endpoint. Hit <code>/api/zelt/debug/sample</code> as admin to inspect the raw shape.
+            </p>
+          ) : (
+            <ul style={{ fontSize: 13, color: '#6B5008', margin: '8px 0 0 18px' }}>
+              {data.diagnostic.entitiesSeenInUserRecords.map(e => <li key={e}><code>{e}</code></li>)}
+            </ul>
+          )}
+        </div>
+      )}
+
       {/* Results */}
-      {data && (
+      {data && data.count > 0 && (
         <div style={panel}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, flexWrap: 'wrap', gap: 12 }}>
             <div>

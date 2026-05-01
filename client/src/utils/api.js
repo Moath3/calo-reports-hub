@@ -271,6 +271,41 @@ class ApiClient {
     return this.request('/dashboard/stats');
   }
 
+  // Zelt
+  async zeltStatus() {
+    return this.request('/zelt/status');
+  }
+  async zeltOauthInit() {
+    return this.request('/zelt/oauth/init', { method: 'POST' });
+  }
+  async zeltDisconnect() {
+    return this.request('/zelt/disconnect', { method: 'POST' });
+  }
+  async zeltEntities() {
+    return this.request('/zelt/entities');
+  }
+  async zeltBalances(entity) {
+    const q = new URLSearchParams({ entity }).toString();
+    return this.request(`/zelt/balances?${q}`);
+  }
+  async zeltExportCsv(entity) {
+    // CSV download via fetch so the bearer token is sent (anchor `download` won't include headers).
+    const res = await fetch(`${API_BASE}/zelt/balances/export?${new URLSearchParams({ entity })}`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${this.token}` },
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      const error = new Error(data.error || 'Export failed');
+      error.status = res.status;
+      throw error;
+    }
+    return res.blob();
+  }
+  async zeltClearCache() {
+    return this.request('/zelt/cache/clear', { method: 'POST' });
+  }
+
   // Logout
   logout() {
     this.setToken(null);

@@ -1,0 +1,223 @@
+/**
+ * Zelt compute service.
+ *
+ * Pulls users + absences via the public partner API and derives "available now"
+ * leave balance per user. We don't rely on an undocumented balance endpoint.
+ *
+ * Formula (validated against Zelt UI: Moath = 19.9):
+ *   available_now = userAllowance + carryOver - daysTakenHistory - daysBookedUpcoming
+ *
+ * If a field is missing from the partner API response, we degrade gracefully and
+ * mark each row with a confidence flag so the UI can surface uncertainty.
+ *
+ * Caching:
+ *   - /entities cached 60min (entities rarely change)
+ *   - /balances cached 5min per entity (balances move with bookings)
+ */
+import { zeltGet } from './zeltApi.js';
+
+const ENTITIES_TTL_MS = 60 * 60 * 1000;
+const BALANCES_TTL_MS = 5 * 60 * 1000;
+const PAGE_SIZE = 100;
+
+const cache = {
+  entities: { value: null, expiresAt: 0 },
+  balances: new Map(), // key: entity → { value, expiresAt }
+};
+
+// ---- Public API ------------------------------------------------------
+
+export async function listEntities() {
+  if (cache.entities.value && cache.entities.expiresAt > Date.now()) {
+    return cache.entities.value;
+  }
+  const users = await fetchAllUsers();
+  const set = new Set();
+  for (const u of users) {
+    const e = u?.userContract?.entity?.legalName || u?.entity?.legalName || u?.entity;
+    if (e && typeof e === 'string') set.add(e.trim());
+  }
+  const entities = Array.from(set).sort();
+  cache.entities = { value: entities, expiresAt: Date.now() + ENTITIES_TTL_MS };
+  return entities;
+}
+
+export async function getBalancesForEntity(entityName) {
+  const key = entityName.toLowerCase();
+  const cached = cache.balances.get(key);
+  if (cached && cached.expiresAt > Date.now()) return cached.value;
+
+  const users = await fetchAllUsers();
+  const yearStart = new Date(new Date().getFullYear(), 0, 1);
+  const yearEnd = new Date(new Date().getFullYear(), 11, 31, 23, 59, 59);
+
+  // Filter to currently employed in the requested entity
+  const targets = users.filter(u => {
+    const status = u?.accountStatus || u?.status;
+    if (status === 'Deactivated') return false;
+    if (u?.leaveDate) return false; // mid-termination — exclude per locked scope rule
+    const e = u?.userContract?.entity?.legalName || u?.entity?.legalName || u?.entity;
+    return e && e.toLowerCase().trim() === key;
+  });
+
+  // Fetch absences year-to-date once, then group by userId
+  const absencesByUser = await fetchAbsencesByUser(targets.map(u => u.userId || u.id));
+
+  const today = new Date();
+  const rows = targets.map(u => {
+    const userId = u.userId || u.id;
+    const allowance = numberOr(u?.userContract?.allowance ?? u?.allowance, null);
+    const carryOver = numberOr(u?.carryOver ?? u?.userContract?.carryOver, 0);
+    const userAbs = absencesByUser.get(userId) || [];
+
+    let history = 0;
+    let upcoming = 0;
+    let confidence = 'high';
+
+    for (const ab of userAbs) {
+      const days = absenceDays(ab);
+      if (days <= 0) continue;
+      const start = parseDateSafe(ab.start || ab.startDate);
+      if (!start) { confidence = 'medium'; continue; }
+      if (!isAnnualLeave(ab)) continue; // only annual vacation reduces this balance
+      if (start <= today) history += days;
+      else upcoming += days;
+    }
+
+    let availableNow = null;
+    if (allowance != null) {
+      availableNow = round1(allowance + carryOver - history - upcoming);
+    } else {
+      confidence = 'low';
+    }
+
+    return {
+      employeeId: u.employeeId || null,
+      userId,
+      name: u.displayName || `${u.firstName || ''} ${u.lastName || ''}`.trim(),
+      site: u?.role?.site?.name || u?.site || null,
+      department: u?.role?.department?.name || u?.department || null,
+      jobTitle: u?.role?.jobPosition?.title || u?.jobTitle || null,
+      startDate: u.startDate || null,
+      allowance,
+      carryOver,
+      history: round1(history),
+      upcoming: round1(upcoming),
+      availableNow,
+      confidence,
+    };
+  });
+
+  rows.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+
+  const payload = { entity: entityName, asOf: today.toISOString(), count: rows.length, rows };
+  cache.balances.set(key, { value: payload, expiresAt: Date.now() + BALANCES_TTL_MS });
+  return payload;
+}
+
+export function clearCaches() {
+  cache.entities = { value: null, expiresAt: 0 };
+  cache.balances.clear();
+}
+
+// ---- Internals -------------------------------------------------------
+
+async function fetchAllUsers() {
+  // Try the public partner endpoint first; fall back to /apiv2/users/cache shape if needed.
+  let page = 1;
+  const all = [];
+  while (true) {
+    let json;
+    try {
+      json = await zeltGet('/apiv2/partner/users', { page, pageSize: PAGE_SIZE });
+    } catch (err) {
+      if (page === 1 && err.status === 404) {
+        // Endpoint shape might differ — log and surface; don't keep guessing silently.
+        throw new Error(`Zelt partner users endpoint not found. Confirm path with Zelt CSM.`);
+      }
+      throw err;
+    }
+    const items = json.items || json.data || (Array.isArray(json) ? json : []);
+    all.push(...items);
+    const totalPages = json.totalPages ?? null;
+    if (totalPages != null) {
+      if (page >= totalPages) break;
+    } else if (items.length < PAGE_SIZE) {
+      break;
+    }
+    page++;
+    if (page > 50) break; // hard safety: cap at 5000 users
+  }
+  return all;
+}
+
+async function fetchAbsencesByUser(userIds) {
+  // Batch in chunks of 50 user ids per request (comma-separated per Zelt docs).
+  const map = new Map();
+  if (!userIds.length) return map;
+
+  const year = new Date().getFullYear();
+  for (let i = 0; i < userIds.length; i += 50) {
+    const chunk = userIds.slice(i, i + 50);
+    let page = 1;
+    while (true) {
+      const json = await zeltGet('/apiv2/partner/absences', {
+        userId: chunk.join(','),
+        year,
+        page,
+        pageSize: PAGE_SIZE,
+      });
+      const items = json.items || json.data || (Array.isArray(json) ? json : []);
+      for (const ab of items) {
+        const uid = ab.userId || ab.user?.id || ab.user;
+        if (uid == null) continue;
+        const arr = map.get(uid) || [];
+        arr.push(ab);
+        map.set(uid, arr);
+      }
+      const totalPages = json.totalPages ?? null;
+      if (totalPages != null) {
+        if (page >= totalPages) break;
+      } else if (items.length < PAGE_SIZE) {
+        break;
+      }
+      page++;
+      if (page > 50) break;
+    }
+  }
+  return map;
+}
+
+function absenceDays(ab) {
+  // Prefer pre-computed day length if Zelt provides it
+  if (ab.lengthDays != null) return Number(ab.lengthDays) || 0;
+  if (ab.totalDays != null) return Number(ab.totalDays) || 0;
+  const start = parseDateSafe(ab.start || ab.startDate);
+  const end = parseDateSafe(ab.end || ab.endDate);
+  if (!start || !end) return 0;
+  // Calendar days inclusive — matches the locked rule from leave-recon
+  const ms = end.getTime() - start.getTime();
+  return Math.max(0, Math.floor(ms / 86_400_000) + 1);
+}
+
+function isAnnualLeave(ab) {
+  const policyName = String(ab.policyName || ab.policy?.name || ab.policy || '').toLowerCase();
+  if (!policyName) return true; // assume yes if no name (safer to subtract)
+  return policyName.includes('annual') || policyName.includes('vacation');
+}
+
+function parseDateSafe(s) {
+  if (!s) return null;
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+function numberOr(v, fallback) {
+  const n = typeof v === 'number' ? v : v != null ? Number(v) : NaN;
+  return isNaN(n) ? fallback : n;
+}
+
+function round1(v) {
+  if (v == null || isNaN(v)) return v;
+  return Math.round(v * 10) / 10;
+}

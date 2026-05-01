@@ -83,6 +83,11 @@ function saveToDisk() {
   }
 }
 
+// Exposed for callers that must persist immediately (e.g. after Zelt token rotation)
+export function persistNow() {
+  saveToDisk();
+}
+
 export async function initDb() {
   if (wrapper) return wrapper;
 
@@ -206,6 +211,20 @@ function initSchema() {
       expires_at DATETIME NOT NULL,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (user_id) REFERENCES users(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS zelt_tokens (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      access_token TEXT NOT NULL,
+      refresh_token TEXT NOT NULL,
+      expires_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS zelt_oauth_states (
+      state TEXT PRIMARY KEY,
+      created_at INTEGER NOT NULL,
+      consumed INTEGER DEFAULT 0
     );
   `);
 

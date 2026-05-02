@@ -109,13 +109,17 @@ export async function getBalancesForEntity(entityName) {
 
   const targetUserIds = targets.map(u => u.userId || u.id);
 
-  // Run absence fetch + basic info + balance probe in parallel.
-  // tryFetchBalances may return empty if the internal endpoint rejects our token.
+  // Skip the expensive per-user basics fetch if our user records already
+  // contain employeeId (true when bot's /users/cache succeeded).
+  const hasEmpIdAlready = targets.length > 0 && targets.every(u => readEmployeeId(u) != null);
+
+  // Run absence fetch + (maybe) basic info + balance probe in parallel.
   const [absencesByUser, basicsByUser, balancesByUser] = await Promise.all([
     fetchAbsencesByUser(targetUserIds),
-    fetchUserBasics(targetUserIds),
+    hasEmpIdAlready ? Promise.resolve(new Map()) : fetchUserBasics(targetUserIds),
     tryFetchBalances(targetUserIds),
   ]);
+  if (hasEmpIdAlready) console.log('[zelt] skipping per-user basics fetch (emp IDs already in user list)');
 
   const today = new Date();
   const rows = targets.map(u => {
@@ -274,10 +278,28 @@ async function fetchAllUsers() {
   if (cache.allUsers.value && cache.allUsers.expiresAt > Date.now()) {
     return cache.allUsers.value;
   }
+
+  // FAST PATH: bot cookie can hit /apiv2/users/cache which returns ALL users in
+  // a single non-paginated call AND includes employeeId natively (partner
+  // endpoint omits it, forcing N extra calls). Cuts cold start by 15-30s.
+  if (botConfigured()) {
+    try {
+      const data = await botGet('/apiv2/users/cache');
+      const list = Array.isArray(data) ? data : readItems(data);
+      if (list.length > 0) {
+        cache.allUsers = { value: list, expiresAt: Date.now() + ALL_USERS_TTL_MS };
+        console.log(`[zelt-bot] users/cache returned ${list.length} users in one call`);
+        return list;
+      }
+    } catch (err) {
+      console.warn(`[zelt-bot] users/cache failed (${err.status || ''} ${err.message}), falling back to partner endpoint`);
+    }
+  }
+
+  // Fallback: partner endpoint, paginated.
   const endpoint = await resolveUsersEndpoint();
   const all = [];
   let page = 1;
-
   while (true) {
     const json = await zeltGet(endpoint, { page, pageSize: PAGE_SIZE });
     const items = readItems(json);

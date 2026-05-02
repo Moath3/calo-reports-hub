@@ -71,32 +71,55 @@ function extractCookies(resp) {
   return raw.map(c => c.split(';')[0]).filter(Boolean);
 }
 
+// CSRF token: many modern SPA backends (Nest's csurf, Express csrf-csrf) set
+// an XSRF-TOKEN cookie on the first GET, then require its value back as an
+// X-XSRF-TOKEN header on subsequent POST. Forwarding only the cookie isn't
+// enough.
+function extractXsrfToken(cookieString) {
+  if (!cookieString) return null;
+  const m = cookieString.match(/(?:^|;\s*)XSRF-TOKEN=([^;]+)/);
+  return m ? decodeURIComponent(m[1]) : null;
+}
+
 async function login() {
   if (loginInFlight) return loginInFlight;
   loginInFlight = (async () => {
     const { email, password } = getCreds();
 
-    // Step 1: ssocheck. Browser-flow capture: this call sets session cookies
-    // that Zelt's login server expects on the subsequent POST. We must
-    // forward those cookies — earlier we discarded them, which is why login
-    // fluctuated between working and 401.
+    // Step 1: ssocheck (and any other "warmup" GET) to collect XSRF + session
+    // cookies. Try a couple of paths since Zelt has used both shapes.
     let preLoginCookies = '';
-    try {
-      const ssoResp = await fetchWithTimeout(
-        `${ZELT_BASE}/apiv2/auth/ssocheck/${encodeURIComponent(email)}`,
-        { headers: BROWSER_HEADERS }
-      );
-      const cookies = extractCookies(ssoResp);
-      preLoginCookies = cookies.join('; ');
-    } catch (e) {
-      console.warn('[zelt-bot] ssocheck failed (continuing):', e.message);
+    const warmupPaths = [
+      `/apiv2/auth/ssocheck/${encodeURIComponent(email)}`,
+      '/login',
+    ];
+    for (const path of warmupPaths) {
+      try {
+        const resp = await fetchWithTimeout(`${ZELT_BASE}${path}`, {
+          headers: BROWSER_HEADERS,
+        });
+        const cookies = extractCookies(resp);
+        if (cookies.length) {
+          // Merge with existing
+          const merged = new Map();
+          for (const c of preLoginCookies.split('; ').filter(Boolean)) {
+            merged.set(c.split('=')[0], c);
+          }
+          for (const c of cookies) merged.set(c.split('=')[0], c);
+          preLoginCookies = Array.from(merged.values()).join('; ');
+        }
+      } catch (e) {
+        console.warn(`[zelt-bot] warmup ${path} failed:`, e.message);
+      }
     }
 
-    // Step 2: POST login. Try {email,password} first, fall back to {username,password}
-    // — Zelt has historically accepted both, restoring this fallback to survive
-    // server-side changes.
+    const xsrfToken = extractXsrfToken(preLoginCookies);
+    if (xsrfToken) console.log('[zelt-bot] captured XSRF token');
+
+    // Step 2: POST login. Include X-XSRF-TOKEN header (CSRF-protected backends),
+    // try {email,password} first, fall back to {username,password}.
     const bodies = [
-      { email, password },
+      { email, password, rememberMe: false },
       { username: email, password },
     ];
 
@@ -104,6 +127,7 @@ async function login() {
     for (const body of bodies) {
       const headers = { ...BROWSER_HEADERS, 'Content-Type': 'application/json' };
       if (preLoginCookies) headers.Cookie = preLoginCookies;
+      if (xsrfToken) headers['X-XSRF-TOKEN'] = xsrfToken;
       const resp = await fetchWithTimeout(LOGIN_URL, {
         method: 'POST',
         headers,

@@ -200,7 +200,15 @@ async function refreshTokens(prevUpdatedAt) {
   });
 
   if (resp.status === 401 || resp.status === 400) {
-    // Refresh token rejected — connection broken. Caller should surface "reconnect Zelt" UI.
+    // Refresh token rejected — but a single failure doesn't always mean dead.
+    // Could be a parallel-refresh race (we already rotated). Don't wipe yet:
+    // re-read tokens and check if updated_at advanced (someone else refreshed).
+    const fresh = readTokens();
+    if (fresh && fresh.updatedAt > prevUpdatedAt) {
+      // Another refresh succeeded in parallel — use those tokens.
+      return fresh;
+    }
+    // True failure. Wipe.
     clearTokens();
     throw new Error('NotConnected');
   }
@@ -258,8 +266,24 @@ export async function zeltGet(path, params = {}) {
 
   const attempt = async (forceRefresh = false) => {
     if (forceRefresh) {
+      // Funnel through the mutex — never call refreshTokens directly here,
+      // which would race against concurrent getAccessToken refreshes and
+      // invalidate the rotated refresh_token (causing total session loss).
       const t = readTokens();
-      if (t) await refreshTokens(t.updatedAt);
+      if (!t) throw new Error('NotConnected');
+      // Force expiration so getAccessToken triggers the mutex-protected refresh
+      try {
+        if (refreshInFlight) {
+          await refreshInFlight;
+        } else {
+          refreshInFlight = refreshTokens(t.updatedAt).finally(() => { refreshInFlight = null; });
+          await refreshInFlight;
+        }
+      } catch (err) {
+        // Refresh failed — but don't propagate as session-kill unless tokens
+        // were actually wiped (refreshTokens does that on its own for 401/400).
+        throw err;
+      }
     }
     const token = await getAccessToken();
     return fetchWithTimeout(url.toString(), {
@@ -269,7 +293,14 @@ export async function zeltGet(path, params = {}) {
 
   let resp = await attempt();
   if (resp.status === 401) {
-    resp = await attempt(true); // refresh + retry once
+    // 401 on a specific endpoint usually means missing scope, not dead session.
+    // Don't refresh + retry blindly — that risks wiping tokens. Just surface
+    // the 401 so caller can decide (e.g. tryFetchBalances treats it as
+    // 'feature unavailable' without killing connection).
+    const text = await resp.text().catch(() => '');
+    const err = new Error(`Zelt API 401: ${text.slice(0, 200)}`);
+    err.status = 401;
+    throw err;
   } else if (resp.status >= 500) {
     await sleep(500 + Math.random() * 500); // 500–1000ms jitter
     resp = await attempt();

@@ -24,7 +24,14 @@ const PAGE_SIZE = 100;
 const cache = {
   entities: { value: null, expiresAt: 0 },
   balances: new Map(), // key: entity → { value, expiresAt }
+  // Heavyweight: full user list. Reused across entity picks for 5 min so
+  // generating reports for two different entities doesn't refetch 1961 users.
+  allUsers: { value: null, expiresAt: 0 },
+  // Employee IDs barely change — cache 24h.
+  basics: { value: new Map(), expiresAt: 0 },
 };
+const ALL_USERS_TTL_MS = 5 * 60 * 1000;
+const BASICS_TTL_MS = 24 * 60 * 60 * 1000;
 
 // ---- Public API ------------------------------------------------------
 
@@ -200,6 +207,8 @@ export async function getBalancesForEntity(entityName) {
 export function clearCaches() {
   cache.entities = { value: null, expiresAt: 0 };
   cache.balances.clear();
+  cache.allUsers = { value: null, expiresAt: 0 };
+  cache.basics = { value: new Map(), expiresAt: 0 };
 }
 
 // ---- Internals -------------------------------------------------------
@@ -248,6 +257,10 @@ async function fetchUsersFirstPages(maxPages) {
 }
 
 async function fetchAllUsers() {
+  // Cache full user list across calls — heaviest fetch in the system.
+  if (cache.allUsers.value && cache.allUsers.expiresAt > Date.now()) {
+    return cache.allUsers.value;
+  }
   let page = 1;
   const all = [];
   // Resolve endpoint on first call by probing each candidate
@@ -288,6 +301,7 @@ async function fetchAllUsers() {
     page++;
     if (page > 50) break; // hard safety: cap at 5000 users
   }
+  cache.allUsers = { value: all, expiresAt: Date.now() + ALL_USERS_TTL_MS };
   return all;
 }
 
@@ -315,11 +329,16 @@ async function tryFetchBalances(userIds) {
     try {
       const policies = await botGet('/apiv2/absence-policies/extended');
       const arr = Array.isArray(policies) ? policies : (policies?.items || []);
+      // Skip unpaid policies — they're zero-balance shadow policies that
+      // pollute the aggregated 'policy' column for users on the paid plan.
       resolvedAnnualPolicyIds = arr
-        .filter(p => /annual|vacation/i.test(p.name || p.policyName || ''))
+        .filter(p => {
+          const n = p.name || p.policyName || '';
+          return /annual|vacation/i.test(n) && !/unpaid/i.test(n);
+        })
         .map(p => p.id)
         .slice(0, ANNUAL_POLICY_PROBE_LIMIT);
-      console.log(`[zelt-bot] found ${resolvedAnnualPolicyIds.length} annual-vacation policies`);
+      console.log(`[zelt-bot] found ${resolvedAnnualPolicyIds.length} paid annual-vacation policies`);
     } catch (err) {
       console.warn(`[zelt-bot] /absence-policies/extended failed (${err.status || ''} ${err.message}) — Available Now unavailable`);
       resolvedAnnualPolicyIds = [];
@@ -387,6 +406,20 @@ let resolvedBasicEndpoint = null;
 async function fetchUserBasics(userIds) {
   if (!userIds.length) return new Map();
 
+  // Refresh cache if expired
+  if (cache.basics.expiresAt < Date.now()) {
+    cache.basics = { value: new Map(), expiresAt: Date.now() + BASICS_TTL_MS };
+  }
+  const cached = cache.basics.value;
+
+  // Only fetch IDs we don't already have cached
+  const toFetch = userIds.filter(uid => !cached.has(uid));
+  if (toFetch.length === 0) {
+    const out = new Map();
+    for (const uid of userIds) if (cached.has(uid)) out.set(uid, cached.get(uid));
+    return out;
+  }
+
   // Probe once
   if (!resolvedBasicEndpoint) {
     for (const builder of BASIC_ENDPOINT_CANDIDATES) {
@@ -408,21 +441,24 @@ async function fetchUserBasics(userIds) {
   }
 
   // Parallel fetch with concurrency cap to avoid hammering Zelt
-  const map = new Map();
   const CONCURRENCY = 10;
-  const queue = [...userIds];
+  const queue = [...toFetch];
   async function worker() {
     while (queue.length) {
       const uid = queue.shift();
       try {
         const data = await zeltGet(resolvedBasicEndpoint(uid));
         const eid = data.employeeId || data.basicInfo?.employeeId || data.userBasic?.employeeId;
-        if (eid) map.set(uid, eid);
+        if (eid) cached.set(uid, eid);
       } catch { /* skip on error */ }
     }
   }
   await Promise.all(Array.from({ length: CONCURRENCY }, worker));
-  return map;
+
+  // Return only the requested IDs
+  const out = new Map();
+  for (const uid of userIds) if (cached.has(uid)) out.set(uid, cached.get(uid));
+  return out;
 }
 
 async function fetchAbsencesByUser(userIds) {

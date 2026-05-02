@@ -103,10 +103,12 @@ export async function getBalancesForEntity(entityName) {
 
   const targetUserIds = targets.map(u => u.userId || u.id);
 
-  // Run absence fetch and per-user basic fetch in parallel
-  const [absencesByUser, basicsByUser] = await Promise.all([
+  // Run absence fetch + basic info + balance probe in parallel.
+  // tryFetchBalances may return empty if the internal endpoint rejects our token.
+  const [absencesByUser, basicsByUser, balancesByUser] = await Promise.all([
     fetchAbsencesByUser(targetUserIds),
     fetchUserBasics(targetUserIds),
+    tryFetchBalances(targetUserIds),
   ]);
 
   const today = new Date();
@@ -139,8 +141,15 @@ export async function getBalancesForEntity(entityName) {
       else upcoming += days;
     }
 
+    // PREFERRED: use the live "Available Now" from Zelt's internal balance endpoint
+    // (matches what the Zelt UI shows on each employee's Time Planner widget).
     let availableNow = null;
-    if (allowance != null) {
+    const liveBalance = balancesByUser.get(userId);
+    if (liveBalance) {
+      availableNow = round1(liveBalance.available_now);
+      confidence = 'high';
+    } else if (allowance != null) {
+      // Fallback: compute from allowance + history + upcoming
       availableNow = round1(allowance + carryOver - history - upcoming);
     } else {
       confidence = 'low';
@@ -278,6 +287,77 @@ async function fetchAllUsers() {
     if (page > 50) break; // hard safety: cap at 5000 users
   }
   return all;
+}
+
+// Try Zelt's internal company-balance endpoint with our partner bearer token.
+// It's not in the partner docs but uses the same auth — worth trying before
+// giving up on Available Now. Returns map: userId → { available_now_days, total_days }.
+const ANNUAL_POLICY_PROBE_LIMIT = 30;
+let resolvedBalanceEndpoint = null;
+let resolvedAnnualPolicyIds = null;
+
+async function tryFetchBalances(userIds) {
+  if (!userIds.length) return new Map();
+  const balances = new Map();
+
+  // Step 1: discover annual-vacation policy IDs once
+  if (resolvedAnnualPolicyIds == null) {
+    try {
+      const policies = await zeltGet('/apiv2/absence-policies/extended');
+      const arr = Array.isArray(policies) ? policies : (policies?.items || []);
+      resolvedAnnualPolicyIds = arr
+        .filter(p => /annual|vacation/i.test(p.name || p.policyName || ''))
+        .map(p => p.id)
+        .slice(0, ANNUAL_POLICY_PROBE_LIMIT);
+      console.log(`[zelt] found ${resolvedAnnualPolicyIds.length} annual-vacation policies`);
+    } catch (err) {
+      console.warn(`[zelt] /absence-policies/extended failed (${err.status || ''} ${err.message}) — Available Now unavailable`);
+      resolvedAnnualPolicyIds = [];
+    }
+  }
+  if (!resolvedAnnualPolicyIds.length) return balances;
+
+  // Step 2: pull balance per policy (paginated), aggregate by userId
+  for (const pid of resolvedAnnualPolicyIds) {
+    let page = 1;
+    while (true) {
+      try {
+        const data = await zeltGet('/apiv2/absences/company/balance', {
+          policyId: pid,
+          Calendar: 'current',
+          page,
+          pageSize: 100,
+        });
+        const items = data.items || [];
+        for (const item of items) {
+          const uid = item.userId;
+          const policyData = item[pid];
+          if (!policyData) continue;
+          const wd = policyData.currentAverageWorkDayLength || 480;
+          // KEY: holidayAccruedToBookNow / workdayLength = "Available now"
+          // Includes upcoming bookings already deducted. Add unitsTaken.upcoming back
+          // per the locked rule from leave-recon (don't subtract future bookings).
+          const accrued = ((policyData.holidayAccruedToBookNow || 0) + (policyData.unitsTaken?.upcoming || 0)) / wd;
+          const upcoming = (policyData.unitsTaken?.upcoming || 0) / wd;
+          const total = (policyData.totalAllowanceForCycle || 0) / wd;
+          const prev = balances.get(uid) || { available_now: 0, upcoming_booked: 0, total: 0 };
+          balances.set(uid, {
+            available_now: prev.available_now + accrued,
+            upcoming_booked: prev.upcoming_booked + upcoming,
+            total: prev.total + total,
+          });
+        }
+        if (page >= (data.totalPages || 1)) break;
+        page++;
+      } catch (err) {
+        if (page === 1 && pid === resolvedAnnualPolicyIds[0]) {
+          console.warn(`[zelt] /absences/company/balance failed (${err.status || ''} ${err.message}) — Available Now unavailable`);
+        }
+        break;
+      }
+    }
+  }
+  return balances;
 }
 
 // Per-user basic info — the only place Zelt's partner API exposes employeeId.

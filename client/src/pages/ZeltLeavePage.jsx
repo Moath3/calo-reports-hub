@@ -18,6 +18,8 @@ export default function ZeltLeavePage() {
   const [status, setStatus] = useState({ loading: true, connected: false });
   const [entities, setEntities] = useState([]);
   const [entity, setEntity] = useState('');
+  const [selectedEntities, setSelectedEntities] = useState([]);
+  const [entitiesOpen, setEntitiesOpen] = useState(false);
   const [data, setData] = useState(null);
   const [loadingEntities, setLoadingEntities] = useState(false);
   const [loadingBalances, setLoadingBalances] = useState(false);
@@ -46,11 +48,12 @@ export default function ZeltLeavePage() {
   }, [status.connected]);
 
   const handleGenerate = useCallback(async () => {
-    if (!entity) return;
+    const picks = selectedEntities.length ? selectedEntities : (entity ? [entity] : []);
+    if (!picks.length) return;
     setLoadingBalances(true);
     setError(null);
     try {
-      const result = await api.zeltBalances(entity);
+      const result = await api.zeltBalances(picks.join(','));
       setData(result);
     } catch (e) {
       setError(formatErr(e, 'Failed to load balances'));
@@ -58,7 +61,7 @@ export default function ZeltLeavePage() {
     } finally {
       setLoadingBalances(false);
     }
-  }, [entity]);
+  }, [entity, selectedEntities]);
 
   const handleConnect = useCallback(async () => {
     try {
@@ -154,17 +157,59 @@ export default function ZeltLeavePage() {
       {/* Filter bar */}
       <div style={panel}>
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
-          <div style={{ flex: '1 1 280px', minWidth: 240 }}>
-            <Label>Entity</Label>
-            <select
-              value={entity}
-              onChange={e => setEntity(e.target.value)}
+          <div style={{ flex: '1 1 320px', minWidth: 280, position: 'relative' }}>
+            <Label>Entities</Label>
+            <button
+              type="button"
+              onClick={() => setEntitiesOpen(o => !o)}
               disabled={loadingEntities}
-              style={select}
+              style={{ ...select, textAlign: 'left', cursor: loadingEntities ? 'wait' : 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
             >
-              <option value="">{loadingEntities ? 'Loading entities…' : 'Select entity'}</option>
-              {entities.map(e => <option key={e} value={e}>{e}</option>)}
-            </select>
+              <span style={{ color: selectedEntities.length ? 'var(--ink-900)' : 'var(--ink-500)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+                {loadingEntities ? 'Loading…' :
+                  selectedEntities.length === 0 ? 'Select entities' :
+                  selectedEntities.length === 1 ? selectedEntities[0] :
+                  `${selectedEntities.length} entities · ${selectedEntities.slice(0, 2).join(', ')}${selectedEntities.length > 2 ? '…' : ''}`}
+              </span>
+              <span style={{ marginLeft: 8, color: 'var(--ink-500)' }}>▾</span>
+            </button>
+            {entitiesOpen && (
+              <div style={{
+                position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: 0, zIndex: 30,
+                background: '#fff', border: '1px solid var(--ink-200)', borderRadius: 'var(--r-md)',
+                boxShadow: 'var(--shadow-lg)', maxHeight: 360, overflowY: 'auto', padding: 8,
+              }}>
+                <div style={{ display: 'flex', gap: 6, padding: '4px 6px 8px', borderBottom: '1px solid var(--ink-100)' }}>
+                  <button onClick={() => setSelectedEntities([...entities])} style={ghostBtn}>Select all</button>
+                  <button onClick={() => setSelectedEntities([])} style={ghostBtn}>Clear</button>
+                  <div style={{ flex: 1 }} />
+                  <button onClick={() => setEntitiesOpen(false)} style={ghostBtn}>Done</button>
+                </div>
+                {entities.map(e => {
+                  const checked = selectedEntities.includes(e);
+                  return (
+                    <label key={e} style={{
+                      display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px',
+                      cursor: 'pointer', borderRadius: 'var(--r-sm)',
+                      background: checked ? 'var(--calo-50, #d9f0e5)' : 'transparent',
+                    }}
+                      onMouseEnter={el => { if (!checked) el.currentTarget.style.background = 'var(--ink-50)'; }}
+                      onMouseLeave={el => { if (!checked) el.currentTarget.style.background = 'transparent'; }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => setSelectedEntities(s =>
+                          s.includes(e) ? s.filter(x => x !== e) : [...s, e]
+                        )}
+                        style={{ accentColor: 'var(--calo-500)' }}
+                      />
+                      <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--ink-900)' }}>{e}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            )}
           </div>
           <div>
             <Label>As of</Label>
@@ -172,8 +217,8 @@ export default function ZeltLeavePage() {
           </div>
           <button
             onClick={handleGenerate}
-            disabled={!entity || loadingBalances}
-            style={primaryBtn(!entity || loadingBalances)}
+            disabled={selectedEntities.length === 0 || loadingBalances}
+            style={primaryBtn(selectedEntities.length === 0 || loadingBalances)}
           >
             {loadingBalances ? 'Generating…' : 'Generate report'}
           </button>
@@ -265,6 +310,7 @@ export default function ZeltLeavePage() {
                   <Th onClick={() => handleSort('site')} active={sort.key === 'site'} dir={sort.dir}>Site</Th>
                   <Th onClick={() => handleSort('department')} active={sort.key === 'department'} dir={sort.dir}>Department</Th>
                   <Th onClick={() => handleSort('jobTitle')} active={sort.key === 'jobTitle'} dir={sort.dir}>Job Title</Th>
+                  {data.multi && <Th onClick={() => handleSort('entity')} active={sort.key === 'entity'} dir={sort.dir}>Entity</Th>}
                   <Th onClick={() => handleSort('policy')} active={sort.key === 'policy'} dir={sort.dir}>Policy</Th>
                   <Th onClick={() => handleSort('upcoming')} active={sort.key === 'upcoming'} dir={sort.dir} align="right">Upcoming</Th>
                   <Th onClick={() => handleSort('availableNow')} active={sort.key === 'availableNow'} dir={sort.dir} align="right">Available Now</Th>
@@ -283,6 +329,7 @@ export default function ZeltLeavePage() {
                     <Td>{r.site || '—'}</Td>
                     <Td>{r.department || '—'}</Td>
                     <Td>{r.jobTitle || '—'}</Td>
+                    {data.multi && <Td>{r.entity || '—'}</Td>}
                     <Td>{r.policy || '—'}</Td>
                     <Td align="right">{r.upcoming > 0 ? `${r.upcoming.toFixed(1)}d` : '0'}</Td>
                     <Td align="right" bold>

@@ -157,19 +157,40 @@ router.get('/entities', dataLimiter, requireAuth, async (req, res) => {
 });
 
 router.get('/balances', dataLimiter, requireAuth, async (req, res) => {
-  const { entity } = req.query;
-  if (!entity || typeof entity !== 'string' || entity.trim().length === 0) {
+  // Accept either single entity or comma-separated list (?entity=A,B,C)
+  const raw = req.query.entity;
+  if (!raw || typeof raw !== 'string') {
     return res.status(400).json({ error: 'Missing required query param: entity' });
   }
+  const entities = raw.split(',').map(s => s.trim()).filter(Boolean);
+  if (!entities.length) {
+    return res.status(400).json({ error: 'No valid entities provided' });
+  }
   try {
-    const data = await getBalancesForEntity(entity.trim());
-    res.json(data);
+    const datas = await Promise.all(entities.map(e => getBalancesForEntity(e)));
+    if (datas.length === 1) return res.json(datas[0]);
+    // Aggregate multi-entity result
+    const allRows = [];
+    const allDiagnostics = [];
+    for (const d of datas) {
+      for (const r of d.rows) allRows.push({ ...r, entity: d.entity });
+      if (d.diagnostic) allDiagnostics.push(d.diagnostic);
+    }
+    allRows.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    res.json({
+      entity: entities.join(' + '),
+      asOf: datas[0].asOf,
+      count: allRows.length,
+      rows: allRows,
+      multi: true,
+      sources: datas.map(d => ({ entity: d.entity, count: d.count })),
+    });
   } catch (err) {
     console.error('[zelt/balances]', err.message);
     if (err.message === 'NotConnected') {
       return res.status(503).json({ error: 'Zelt not connected', code: 'NOT_CONNECTED' });
     }
-    res.status(500).json({ error: 'Failed to fetch balances', detail: IS_PROD ? undefined : err.message });
+    res.status(500).json({ error: 'Failed to fetch balances', detail: err.message });
   }
 });
 

@@ -94,16 +94,20 @@ export async function getBalancesForEntity(entityName) {
   // surface it back if the filter returns zero (mismatch debugging).
   const entitiesSeen = new Set();
 
-  // Filter to currently employed in the requested entity
+  // Filter to currently employed in the requested entity.
+  // "Currently employed" = Active accountStatus AND no leaveDate AND
+  //   userEvent.status !== "Terminated" (this catches mid-termination people
+  //   whose leaveDate has already passed but accountStatus hasn't flipped yet).
   const targets = deduped.filter(u => {
     const status = u?.accountStatus || u?.status || u?.lifecycle?.status;
     if (status === 'Deactivated' || status === 'Terminated') return false;
+    const eventStatus = u?.userEvent?.status || u?.lifecycle?.status;
+    if (eventStatus === 'Terminated' || eventStatus === 'Resigned' || eventStatus === 'Offboarded') return false;
     if (u?.leaveDate || u?.lifecycle?.leaveDate) return false;
     const e = readEntity(u);
     if (e) entitiesSeen.add(e);
     if (!e) return false;
     const eNorm = e.toLowerCase().trim();
-    // Exact first, then case-insensitive contains (handles minor variations)
     return eNorm === key || eNorm.includes(key) || key.includes(eNorm);
   });
 

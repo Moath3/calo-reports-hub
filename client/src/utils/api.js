@@ -43,11 +43,28 @@ class ApiClient {
       return res.blob();
     }
 
+    // If the upstream proxy / render returns HTML (timeout, 502, etc), JSON.parse
+    // chokes with a useless 'Unexpected token <' message. Detect and translate.
+    const ct = res.headers.get('content-type') || '';
+    if (!ct.includes('application/json')) {
+      const text = await res.text();
+      const isHtml = /<!doctype|<html/i.test(text);
+      const error = new Error(
+        isHtml
+          ? `Server returned HTML instead of JSON (likely a timeout or proxy error). Status ${res.status}.`
+          : `Unexpected response (status ${res.status})`
+      );
+      error.status = res.status;
+      throw error;
+    }
+
     const data = await res.json();
 
     if (!res.ok) {
-      const error = new Error(data.error || 'Request failed');
+      const msg = data.detail ? `${data.error || 'Request failed'} — ${data.detail}` : (data.error || 'Request failed');
+      const error = new Error(msg);
       error.status = res.status;
+      error.detail = data.detail;
       throw error;
     }
 
@@ -269,6 +286,41 @@ class ApiClient {
   // Dashboard
   async getDashboardStats() {
     return this.request('/dashboard/stats');
+  }
+
+  // Zelt
+  async zeltStatus() {
+    return this.request('/zelt/status');
+  }
+  async zeltOauthInit() {
+    return this.request('/zelt/oauth/init', { method: 'POST' });
+  }
+  async zeltDisconnect() {
+    return this.request('/zelt/disconnect', { method: 'POST' });
+  }
+  async zeltEntities() {
+    return this.request('/zelt/entities');
+  }
+  async zeltBalances(entity) {
+    const q = new URLSearchParams({ entity }).toString();
+    return this.request(`/zelt/balances?${q}`);
+  }
+  async zeltExportCsv(entity) {
+    // CSV download via fetch so the bearer token is sent (anchor `download` won't include headers).
+    const res = await fetch(`${API_BASE}/zelt/balances/export?${new URLSearchParams({ entity })}`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${this.token}` },
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      const error = new Error(data.error || 'Export failed');
+      error.status = res.status;
+      throw error;
+    }
+    return res.blob();
+  }
+  async zeltClearCache() {
+    return this.request('/zelt/cache/clear', { method: 'POST' });
   }
 
   // Logout

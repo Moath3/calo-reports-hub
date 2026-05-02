@@ -15,6 +15,7 @@ import reportRoutes from './routes/reports.js';
 import templateRoutes from './routes/templates.js';
 import exportRoutes from './routes/export.js';
 import dashboardRoutes from './routes/dashboard.js';
+import zeltRoutes from './routes/zelt.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -121,6 +122,7 @@ app.use('/api/reports', reportRoutes);
 app.use('/api/templates', templateRoutes);
 app.use('/api/export', exportRoutes);
 app.use('/api/dashboard', dashboardRoutes);
+app.use('/api/zelt', zeltRoutes);
 
 // Health check (no sensitive info exposed)
 app.get('/api/health', (req, res) => {

@@ -20,6 +20,8 @@ export default function ZeltLeavePage() {
   const [entity, setEntity] = useState('');
   const [selectedEntities, setSelectedEntities] = useState([]);
   const [entitiesOpen, setEntitiesOpen] = useState(false);
+  const [asOfDate, setAsOfDate] = useState(''); // YYYY-MM-DD, blank = today
+  const todayIso = new Date().toISOString().slice(0, 10);
   const [data, setData] = useState(null);
   const [loadingEntities, setLoadingEntities] = useState(false);
   const [loadingBalances, setLoadingBalances] = useState(false);
@@ -53,7 +55,7 @@ export default function ZeltLeavePage() {
     setLoadingBalances(true);
     setError(null);
     try {
-      const result = await api.zeltBalances(picks.join(','));
+      const result = await api.zeltBalances(picks.join(','), asOfDate || null);
       setData(result);
     } catch (e) {
       setError(formatErr(e, 'Failed to load balances'));
@@ -61,7 +63,7 @@ export default function ZeltLeavePage() {
     } finally {
       setLoadingBalances(false);
     }
-  }, [entity, selectedEntities]);
+  }, [entity, selectedEntities, asOfDate]);
 
   const handleConnect = useCallback(async () => {
     try {
@@ -213,7 +215,14 @@ export default function ZeltLeavePage() {
           </div>
           <div>
             <Label>As of</Label>
-            <div style={{ ...select, color: 'var(--ink-700)', cursor: 'default' }}>Today</div>
+            <input
+              type="date"
+              value={asOfDate}
+              onChange={e => setAsOfDate(e.target.value)}
+              max={todayIso}
+              style={{ ...select, width: 160 }}
+              title="Leave blank for today. Past dates only — Zelt projects forward unreliably."
+            />
           </div>
           <button
             onClick={handleGenerate}

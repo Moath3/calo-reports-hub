@@ -11,6 +11,7 @@ const mainNav = [
   { to: '/reports',       icon: 'FolderOpen',      label: 'My Reports' },
   { to: '/templates',     icon: 'LayoutTemplate',  label: 'Templates' },
   { to: '/leave-balances', icon: 'CalendarCheck',  label: 'Leave Balances' },
+  { to: '/data-hygiene',   icon: 'ShieldCheck',     label: 'Data Hygiene' },
 ];
 
 const footerNav = [

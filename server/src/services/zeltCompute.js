@@ -75,8 +75,9 @@ export async function listEntities() {
   return entities;
 }
 
-export async function getBalancesForEntity(entityName) {
-  const key = entityName.toLowerCase();
+export async function getBalancesForEntity(entityName, asOfDate = null) {
+  // asOfDate: ISO date string (YYYY-MM-DD), past only, optional
+  const key = `${entityName.toLowerCase()}|${asOfDate || 'today'}`;
   const cached = cache.balances.get(key);
   if (cached && cached.expiresAt > Date.now()) return cached.value;
 
@@ -121,7 +122,7 @@ export async function getBalancesForEntity(entityName) {
   const [absencesByUser, basicsByUser, balancesByUser] = await Promise.all([
     fetchAbsencesByUser(targetUserIds),
     hasEmpIdAlready ? Promise.resolve(new Map()) : fetchUserBasics(targetUserIds),
-    tryFetchBalances(targetUserIds),
+    tryFetchBalances(targetUserIds, asOfDate),
   ]);
   if (hasEmpIdAlready) console.log('[zelt] skipping per-user basics fetch (emp IDs already in user list)');
 
@@ -208,6 +209,11 @@ export async function getBalancesForEntity(entityName) {
   };
   cache.balances.set(key, { value: payload, expiresAt: Date.now() + BALANCES_TTL_MS });
   return payload;
+}
+
+// Wrapper for the audit module — gives it the cached user list.
+export async function fetchAllUsersForAudit() {
+  return fetchAllUsers();
 }
 
 export function clearCaches() {
@@ -327,7 +333,7 @@ const ANNUAL_POLICY_PROBE_LIMIT = 30;
 const WORKDAY_MINUTES_FALLBACK = 480; // 8h × 60m — Zelt's default workday
 let resolvedAnnualPolicyIds = null;
 
-async function tryFetchBalances(userIds) {
+async function tryFetchBalances(userIds, asOfDate = null) {
   if (!userIds.length) return new Map();
   const balances = new Map();
 
@@ -367,12 +373,14 @@ async function tryFetchBalances(userIds) {
     let page = 1;
     while (true) {
       try {
-        const data = await botGet('/apiv2/absences/company/balance', {
+        const params = {
           policyId: pid,
           Calendar: 'current',
           page,
           pageSize: 100,
-        });
+        };
+        if (asOfDate) params.asOfDate = asOfDate;
+        const data = await botGet('/apiv2/absences/company/balance', params);
         const items = data.items || [];
         all.push(...items.map(item => ({ item, pid })));
         if (page >= (data.totalPages || 1)) break;
@@ -391,10 +399,16 @@ async function tryFetchBalances(userIds) {
       const policyData = item[pid];
       if (!policyData) continue;
       const wd = policyData.currentAverageWorkDayLength || WORKDAY_MINUTES_FALLBACK;
-      // KEY: holidayAccruedToBookNow / workdayLength = "Available now"
-      // Includes upcoming bookings already deducted. Add unitsTaken.upcoming back
-      // per the locked rule from leave-recon (don't subtract future bookings).
-      const accrued = ((policyData.holidayAccruedToBookNow || 0) + (policyData.unitsTaken?.upcoming || 0)) / wd;
+      // For PAST as-of-date queries: prefer Zelt's currentBalanceInDaysAsOfDate
+      // — it's the exact balance on that day. Fall back to live formula otherwise.
+      let accrued;
+      if (asOfDate && policyData.currentBalanceInDaysAsOfDate != null) {
+        accrued = policyData.currentBalanceInDaysAsOfDate;
+      } else {
+        // Live "Available now" = holidayAccruedToBookNow + upcoming bookings
+        // (don't subtract future bookings — locked rule from leave-recon).
+        accrued = ((policyData.holidayAccruedToBookNow || 0) + (policyData.unitsTaken?.upcoming || 0)) / wd;
+      }
       const upcoming = (policyData.unitsTaken?.upcoming || 0) / wd;
       const total = (policyData.totalAllowanceForCycle || 0) / wd;
       const prev = balances.get(uid) || { available_now: 0, upcoming_booked: 0, total: 0, policyName: null };

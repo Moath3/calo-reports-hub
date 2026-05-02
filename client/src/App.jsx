@@ -11,6 +11,7 @@ import TemplatesPage from "./pages/TemplatesPage";
 import SettingsPage from "./pages/SettingsPage";
 import GuidePage from "./pages/GuidePage";
 import ZeltLeavePage from "./pages/ZeltLeavePage";
+import ZeltAuditPage from "./pages/ZeltAuditPage";
 
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth();
@@ -55,6 +56,7 @@ export default function App() {
         <Route path="settings" element={<SettingsPage />} />
         <Route path="guide" element={<GuidePage />} />
         <Route path="leave-balances" element={<ZeltLeavePage />} />
+        <Route path="data-hygiene" element={<ZeltAuditPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

@@ -301,8 +301,10 @@ class ApiClient {
   async zeltEntities() {
     return this.request('/zelt/entities');
   }
-  async zeltBalances(entity) {
-    const q = new URLSearchParams({ entity }).toString();
+  async zeltBalances(entity, asOfDate = null) {
+    const params = { entity };
+    if (asOfDate) params.asOfDate = asOfDate;
+    const q = new URLSearchParams(params).toString();
     return this.request(`/zelt/balances?${q}`);
   }
   async zeltExportCsv(entity) {
@@ -321,6 +323,15 @@ class ApiClient {
   }
   async zeltClearCache() {
     return this.request('/zelt/cache/clear', { method: 'POST' });
+  }
+  async zeltAudit() {
+    return this.request('/zelt/audit');
+  }
+  async zeltAuditDigest(recipients) {
+    return this.request('/zelt/audit/digest', {
+      method: 'POST',
+      body: JSON.stringify({ recipients }),
+    });
   }
 
   // Logout

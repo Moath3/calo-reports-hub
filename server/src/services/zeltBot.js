@@ -64,41 +64,74 @@ const BROWSER_HEADERS = {
   'Sec-Fetch-Dest': 'empty',
 };
 
+function extractCookies(resp) {
+  const raw = typeof resp.headers.getSetCookie === 'function'
+    ? resp.headers.getSetCookie()
+    : (resp.headers.raw?.()['set-cookie'] || []);
+  return raw.map(c => c.split(';')[0]).filter(Boolean);
+}
+
 async function login() {
   if (loginInFlight) return loginInFlight;
   loginInFlight = (async () => {
     const { email, password } = getCreds();
 
-    // Step 1: Zelt's flow does an SSO check first (GET /apiv2/auth/ssocheck/{email}).
-    // Skipping it sometimes causes the login server to reject the subsequent POST.
+    // Step 1: ssocheck. Browser-flow capture: this call sets session cookies
+    // that Zelt's login server expects on the subsequent POST. We must
+    // forward those cookies — earlier we discarded them, which is why login
+    // fluctuated between working and 401.
+    let preLoginCookies = '';
     try {
-      await fetchWithTimeout(`${ZELT_BASE}/apiv2/auth/ssocheck/${encodeURIComponent(email)}`, {
-        headers: BROWSER_HEADERS,
-      });
+      const ssoResp = await fetchWithTimeout(
+        `${ZELT_BASE}/apiv2/auth/ssocheck/${encodeURIComponent(email)}`,
+        { headers: BROWSER_HEADERS }
+      );
+      const cookies = extractCookies(ssoResp);
+      preLoginCookies = cookies.join('; ');
     } catch (e) {
       console.warn('[zelt-bot] ssocheck failed (continuing):', e.message);
     }
 
-    // Step 2: POST login. Zelt accepts {email, password} (validated end-to-end).
-    const resp = await fetchWithTimeout(LOGIN_URL, {
-      method: 'POST',
-      headers: { ...BROWSER_HEADERS, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password }),
-    });
-    if (!resp.ok) {
+    // Step 2: POST login. Try {email,password} first, fall back to {username,password}
+    // — Zelt has historically accepted both, restoring this fallback to survive
+    // server-side changes.
+    const bodies = [
+      { email, password },
+      { username: email, password },
+    ];
+
+    let lastErr = null;
+    for (const body of bodies) {
+      const headers = { ...BROWSER_HEADERS, 'Content-Type': 'application/json' };
+      if (preLoginCookies) headers.Cookie = preLoginCookies;
+      const resp = await fetchWithTimeout(LOGIN_URL, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body),
+      });
+      if (resp.ok) {
+        const cookies = extractCookies(resp);
+        if (!cookies.length) throw new Error('Zelt bot login returned no Set-Cookie');
+        // Merge ssocheck cookies + login cookies — login may override some,
+        // but ssocheck-only cookies (e.g. csrf or session tracker) might be needed.
+        const merged = new Map();
+        for (const c of preLoginCookies.split('; ').filter(Boolean)) {
+          const [name] = c.split('=');
+          merged.set(name, c);
+        }
+        for (const c of cookies) {
+          const [name] = c.split('=');
+          merged.set(name, c);
+        }
+        cookieJar = Array.from(merged.values()).join('; ');
+        console.log(`[zelt-bot] logged in (${merged.size} cookies, body=${Object.keys(body).join('+')})`);
+        return cookieJar;
+      }
       const text = await resp.text().catch(() => '');
-      throw new Error(`Zelt bot login failed: ${resp.status} ${text.slice(0, 200)}`);
+      lastErr = `${resp.status} ${text.slice(0, 200)}`;
+      console.warn(`[zelt-bot] login attempt body=${Object.keys(body).join('+')} → ${resp.status}`);
     }
-    const rawCookies = typeof resp.headers.getSetCookie === 'function'
-      ? resp.headers.getSetCookie()
-      : (resp.headers.raw?.()['set-cookie'] || []);
-    if (!rawCookies.length) {
-      throw new Error('Zelt bot login returned no Set-Cookie');
-    }
-    const pairs = rawCookies.map(c => c.split(';')[0]).filter(Boolean);
-    cookieJar = pairs.join('; ');
-    console.log(`[zelt-bot] logged in (${pairs.length} cookies)`);
-    return cookieJar;
+    throw new Error(`Zelt bot login failed: ${lastErr}`);
   })().finally(() => { loginInFlight = null; });
   return loginInFlight;
 }

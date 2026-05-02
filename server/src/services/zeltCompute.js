@@ -101,8 +101,13 @@ export async function getBalancesForEntity(entityName) {
     return eNorm === key || eNorm.includes(key) || key.includes(eNorm);
   });
 
-  // Fetch absences year-to-date once, then group by userId
-  const absencesByUser = await fetchAbsencesByUser(targets.map(u => u.userId || u.id));
+  const targetUserIds = targets.map(u => u.userId || u.id);
+
+  // Run absence fetch and per-user basic fetch in parallel
+  const [absencesByUser, basicsByUser] = await Promise.all([
+    fetchAbsencesByUser(targetUserIds),
+    fetchUserBasics(targetUserIds),
+  ]);
 
   const today = new Date();
   const rows = targets.map(u => {
@@ -142,7 +147,7 @@ export async function getBalancesForEntity(entityName) {
     }
 
     return {
-      employeeId: readEmployeeId(u),
+      employeeId: readEmployeeId(u) ?? basicsByUser.get(userId) ?? null,
       userId,
       name: readName(u),
       site: u?.role?.site?.name || u?.site?.name || u?.site || null,
@@ -273,6 +278,56 @@ async function fetchAllUsers() {
     if (page > 50) break; // hard safety: cap at 5000 users
   }
   return all;
+}
+
+// Per-user basic info — the only place Zelt's partner API exposes employeeId.
+// Probed once per session, then cached.
+const BASIC_ENDPOINT_CANDIDATES = [
+  uid => `/apiv2/partner/users/${uid}/basic`,
+  uid => `/apiv2/partner/users/${uid}`,
+  uid => `/apiv2/partner/users/basic/${uid}`,
+];
+let resolvedBasicEndpoint = null;
+
+async function fetchUserBasics(userIds) {
+  if (!userIds.length) return new Map();
+
+  // Probe once
+  if (!resolvedBasicEndpoint) {
+    for (const builder of BASIC_ENDPOINT_CANDIDATES) {
+      try {
+        const probe = await zeltGet(builder(userIds[0]));
+        if (probe && (probe.employeeId || probe.basicInfo?.employeeId || probe.userBasic?.employeeId)) {
+          resolvedBasicEndpoint = builder;
+          console.log(`[zelt] resolved basic endpoint: ${builder('{id}')}`);
+          break;
+        }
+      } catch (err) {
+        console.warn(`[zelt] basic endpoint ${builder('{id}')} failed: ${err.status || ''} ${err.message}`);
+      }
+    }
+    if (!resolvedBasicEndpoint) {
+      console.warn('[zelt] no working basic endpoint — employeeId will be unavailable');
+      return new Map();
+    }
+  }
+
+  // Parallel fetch with concurrency cap to avoid hammering Zelt
+  const map = new Map();
+  const CONCURRENCY = 10;
+  const queue = [...userIds];
+  async function worker() {
+    while (queue.length) {
+      const uid = queue.shift();
+      try {
+        const data = await zeltGet(resolvedBasicEndpoint(uid));
+        const eid = data.employeeId || data.basicInfo?.employeeId || data.userBasic?.employeeId;
+        if (eid) map.set(uid, eid);
+      } catch { /* skip on error */ }
+    }
+  }
+  await Promise.all(Array.from({ length: CONCURRENCY }, worker));
+  return map;
 }
 
 async function fetchAbsencesByUser(userIds) {

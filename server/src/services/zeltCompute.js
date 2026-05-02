@@ -429,8 +429,11 @@ async function fetchUserBasics(userIds) {
     }
   }
 
-  // Parallel fetch with concurrency cap to avoid hammering Zelt
-  const CONCURRENCY = 10;
+  // Parallel fetch with concurrency cap. Was 10 — Zelt's WAF (Akamai)
+  // 403s at ~30 concurrent calls when the bigger entity-balance + absences
+  // fetches are also running in parallel. Drop to 4 to stay well under the
+  // bot-detection threshold.
+  const CONCURRENCY = 4;
   const queue = [...toFetch];
   async function worker() {
     while (queue.length) {

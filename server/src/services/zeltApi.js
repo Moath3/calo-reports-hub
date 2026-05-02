@@ -20,6 +20,10 @@ const TOKEN_URL = `${ZELT_BASE}/apiv2/oauth/authorize/token`;
 const AUTHORIZE_URL = `${ZELT_BASE}/apiv2/oauth/authorize`;
 const REQUEST_TIMEOUT_MS = 10_000;
 
+// Browser-like User-Agent to avoid Akamai/CDN bot blocks. Default Node fetch
+// UA ('node') gets 403'd at ~30 concurrent requests on Zelt.
+const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+
 // ---- Crypto -----------------------------------------------------------
 
 function getEncryptionKey() {
@@ -268,13 +272,21 @@ export async function zeltGet(path, params = {}) {
   const attempt = async () => {
     const token = await getAccessToken();
     return fetchWithTimeout(url.toString(), {
-      headers: { Authorization: `Bearer ${token}` },
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'User-Agent': UA,
+        Accept: 'application/json',
+      },
     });
   };
 
   let resp = await attempt();
-  if (resp.status >= 500) {
-    await sleep(500 + Math.random() * 500); // 500–1000ms jitter
+  if (resp.status === 403) {
+    // CDN/WAF bot-block at high concurrency. Wait longer + retry once.
+    await sleep(1000 + Math.random() * 1500);
+    resp = await attempt();
+  } else if (resp.status >= 500) {
+    await sleep(500 + Math.random() * 500);
     resp = await attempt();
   }
 

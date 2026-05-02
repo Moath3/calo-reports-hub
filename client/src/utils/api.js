@@ -116,6 +116,13 @@ class ApiClient {
     return this.request(`/auth/users/${userId}/toggle`, { method: 'PATCH' });
   }
 
+  async setUserRole(userId, role) {
+    return this.request(`/auth/users/${userId}/role`, {
+      method: 'PATCH',
+      body: JSON.stringify({ role }),
+    });
+  }
+
   // Upload
   async uploadFile(file) {
     const formData = new FormData();

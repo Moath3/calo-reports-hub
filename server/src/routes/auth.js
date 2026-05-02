@@ -199,6 +199,9 @@ router.patch('/users/:id/role', requireAuth, requireAdmin, (req, res) => {
   const db = getDb();
   const user = db.prepare('SELECT id FROM users WHERE id = ?').get(req.params.id);
   if (!user) return res.status(404).json({ error: 'User not found' });
+  if (user.id === req.user.id && role !== 'admin') {
+    return res.status(400).json({ error: 'Cannot demote yourself — ask another admin' });
+  }
   db.prepare('UPDATE users SET role = ? WHERE id = ?').run(role, req.params.id);
   res.json({ message: `User role updated to ${role}` });
 });

@@ -70,6 +70,18 @@ export default function SettingsPage() {
     }
   };
 
+  const toggleRole = async (uid, currentRole) => {
+    const next = currentRole === 'admin' ? 'employee' : 'admin';
+    if (!confirm(`Set this user's role to ${next}?`)) return;
+    try {
+      const res = await api.setUserRole(uid, next);
+      toast.success(res.message);
+      setUsers(prev => prev.map(u => u.id === uid ? { ...u, role: next } : u));
+    } catch (err) {
+      toast.error(err.message || 'Failed');
+    }
+  };
+
   const tabs = [
     { key: 'profile', label: 'Profile', icon: User },
     { key: 'password', label: 'Password', icon: Lock },
@@ -219,7 +231,18 @@ export default function SettingsPage() {
                           <div className="text-sm font-medium text-gray-900">{u.name}</div>
                           <div className="text-xs text-gray-500">{u.email} &middot; {u.department || 'No department'}</div>
                         </div>
-                        <span className={u.role === 'admin' ? 'badge-green' : 'badge-blue'}>{u.role}</span>
+                        {u.id !== user.id ? (
+                          <button
+                            onClick={() => toggleRole(u.id, u.role)}
+                            className={u.role === 'admin' ? 'badge-green' : 'badge-blue'}
+                            style={{ cursor: 'pointer', border: 'none' }}
+                            title={`Click to ${u.role === 'admin' ? 'demote to employee' : 'promote to admin'}`}
+                          >
+                            {u.role}
+                          </button>
+                        ) : (
+                          <span className={u.role === 'admin' ? 'badge-green' : 'badge-blue'}>{u.role}</span>
+                        )}
                         <span className="badge-green">Active</span>
                         {u.id !== user.id && (
                           <button onClick={() => toggleUserStatus(u.id)} className="btn-ghost p-1.5" title="Deactivate">

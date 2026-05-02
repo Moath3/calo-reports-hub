@@ -29,6 +29,14 @@ function ProtectedRoute({ children }) {
   return children;
 }
 
+function AdminRoute({ children }) {
+  const { user, loading } = useAuth();
+  if (loading) return null;
+  if (!user) return <Navigate to="/login" replace />;
+  if (user.role !== 'admin') return <Navigate to="/" replace />;
+  return children;
+}
+
 function PublicRoute({ children }) {
   const { user, loading } = useAuth();
   if (loading) {
@@ -56,7 +64,7 @@ export default function App() {
         <Route path="settings" element={<SettingsPage />} />
         <Route path="guide" element={<GuidePage />} />
         <Route path="leave-balances" element={<ZeltLeavePage />} />
-        <Route path="data-hygiene" element={<ZeltAuditPage />} />
+        <Route path="data-hygiene" element={<AdminRoute><ZeltAuditPage /></AdminRoute>} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

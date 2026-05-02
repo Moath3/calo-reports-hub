@@ -11,7 +11,7 @@ const mainNav = [
   { to: '/reports',       icon: 'FolderOpen',      label: 'My Reports' },
   { to: '/templates',     icon: 'LayoutTemplate',  label: 'Templates' },
   { to: '/leave-balances', icon: 'CalendarCheck',  label: 'Leave Balances' },
-  { to: '/data-hygiene',   icon: 'ShieldCheck',     label: 'Data Hygiene' },
+  { to: '/data-hygiene',   icon: 'ShieldCheck',     label: 'Data Hygiene', adminOnly: true },
 ];
 
 const footerNav = [
@@ -142,7 +142,7 @@ export default function Layout() {
 
         {/* Main nav */}
         <nav style={{ padding: '8px 12px', display: 'flex', flexDirection: 'column', gap: 2 }}>
-          {mainNav.map(n => (
+          {mainNav.filter(n => !n.adminOnly || user?.role === 'admin').map(n => (
             <NavItem
               key={n.to}
               {...n}

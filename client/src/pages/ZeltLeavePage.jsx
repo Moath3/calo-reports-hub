@@ -265,7 +265,7 @@ export default function ZeltLeavePage() {
                   <Th onClick={() => handleSort('site')} active={sort.key === 'site'} dir={sort.dir}>Site</Th>
                   <Th onClick={() => handleSort('department')} active={sort.key === 'department'} dir={sort.dir}>Department</Th>
                   <Th onClick={() => handleSort('jobTitle')} active={sort.key === 'jobTitle'} dir={sort.dir}>Job Title</Th>
-                  <Th onClick={() => handleSort('history')} active={sort.key === 'history'} dir={sort.dir} align="right">Taken YTD</Th>
+                  <Th onClick={() => handleSort('policy')} active={sort.key === 'policy'} dir={sort.dir}>Policy</Th>
                   <Th onClick={() => handleSort('upcoming')} active={sort.key === 'upcoming'} dir={sort.dir} align="right">Upcoming</Th>
                   <Th onClick={() => handleSort('availableNow')} active={sort.key === 'availableNow'} dir={sort.dir} align="right">Available Now</Th>
                 </tr>
@@ -283,7 +283,7 @@ export default function ZeltLeavePage() {
                     <Td>{r.site || '—'}</Td>
                     <Td>{r.department || '—'}</Td>
                     <Td>{r.jobTitle || '—'}</Td>
-                    <Td align="right">{r.history > 0 ? `${r.history.toFixed(1)}d` : '0'}</Td>
+                    <Td>{r.policy || '—'}</Td>
                     <Td align="right">{r.upcoming > 0 ? `${r.upcoming.toFixed(1)}d` : '0'}</Td>
                     <Td align="right" bold>
                       {r.availableNow != null ? `${r.availableNow.toFixed(1)}d` :

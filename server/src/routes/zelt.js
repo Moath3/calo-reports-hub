@@ -212,8 +212,8 @@ router.get('/debug/sample', oauthLimiter, requireAuth, requireAdmin, async (req,
 });
 
 function toCsv(rows) {
-  const cols = ['employeeId', 'name', 'site', 'department', 'jobTitle', 'startDate',
-                'allowance', 'carryOver', 'history', 'upcoming', 'availableNow', 'confidence'];
+  const cols = ['employeeId', 'name', 'site', 'department', 'jobTitle', 'policy',
+                'startDate', 'upcoming', 'availableNow'];
   const header = cols.join(',');
   const body = rows.map(r => cols.map(c => csvCell(r[c])).join(',')).join('\n');
   return `${header}\n${body}\n`;

@@ -164,6 +164,7 @@ export async function getBalancesForEntity(entityName) {
       department: u?.role?.department?.name || u?.department?.name || u?.department || null,
       jobTitle: u?.role?.jobPosition?.title || u?.jobTitle || u?.position || null,
       startDate: u.startDate || u?.lifecycle?.startDate || null,
+      policy: liveBalance?.policyName || null,
       allowance,
       carryOver,
       history: round1(history),
@@ -362,11 +363,12 @@ async function tryFetchBalances(userIds) {
       const accrued = ((policyData.holidayAccruedToBookNow || 0) + (policyData.unitsTaken?.upcoming || 0)) / wd;
       const upcoming = (policyData.unitsTaken?.upcoming || 0) / wd;
       const total = (policyData.totalAllowanceForCycle || 0) / wd;
-      const prev = balances.get(uid) || { available_now: 0, upcoming_booked: 0, total: 0 };
+      const prev = balances.get(uid) || { available_now: 0, upcoming_booked: 0, total: 0, policyName: null };
       balances.set(uid, {
         available_now: prev.available_now + accrued,
         upcoming_booked: prev.upcoming_booked + upcoming,
         total: prev.total + total,
+        policyName: prev.policyName || policyData.policyName || null,
       });
     }
   }

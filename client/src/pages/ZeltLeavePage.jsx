@@ -272,7 +272,7 @@ export default function ZeltLeavePage() {
               </thead>
               <tbody>
                 {filtered.length === 0 ? (
-                  <tr><td colSpan={7} style={{ padding: '24px 16px', textAlign: 'center', color: 'var(--ink-500)' }}>
+                  <tr><td colSpan={8} style={{ padding: '24px 16px', textAlign: 'center', color: 'var(--ink-500)' }}>
                     No employees match the filter.
                   </td></tr>
                 ) : filtered.map((r, i) => (
@@ -416,21 +416,6 @@ function ErrorBanner({ message, onClose }) {
       <span>{message}</span>
       <button onClick={onClose} style={{ border: 'none', background: 'none', color: '#9f2f2f', cursor: 'pointer', fontWeight: 700 }}>×</button>
     </div>
-  );
-}
-
-function ConfidenceBadge({ level }) {
-  const map = {
-    high: { bg: 'var(--calo-50, #d9f0e5)', fg: 'var(--calo-700, #1e8359)', label: 'High' },
-    medium: { bg: '#FFF4D6', fg: '#9A6F0E', label: 'Medium' },
-    low: { bg: '#FDECEC', fg: '#9f2f2f', label: 'Low' },
-  };
-  const m = map[level] || map.low;
-  return (
-    <span style={{
-      display: 'inline-block', padding: '2px 8px', background: m.bg, color: m.fg,
-      borderRadius: 999, fontSize: 11, fontWeight: 800, letterSpacing: '.02em',
-    }}>{m.label}</span>
   );
 }
 

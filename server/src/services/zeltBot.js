@@ -79,37 +79,26 @@ async function login() {
       console.warn('[zelt-bot] ssocheck failed (continuing):', e.message);
     }
 
-    // Step 2: try multiple body shapes, one at a time.
-    // Zelt has historically accepted both {email,password} and {username,password}.
-    const bodies = [
-      { email, password },
-      { username: email, password },
-    ];
-
-    let lastErr = null;
-    for (const body of bodies) {
-      const resp = await fetchWithTimeout(LOGIN_URL, {
-        method: 'POST',
-        headers: { ...BROWSER_HEADERS, 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      if (resp.ok) {
-        const rawCookies = typeof resp.headers.getSetCookie === 'function'
-          ? resp.headers.getSetCookie()
-          : (resp.headers.raw?.()['set-cookie'] || []);
-        if (!rawCookies.length) {
-          throw new Error('Zelt bot login returned no Set-Cookie');
-        }
-        const pairs = rawCookies.map(c => c.split(';')[0]).filter(Boolean);
-        cookieJar = pairs.join('; ');
-        console.log(`[zelt-bot] logged in (${pairs.length} cookies, body=${Object.keys(body).join('+')})`);
-        return cookieJar;
-      }
+    // Step 2: POST login. Zelt accepts {email, password} (validated end-to-end).
+    const resp = await fetchWithTimeout(LOGIN_URL, {
+      method: 'POST',
+      headers: { ...BROWSER_HEADERS, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    });
+    if (!resp.ok) {
       const text = await resp.text().catch(() => '');
-      lastErr = `${resp.status} ${text.slice(0, 200)}`;
-      console.warn(`[zelt-bot] login attempt with body ${Object.keys(body).join('+')} → ${resp.status}`);
+      throw new Error(`Zelt bot login failed: ${resp.status} ${text.slice(0, 200)}`);
     }
-    throw new Error(`Zelt bot login failed after all attempts: ${lastErr}`);
+    const rawCookies = typeof resp.headers.getSetCookie === 'function'
+      ? resp.headers.getSetCookie()
+      : (resp.headers.raw?.()['set-cookie'] || []);
+    if (!rawCookies.length) {
+      throw new Error('Zelt bot login returned no Set-Cookie');
+    }
+    const pairs = rawCookies.map(c => c.split(';')[0]).filter(Boolean);
+    cookieJar = pairs.join('; ');
+    console.log(`[zelt-bot] logged in (${pairs.length} cookies)`);
+    return cookieJar;
   })().finally(() => { loginInFlight = null; });
   return loginInFlight;
 }

@@ -256,7 +256,8 @@ export async function getAccessToken() {
 }
 
 /**
- * Auth-aware GET. Adds Bearer header. Refreshes once on 401. Retries once on 5xx with backoff.
+ * Auth-aware GET. Adds Bearer header. Retries once on 5xx with backoff.
+ * 401 surfaces directly (usually scope, not dead session) — caller decides.
  */
 export async function zeltGet(path, params = {}) {
   const url = new URL(path, ZELT_BASE);
@@ -264,27 +265,7 @@ export async function zeltGet(path, params = {}) {
     if (v !== undefined && v !== null) url.searchParams.set(k, String(v));
   }
 
-  const attempt = async (forceRefresh = false) => {
-    if (forceRefresh) {
-      // Funnel through the mutex — never call refreshTokens directly here,
-      // which would race against concurrent getAccessToken refreshes and
-      // invalidate the rotated refresh_token (causing total session loss).
-      const t = readTokens();
-      if (!t) throw new Error('NotConnected');
-      // Force expiration so getAccessToken triggers the mutex-protected refresh
-      try {
-        if (refreshInFlight) {
-          await refreshInFlight;
-        } else {
-          refreshInFlight = refreshTokens(t.updatedAt).finally(() => { refreshInFlight = null; });
-          await refreshInFlight;
-        }
-      } catch (err) {
-        // Refresh failed — but don't propagate as session-kill unless tokens
-        // were actually wiped (refreshTokens does that on its own for 401/400).
-        throw err;
-      }
-    }
+  const attempt = async () => {
     const token = await getAccessToken();
     return fetchWithTimeout(url.toString(), {
       headers: { Authorization: `Bearer ${token}` },
@@ -292,16 +273,7 @@ export async function zeltGet(path, params = {}) {
   };
 
   let resp = await attempt();
-  if (resp.status === 401) {
-    // 401 on a specific endpoint usually means missing scope, not dead session.
-    // Don't refresh + retry blindly — that risks wiping tokens. Just surface
-    // the 401 so caller can decide (e.g. tryFetchBalances treats it as
-    // 'feature unavailable' without killing connection).
-    const text = await resp.text().catch(() => '');
-    const err = new Error(`Zelt API 401: ${text.slice(0, 200)}`);
-    err.status = 401;
-    throw err;
-  } else if (resp.status >= 500) {
+  if (resp.status >= 500) {
     await sleep(500 + Math.random() * 500); // 500–1000ms jitter
     resp = await attempt();
   }

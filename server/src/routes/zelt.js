@@ -2,19 +2,29 @@
  * Zelt OAuth + integration routes.
  *
  * Bootstrap (admin-only):
- *   POST /api/zelt/oauth/init       → returns { authorizeUrl } with signed state
- *   GET  /api/zelt/oauth/callback   → consumes state, exchanges code → tokens
+ *   POST /api/zelt/oauth/init       → returns redirect URI + manual-flow steps
+ *   GET  /api/zelt/oauth/callback   → exchanges code → tokens
  *   POST /api/zelt/disconnect       → wipes tokens
+ *   POST /api/zelt/cache/clear      → clears server-side caches
+ *   GET  /api/zelt/debug/sample     → raw sample of one user (admin only)
  *
  * Read (auth):
  *   GET  /api/zelt/status           → { connected: bool, lastRefresh: ts }
- *
- * Phase 3 will add /entities and /balances.
+ *   GET  /api/zelt/entities         → { entities: string[] }
+ *   GET  /api/zelt/balances?entity= → balance rows + diagnostic
+ *   POST /api/zelt/balances/export?entity= → CSV download
  */
 import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
 import { requireAuth, requireAdmin } from '../middleware/auth.js';
 import { getDb } from '../db/database.js';
+import {
+  getBootstrapInstructions,
+  exchangeCodeForTokens,
+  getStatus,
+  disconnect,
+} from '../services/zeltApi.js';
+import { listEntities, getBalancesForEntity, clearCaches, debugSampleUser } from '../services/zeltCompute.js';
 
 const IS_PROD = process.env.NODE_ENV === 'production';
 
@@ -29,13 +39,6 @@ function logZeltAudit(userId, action, details = {}) {
     console.error('[zelt/audit]', e.message);
   }
 }
-import {
-  getBootstrapInstructions,
-  exchangeCodeForTokens,
-  getStatus,
-  disconnect,
-} from '../services/zeltApi.js';
-import { listEntities, getBalancesForEntity, clearCaches, debugSampleUser } from '../services/zeltCompute.js';
 
 const router = Router();
 

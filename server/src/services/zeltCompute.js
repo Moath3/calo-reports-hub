@@ -43,7 +43,7 @@ export async function listEntities() {
   for (const path of ENTITY_ENDPOINT_CANDIDATES) {
     try {
       const data = await zeltGet(path, { page: 1, pageSize: 200 });
-      const items = data.items || data.data || (Array.isArray(data) ? data : null);
+      const items = readItems(data);
       if (items && items.length > 0) {
         const set = new Set();
         for (const it of items) {
@@ -81,8 +81,6 @@ export async function getBalancesForEntity(entityName) {
   if (cached && cached.expiresAt > Date.now()) return cached.value;
 
   const users = await fetchAllUsers();
-  const yearStart = new Date(new Date().getFullYear(), 0, 1);
-  const yearEnd = new Date(new Date().getFullYear(), 11, 31, 23, 59, 59);
 
   // Dedupe — partner endpoint sometimes returns one row per contract.
   const seen = new Map();
@@ -232,65 +230,57 @@ const ENTITY_ENDPOINT_CANDIDATES = [
   '/apiv2/partner/companies/entities',
 ];
 
-async function fetchUsersFirstPages(maxPages) {
-  const all = [];
-  if (!resolvedUsersEndpoint) {
-    // Run probe inline (same logic as fetchAllUsers, but cap pages).
-    for (const path of USERS_ENDPOINT_CANDIDATES) {
-      try {
-        const probe = await zeltGet(path, { page: 1, pageSize: 1 });
-        const items = probe.items || probe.data || (Array.isArray(probe) ? probe : null);
-        if (items != null) { resolvedUsersEndpoint = path; break; }
-      } catch { /* try next */ }
-    }
-    if (!resolvedUsersEndpoint) {
-      throw new Error('No working users endpoint found on Zelt partner API.');
+function readItems(json) {
+  return json.items || json.data || (Array.isArray(json) ? json : []);
+}
+
+async function resolveUsersEndpoint() {
+  if (resolvedUsersEndpoint) return resolvedUsersEndpoint;
+  for (const path of USERS_ENDPOINT_CANDIDATES) {
+    try {
+      const probe = await zeltGet(path, { page: 1, pageSize: 1 });
+      if (readItems(probe) != null) {
+        resolvedUsersEndpoint = path;
+        console.log(`[zelt] resolved users endpoint: ${path}`);
+        return path;
+      }
+    } catch (err) {
+      console.warn(`[zelt] users endpoint ${path} failed: ${err.status || ''} ${err.message}`);
     }
   }
+  throw new Error(
+    'Could not find a working users endpoint on Zelt partner API. ' +
+    'Tried: ' + USERS_ENDPOINT_CANDIDATES.join(', ') +
+    '. Check render logs for upstream errors. May need scope confirmation from Zelt CSM.'
+  );
+}
+
+async function fetchUsersFirstPages(maxPages) {
+  const endpoint = await resolveUsersEndpoint();
+  const all = [];
   for (let page = 1; page <= maxPages; page++) {
-    const json = await zeltGet(resolvedUsersEndpoint, { page, pageSize: PAGE_SIZE });
-    const items = json.items || json.data || (Array.isArray(json) ? json : []);
+    const json = await zeltGet(endpoint, { page, pageSize: PAGE_SIZE });
+    const items = readItems(json);
     all.push(...items);
     if (items.length < PAGE_SIZE) break;
   }
   return all;
 }
 
+const MAX_USER_PAGES = 50; // hard safety: 50 × PAGE_SIZE = 5000 users
+
 async function fetchAllUsers() {
   // Cache full user list across calls — heaviest fetch in the system.
   if (cache.allUsers.value && cache.allUsers.expiresAt > Date.now()) {
     return cache.allUsers.value;
   }
-  let page = 1;
+  const endpoint = await resolveUsersEndpoint();
   const all = [];
-  // Resolve endpoint on first call by probing each candidate
-  if (!resolvedUsersEndpoint) {
-    for (const path of USERS_ENDPOINT_CANDIDATES) {
-      try {
-        const probe = await zeltGet(path, { page: 1, pageSize: 1 });
-        // Sanity check: must have items array or be an array
-        const items = probe.items || probe.data || (Array.isArray(probe) ? probe : null);
-        if (items != null) {
-          resolvedUsersEndpoint = path;
-          console.log(`[zelt] resolved users endpoint: ${path}`);
-          break;
-        }
-      } catch (err) {
-        console.warn(`[zelt] users endpoint ${path} failed: ${err.status || ''} ${err.message}`);
-      }
-    }
-    if (!resolvedUsersEndpoint) {
-      throw new Error(
-        'Could not find a working users endpoint on Zelt partner API. ' +
-        'Tried: ' + USERS_ENDPOINT_CANDIDATES.join(', ') +
-        '. Check render logs for upstream errors. May need scope confirmation from Zelt CSM.'
-      );
-    }
-  }
+  let page = 1;
 
   while (true) {
-    const json = await zeltGet(resolvedUsersEndpoint, { page, pageSize: PAGE_SIZE });
-    const items = json.items || json.data || (Array.isArray(json) ? json : []);
+    const json = await zeltGet(endpoint, { page, pageSize: PAGE_SIZE });
+    const items = readItems(json);
     all.push(...items);
     const totalPages = json.totalPages ?? null;
     if (totalPages != null) {
@@ -299,17 +289,16 @@ async function fetchAllUsers() {
       break;
     }
     page++;
-    if (page > 50) break; // hard safety: cap at 5000 users
+    if (page > MAX_USER_PAGES) break;
   }
   cache.allUsers = { value: all, expiresAt: Date.now() + ALL_USERS_TTL_MS };
   return all;
 }
 
-// Try Zelt's internal company-balance endpoint with our partner bearer token.
-// It's not in the partner docs but uses the same auth — worth trying before
-// giving up on Available Now. Returns map: userId → { available_now_days, total_days }.
+// Fetches "Available Now" via the bot session against Zelt's internal
+// /apiv2/absences/company/balance. Returns map: userId → balance summary.
 const ANNUAL_POLICY_PROBE_LIMIT = 30;
-let resolvedBalanceEndpoint = null;
+const WORKDAY_MINUTES_FALLBACK = 480; // 8h × 60m — Zelt's default workday
 let resolvedAnnualPolicyIds = null;
 
 async function tryFetchBalances(userIds) {
@@ -375,7 +364,7 @@ async function tryFetchBalances(userIds) {
       const uid = item.userId;
       const policyData = item[pid];
       if (!policyData) continue;
-      const wd = policyData.currentAverageWorkDayLength || 480;
+      const wd = policyData.currentAverageWorkDayLength || WORKDAY_MINUTES_FALLBACK;
       // KEY: holidayAccruedToBookNow / workdayLength = "Available now"
       // Includes upcoming bookings already deducted. Add unitsTaken.upcoming back
       // per the locked rule from leave-recon (don't subtract future bookings).
@@ -480,7 +469,7 @@ async function fetchAbsencesByUser(userIds) {
         page,
         pageSize: PAGE_SIZE,
       });
-      const items = json.items || json.data || (Array.isArray(json) ? json : []);
+      const items = readItems(json);
       all.push(...items);
       const totalPages = json.totalPages ?? null;
       if (totalPages != null) {
@@ -489,7 +478,7 @@ async function fetchAbsencesByUser(userIds) {
         break;
       }
       page++;
-      if (page > 50) break;
+      if (page > MAX_USER_PAGES) break;
     }
     return all;
   }));
@@ -606,16 +595,4 @@ function findKeysByPattern(obj, re, prefix = '', depth = 0, acc = []) {
     }
   }
   return acc;
-}
-
-function describeShape(o, depth = 0) {
-  if (depth > 3) return '…';
-  if (o === null) return 'null';
-  if (Array.isArray(o)) return `array[${o.length}]`;
-  if (typeof o !== 'object') return typeof o;
-  const out = {};
-  for (const [k, v] of Object.entries(o)) {
-    out[k] = describeShape(v, depth + 1);
-  }
-  return out;
 }

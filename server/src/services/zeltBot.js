@@ -51,31 +51,65 @@ function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
  * Log in as the bot user, capture the session cookie.
  * Single-flight: concurrent callers share the same login Promise.
  */
+// Browser-like headers — Zelt's /auth/login may reject bare API requests
+// that lack a User-Agent / Origin / Accept-Language combo.
+const BROWSER_HEADERS = {
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+  'Accept': 'application/json, text/plain, */*',
+  'Accept-Language': 'en-US,en;q=0.9',
+  'Origin': 'https://go.zelt.app',
+  'Referer': 'https://go.zelt.app/',
+  'Sec-Fetch-Site': 'same-origin',
+  'Sec-Fetch-Mode': 'cors',
+  'Sec-Fetch-Dest': 'empty',
+};
+
 async function login() {
   if (loginInFlight) return loginInFlight;
   loginInFlight = (async () => {
     const { email, password } = getCreds();
-    const resp = await fetchWithTimeout(LOGIN_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password }),
-    });
-    if (!resp.ok) {
+
+    // Step 1: Zelt's flow does an SSO check first (GET /apiv2/auth/ssocheck/{email}).
+    // Skipping it sometimes causes the login server to reject the subsequent POST.
+    try {
+      await fetchWithTimeout(`${ZELT_BASE}/apiv2/auth/ssocheck/${encodeURIComponent(email)}`, {
+        headers: BROWSER_HEADERS,
+      });
+    } catch (e) {
+      console.warn('[zelt-bot] ssocheck failed (continuing):', e.message);
+    }
+
+    // Step 2: try multiple body shapes, one at a time.
+    // Zelt has historically accepted both {email,password} and {username,password}.
+    const bodies = [
+      { email, password },
+      { username: email, password },
+    ];
+
+    let lastErr = null;
+    for (const body of bodies) {
+      const resp = await fetchWithTimeout(LOGIN_URL, {
+        method: 'POST',
+        headers: { ...BROWSER_HEADERS, 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (resp.ok) {
+        const rawCookies = typeof resp.headers.getSetCookie === 'function'
+          ? resp.headers.getSetCookie()
+          : (resp.headers.raw?.()['set-cookie'] || []);
+        if (!rawCookies.length) {
+          throw new Error('Zelt bot login returned no Set-Cookie');
+        }
+        const pairs = rawCookies.map(c => c.split(';')[0]).filter(Boolean);
+        cookieJar = pairs.join('; ');
+        console.log(`[zelt-bot] logged in (${pairs.length} cookies, body=${Object.keys(body).join('+')})`);
+        return cookieJar;
+      }
       const text = await resp.text().catch(() => '');
-      throw new Error(`Zelt bot login failed: ${resp.status} ${text.slice(0, 200)}`);
+      lastErr = `${resp.status} ${text.slice(0, 200)}`;
+      console.warn(`[zelt-bot] login attempt with body ${Object.keys(body).join('+')} → ${resp.status}`);
     }
-    // Capture Set-Cookie header(s). Express-style cookies; we keep only name=value pairs.
-    // Node's fetch exposes raw set-cookie via headers.getSetCookie() (Node 19+).
-    const rawCookies = typeof resp.headers.getSetCookie === 'function'
-      ? resp.headers.getSetCookie()
-      : (resp.headers.raw?.()['set-cookie'] || []);
-    if (!rawCookies.length) {
-      throw new Error('Zelt bot login returned no Set-Cookie');
-    }
-    const pairs = rawCookies.map(c => c.split(';')[0]).filter(Boolean);
-    cookieJar = pairs.join('; ');
-    console.log(`[zelt-bot] logged in (${pairs.length} cookies)`);
-    return cookieJar;
+    throw new Error(`Zelt bot login failed after all attempts: ${lastErr}`);
   })().finally(() => { loginInFlight = null; });
   return loginInFlight;
 }

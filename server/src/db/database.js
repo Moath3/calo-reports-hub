@@ -226,6 +226,12 @@ function initSchema() {
       created_at INTEGER NOT NULL,
       consumed INTEGER DEFAULT 0
     );
+
+    CREATE TABLE IF NOT EXISTS zelt_bot_session (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      cookie_jar TEXT NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
   `);
 
   // Create indexes individually (sql.js exec doesn't support multiple statements well with IF NOT EXISTS)

@@ -109,6 +109,12 @@ function clearTokens() {
   persistNow();
 }
 
+// Track consecutive refresh failures — only wipe after N to survive transient
+// 401s (parallel-refresh races, brief Zelt outages, etc.) without forcing a
+// re-bootstrap of the entire integration.
+let refreshFailureCount = 0;
+const MAX_REFRESH_FAILURES = 3;
+
 // ---- OAuth flow -------------------------------------------------------
 
 /**
@@ -210,11 +216,19 @@ async function refreshTokens(prevUpdatedAt) {
     const fresh = readTokens();
     if (fresh && fresh.updatedAt > prevUpdatedAt) {
       // Another refresh succeeded in parallel — use those tokens.
+      refreshFailureCount = 0;
       return fresh;
     }
-    // True failure. Wipe.
-    clearTokens();
-    throw new Error('NotConnected');
+    refreshFailureCount += 1;
+    console.warn(`[zelt] refresh rejected (${refreshFailureCount}/${MAX_REFRESH_FAILURES})`);
+    if (refreshFailureCount >= MAX_REFRESH_FAILURES) {
+      console.error('[zelt] refresh failed N times — clearing tokens, admin must re-bootstrap');
+      clearTokens();
+      refreshFailureCount = 0;
+      throw new Error('NotConnected');
+    }
+    // Soft fail — caller surfaces error but tokens remain for next attempt.
+    throw new Error('Refresh failed (transient) — try again');
   }
 
   if (!resp.ok) {
@@ -231,6 +245,7 @@ async function refreshTokens(prevUpdatedAt) {
     refreshToken,
     expiresAt: Date.now() + expiresIn * 1000,
   });
+  refreshFailureCount = 0;
   return readTokens();
 }
 

@@ -19,12 +19,47 @@
  *   - On 5xx we retry once with backoff; on 401 we re-login + retry.
  */
 
+import { getDb, persistNow } from '../db/database.js';
+
 const ZELT_BASE = 'https://go.zelt.app';
 const LOGIN_URL = `${ZELT_BASE}/apiv2/auth/login`;
+const HEARTBEAT_URL = `${ZELT_BASE}/apiv2/auth/me`;
 const REQUEST_TIMEOUT_MS = 15_000;
+const HEARTBEAT_INTERVAL_MS = 15 * 60 * 1000; // 15 min — keeps session rolling
 
-let cookieJar = null;        // string of cookie pairs to send on every request
+let cookieJar = null;        // in-memory cache; backed by DB
 let loginInFlight = null;    // Promise mutex for single-flight login
+let heartbeatTimer = null;
+
+// ---- Persistence -----------------------------------------------------
+
+function loadCookieFromDb() {
+  try {
+    const row = getDb().prepare('SELECT cookie_jar FROM zelt_bot_session WHERE id = 1').get();
+    if (row?.cookie_jar) {
+      cookieJar = row.cookie_jar;
+      console.log('[zelt-bot] cookie restored from DB');
+    }
+  } catch (e) { /* table may not exist yet */ }
+}
+
+function saveCookieToDb(jar) {
+  try {
+    getDb().prepare(`
+      INSERT INTO zelt_bot_session (id, cookie_jar, updated_at)
+      VALUES (1, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET cookie_jar = excluded.cookie_jar, updated_at = excluded.updated_at
+    `).run(jar, Date.now());
+    persistNow();
+  } catch (e) { console.error('[zelt-bot] persist failed:', e.message); }
+}
+
+function clearCookieDb() {
+  try {
+    getDb().prepare('DELETE FROM zelt_bot_session WHERE id = 1').run();
+    persistNow();
+  } catch (e) { /* ignore */ }
+}
 
 function getCreds() {
   const email = process.env.ZELT_BOT_EMAIL;
@@ -148,6 +183,8 @@ async function login() {
           merged.set(name, c);
         }
         cookieJar = Array.from(merged.values()).join('; ');
+        saveCookieToDb(cookieJar);
+        startHeartbeat();
         console.log(`[zelt-bot] logged in (${merged.size} cookies, body=${Object.keys(body).join('+')})`);
         return cookieJar;
       }
@@ -165,7 +202,11 @@ async function login() {
  * auto-re-logs-in once on 401.
  */
 export async function botGet(path, params = {}) {
-  if (!cookieJar) await login();
+  if (!cookieJar) {
+    loadCookieFromDb();
+    if (!cookieJar) await login();
+    else startHeartbeat();
+  }
 
   const url = new URL(path, ZELT_BASE);
   for (const [k, v] of Object.entries(params)) {
@@ -182,6 +223,7 @@ export async function botGet(path, params = {}) {
   let resp = await attempt();
   if (resp.status === 401) {
     cookieJar = null;
+    clearCookieDb();
     resp = await attempt(true); // re-login + retry
   } else if (resp.status >= 500) {
     await sleep(500 + Math.random() * 500);
@@ -206,8 +248,37 @@ export function botConfigured() {
 }
 
 /**
- * Logout (clears in-memory cookie). Useful for rotation / disconnect flows.
+ * Logout (clears cookie in-memory + DB + stops heartbeat).
  */
 export function botLogout() {
   cookieJar = null;
+  clearCookieDb();
+  if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
+}
+
+// Periodic heartbeat — keeps Zelt's rolling session alive indefinitely.
+// Without this, the cookie expires after ~few hours of inactivity.
+function startHeartbeat() {
+  if (heartbeatTimer) return;
+  heartbeatTimer = setInterval(async () => {
+    if (!cookieJar) return;
+    try {
+      const r = await fetchWithTimeout(HEARTBEAT_URL, {
+        headers: { Cookie: cookieJar, Accept: 'application/json', 'User-Agent': BROWSER_HEADERS['User-Agent'] },
+      });
+      if (r.status === 401) {
+        console.log('[zelt-bot] heartbeat got 401 — re-logging in');
+        cookieJar = null;
+        clearCookieDb();
+        try { await login(); } catch (e) { console.error('[zelt-bot] heartbeat re-login failed:', e.message); }
+      } else if (r.ok) {
+        // Refresh the cookie's updated_at in DB so we don't lose track of when last activity was.
+        saveCookieToDb(cookieJar);
+      }
+    } catch (e) {
+      console.warn('[zelt-bot] heartbeat error:', e.message);
+    }
+  }, HEARTBEAT_INTERVAL_MS);
+  // Don't keep the process alive just for the heartbeat
+  if (heartbeatTimer.unref) heartbeatTimer.unref();
 }

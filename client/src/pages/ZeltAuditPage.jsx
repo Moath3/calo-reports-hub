@@ -7,12 +7,19 @@ const SEVERITY = {
   activeWithLeaveDate: 'high',
   activeButTerminated: 'high',
   duplicateEmployeeIds: 'high',
+  unapprovedEntity: 'high',
+  legacySiteAssigned: 'high',
+  currencyMismatch: 'high',
+  placeholderEmails: 'high',
   missingEmployeeId: 'medium',
   duplicateNames: 'medium',
   missingEntity: 'medium',
-  missingSite: 'low',
   missingDepartment: 'low',
+  missingSite: 'low',
   missingManager: 'medium',
+  unapprovedDepartment: 'medium',
+  duplicateJobTitleVariants: 'medium',
+  rareJobTitles: 'low',
   futureJoiners: 'low',
   staleCreated: 'low',
   testUsers: 'medium',
@@ -31,6 +38,14 @@ const LABELS = {
   futureJoiners: 'Future joiners (>90 days out)',
   staleCreated: 'Stale "Created" status (>90 days)',
   testUsers: 'Test users on Active status',
+  // Guide-driven
+  unapprovedEntity: 'Entity not in approved CR list',
+  unapprovedDepartment: 'Department not in approved list (18 expected)',
+  legacySiteAssigned: 'Active user on a legacy "[Not in use]" site',
+  currencyMismatch: 'Entity currency mismatch (KSA in GBP, etc.)',
+  rareJobTitles: 'Job titles used by only 1 employee (typos?)',
+  duplicateJobTitleVariants: 'Job title case/spacing duplicates (LINE COOK vs Line Cook)',
+  placeholderEmails: 'Active users with @dummy / @noreply emails',
 };
 
 export default function ZeltAuditPage() {
@@ -96,6 +111,20 @@ export default function ZeltAuditPage() {
           <StatCard key={k} label={k} value={v} muted />
         ))}
       </div>
+
+      {/* Guide-driven stats — vs vs expected */}
+      {report.stats && (
+        <div style={{ ...panel, padding: 16 }}>
+          <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--ink-500)', letterSpacing: '.06em', textTransform: 'uppercase', marginBottom: 10 }}>
+            Taxonomy vs Data Hygiene Guide
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12 }}>
+            <Comparison label="Job titles" actual={report.stats.totalUniqueJobTitles} expected={report.stats.expectedJobTitles} hint="From mastersheet (~50)" />
+            <Comparison label="Legal entities" actual={report.stats.totalUniqueEntities} expected={report.stats.expectedEntities} hint="From CR list" />
+            <Comparison label="Departments" actual={report.stats.totalUniqueDepartments} expected={report.stats.expectedDepartments} hint="Per guide §7" />
+          </div>
+        </div>
+      )}
 
       {/* Send digest */}
       {isAdmin && (
@@ -178,6 +207,21 @@ function Header({ onRefresh }) {
         <h1 style={{ fontSize: 32, fontWeight: 900, color: 'var(--ink-900)', letterSpacing: '-0.025em', margin: '4px 0 0 0' }}>Data Hygiene</h1>
       </div>
       {onRefresh && <button onClick={onRefresh} style={ghostBtn}><Icon name="RefreshCw" size={14} /> Refresh</button>}
+    </div>
+  );
+}
+
+function Comparison({ label, actual, expected, hint }) {
+  const ratio = actual / expected;
+  const bad = ratio > 2 || ratio < 0.5;
+  return (
+    <div>
+      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--ink-500)', letterSpacing: '.04em', textTransform: 'uppercase' }}>{label}</div>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginTop: 2 }}>
+        <span style={{ fontSize: 22, fontWeight: 900, color: bad ? '#c0392b' : 'var(--ink-900)', letterSpacing: '-0.02em' }}>{actual}</span>
+        <span style={{ fontSize: 13, color: 'var(--ink-500)' }}>vs <b>{expected}</b> expected</span>
+      </div>
+      <div style={{ fontSize: 11, color: 'var(--ink-500)', marginTop: 2 }}>{hint}</div>
     </div>
   );
 }

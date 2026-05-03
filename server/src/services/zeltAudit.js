@@ -39,16 +39,55 @@ const APPROVED_DEPARTMENTS = new Set([
   'People and Culture', 'Customer Experience', 'Marketing',
 ].map(s => s.toLowerCase()));
 
-// Country codes by entity prefix — used to flag currency/country mismatches.
-const ENTITY_COUNTRY_HINTS = [
-  { entityPattern: /\b(KSA|saudi)/i, expectedCurrency: 'SAR' },
-  { entityPattern: /\b(BH|bahrain)/i, expectedCurrency: 'BHD' },
-  { entityPattern: /\b(UAE|emirates)/i, expectedCurrency: 'AED' },
-  { entityPattern: /\b(KW|kuwait)/i, expectedCurrency: 'KWD' },
-  { entityPattern: /\b(QA|qatar)/i, expectedCurrency: 'QAR' },
-  { entityPattern: /\b(OM|oman)/i, expectedCurrency: 'OMR' },
-  { entityPattern: /\b(UK|britain|england)/i, expectedCurrency: 'GBP' },
+// Country codes by entity prefix — used to flag currency mismatches AND
+// derive country from entity/site (zelt has no standalone country field).
+const COUNTRY_PATTERNS = [
+  { country: 'KSA',     pattern: /\b(KSA|saudi|riyadh|jeddah|dammam)/i, expectedCurrency: 'SAR' },
+  { country: 'Bahrain', pattern: /\b(BH|bahrain|manama)/i,              expectedCurrency: 'BHD' },
+  { country: 'UAE',     pattern: /\b(UAE|emirates|dubai|abu dhabi)/i,   expectedCurrency: 'AED' },
+  { country: 'Kuwait',  pattern: /\b(KW|kuwait)/i,                      expectedCurrency: 'KWD' },
+  { country: 'Qatar',   pattern: /\b(QA|qatar|doha)/i,                  expectedCurrency: 'QAR' },
+  { country: 'Oman',    pattern: /\b(OM|oman|muscat)/i,                 expectedCurrency: 'OMR' },
+  { country: 'UK',      pattern: /\b(UK|britain|england|london)/i,      expectedCurrency: 'GBP' },
+  { country: 'Egypt',   pattern: /\begypt|cairo/i,                      expectedCurrency: 'EGP' },
+  { country: 'Remote',  pattern: /\bremote/i,                           expectedCurrency: null  },
 ];
+
+// Organization (guide §1) — local vs central, per-MP. 7 expected values.
+const ORG_PATTERNS = [
+  { org: 'Basecamp', pattern: /^basecamp/i },
+  { org: 'MP KSA',   pattern: /mountain\s*peak.*ksa|^mp\s*ksa/i },
+  { org: 'MP UAE',   pattern: /mountain\s*peak.*uae|^mp\s*uae/i },
+  { org: 'MP BH',    pattern: /mountain\s*peak.*bh|mountain\s*peak.*bahrain|^mp\s*bh/i },
+  { org: 'MP OM',    pattern: /mountain\s*peak.*oman|^mp\s*om/i },
+  { org: 'MP QA',    pattern: /mountain\s*peak.*qatar|^mp\s*qa/i },
+  { org: 'MP UK',    pattern: /mountain\s*peak.*uk|^mp\s*uk/i },
+  { org: 'MP KW',    pattern: /mountain\s*peak.*kuwait|^mp\s*kw/i },
+];
+
+function classifyCountry(u) {
+  const ent = readEntity(u) || '';
+  const site = u?.role?.site?.name || '';
+  for (const { country, pattern } of COUNTRY_PATTERNS) {
+    if (pattern.test(ent) || pattern.test(site)) return country;
+  }
+  return 'Unclassified';
+}
+
+function classifyOrg(u) {
+  const ent = readEntity(u) || '';
+  for (const { org, pattern } of ORG_PATTERNS) {
+    if (pattern.test(ent)) return org;
+  }
+  return 'Unclassified';
+}
+
+function looksLikeBrandDivisionName(name) {
+  if (!name) return false;
+  // Brand-division names are like "Basecamp KSA", "Mountain Peak UAE" — geo + brand.
+  // Legal CR names are short proper nouns: Falcon, Vresto, Luqmat, Fakeehi, Nasco, Jussur.
+  return /(basecamp|mountain\s*peak|mp\s+\w{2,3})/i.test(name);
+}
 
 function readEmployeeId(u) {
   return u?.employeeId ?? u?.basicInfo?.employeeId ?? null;
@@ -158,8 +197,35 @@ export async function runAudit() {
     .filter(u => u.accountStatus === 'Active' && /test|support/i.test(u.displayName || ''))
     .map(u => ({ userId: u.userId, name: u.displayName, employeeId: readEmployeeId(u) }));
 
-  // 10. KSA-related counts (sanity)
-  out.checks.ksaActiveCount = users.filter(u => u.accountStatus === 'Active' && !u.leaveDate && isKsa(u)).length;
+  // 10. Per-country active count (replaces the old KSA-only stat)
+  const countryCounts = {};
+  const orgCounts = {};
+  for (const u of users) {
+    if (u.accountStatus !== 'Active' || u.leaveDate) continue;
+    if (['Terminated', 'Resigned', 'Offboarded'].includes(u?.userEvent?.status)) continue;
+    const c = classifyCountry(u);
+    countryCounts[c] = (countryCounts[c] || 0) + 1;
+    const o = classifyOrg(u);
+    orgCounts[o] = (orgCounts[o] || 0) + 1;
+  }
+  out.byCountry = countryCounts;
+  out.byOrganization = orgCounts;
+
+  // Users where we couldn't classify country or organization → flag for review
+  out.checks.unclassifiedCountry = users
+    .filter(u => u.accountStatus === 'Active' && !u.leaveDate && classifyCountry(u) === 'Unclassified')
+    .map(u => ({
+      userId: u.userId, employeeId: readEmployeeId(u), name: u.displayName,
+      entity: readEntity(u), site: u?.role?.site?.name,
+      suggestion: 'Country can\'t be derived from entity or site. Add Country as a standalone field, or normalize the entity/site name.',
+    }));
+  out.checks.unclassifiedOrganization = users
+    .filter(u => u.accountStatus === 'Active' && !u.leaveDate && classifyOrg(u) === 'Unclassified')
+    .map(u => ({
+      userId: u.userId, employeeId: readEmployeeId(u), name: u.displayName,
+      entity: readEntity(u),
+      suggestion: 'Organization can\'t be derived (expected: Basecamp, MP KSA, MP UAE, MP BH, MP OM, MP QA, MP UK, MP KW). Tag the entity properly.',
+    }));
 
   // ===== Guide-driven checks =====
 
@@ -191,7 +257,6 @@ export async function runAudit() {
     .map(u => ({ userId: u.userId, employeeId: readEmployeeId(u), name: u.displayName, site: u.role.site.name }));
 
   // 14. Currency/country mismatch on entity
-  // (entity row-level, not user-level — but we can sample once per unique entity)
   const entitiesSeen = new Map();
   for (const u of users) {
     const e = u?.userContract?.entity;
@@ -200,9 +265,9 @@ export async function runAudit() {
   }
   out.checks.currencyMismatch = [...entitiesSeen.values()]
     .filter(e => {
-      for (const hint of ENTITY_COUNTRY_HINTS) {
-        if (hint.entityPattern.test(e.legalName)) {
-          return e.currency && e.currency !== hint.expectedCurrency;
+      for (const c of COUNTRY_PATTERNS) {
+        if (c.pattern.test(e.legalName) && c.expectedCurrency) {
+          return e.currency && e.currency !== c.expectedCurrency;
         }
       }
       return false;
@@ -211,6 +276,17 @@ export async function runAudit() {
       legalName: e.legalName,
       currentCurrency: e.currency,
       suggestion: `Currency on ${e.legalName} doesn't match the country prefix. Check with Finance.`,
+    }));
+
+  // 14b. Brand-division names that should be replaced by legal CR names.
+  // The guide expects entity = legal CR (Falcon, Vresto, Luqmat, etc.) NOT
+  // brand-division (Basecamp KSA, Mountain Peak KSA). Those should be the
+  // Organization tag, not the Entity.
+  out.checks.brandDivisionAsEntity = [...entitiesSeen.values()]
+    .filter(e => looksLikeBrandDivisionName(e.legalName))
+    .map(e => ({
+      legalName: e.legalName,
+      suggestion: 'This looks like a brand-division (Organization) name, not a legal CR. Move to Organization tag and rename Entity to its CR name (Falcon, Vresto, Luqmat, Fakeehi, Nasco, Jussur, Calo Catering Services LTD, etc.).',
     }));
 
   // 15. Single-occurrence job titles — likely typos / not in mastersheet
@@ -254,14 +330,38 @@ export async function runAudit() {
       suggestion: 'Replace with real email — placeholder breaks notifications & SSO.',
     }));
 
-  // Stats for the dashboard headline
+  // Department list with frequency — "needs review" rather than "vs 18 expected"
+  const deptCounts = {};
+  for (const u of users) {
+    if (u.accountStatus !== 'Active' || u.leaveDate) continue;
+    const d = u?.role?.department?.name;
+    if (d) deptCounts[d] = (deptCounts[d] || 0) + 1;
+  }
+  out.checks.departmentList = Object.entries(deptCounts)
+    .sort((a, b) => b[1] - a[1])
+    .map(([dept, count]) => ({
+      department: dept,
+      activeUsers: count,
+      suggestion: count < 3 ? 'Small dept — could be a Business Line miscategorised. Confirm.' : 'Confirm this is in the approved list.',
+    }));
+
+  // Entity list with classification (CR-name vs brand-division) — needed since
+  // the "expected entities" set was incomplete & the brand vs CR split is the
+  // real signal.
+  out.checks.entityList = [...entitiesSeen.values()]
+    .map(e => ({
+      legalName: e.legalName,
+      currency: e.currency,
+      classification: looksLikeBrandDivisionName(e.legalName) ? 'Brand division (move to Organization)' : 'Likely legal CR',
+    }));
+
+  // Stats — actual counts only, no fake "expected" numbers.
   out.stats = {
     totalUniqueJobTitles: totalUniqueTitles,
-    expectedJobTitles: 50, // per guide
     totalUniqueEntities: entitiesSeen.size,
-    expectedEntities: APPROVED_ENTITIES.size,
-    totalUniqueDepartments: new Set(users.map(u => u?.role?.department?.name).filter(Boolean)).size,
-    expectedDepartments: 18,
+    totalUniqueDepartments: Object.keys(deptCounts).length,
+    totalCountries: Object.keys(countryCounts).length,
+    totalOrganizations: Object.keys(orgCounts).length,
   };
 
   // Headline counts

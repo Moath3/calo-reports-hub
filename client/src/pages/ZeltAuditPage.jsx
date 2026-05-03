@@ -7,7 +7,7 @@ const SEVERITY = {
   activeWithLeaveDate: 'high',
   activeButTerminated: 'high',
   duplicateEmployeeIds: 'high',
-  unapprovedEntity: 'high',
+  brandDivisionAsEntity: 'high',
   legacySiteAssigned: 'high',
   currencyMismatch: 'high',
   placeholderEmails: 'high',
@@ -17,12 +17,17 @@ const SEVERITY = {
   missingDepartment: 'low',
   missingSite: 'low',
   missingManager: 'medium',
-  unapprovedDepartment: 'medium',
+  unapprovedEntity: 'medium',
+  unapprovedDepartment: 'low',
+  unclassifiedCountry: 'medium',
+  unclassifiedOrganization: 'medium',
   duplicateJobTitleVariants: 'medium',
   rareJobTitles: 'low',
   futureJoiners: 'low',
   staleCreated: 'low',
   testUsers: 'medium',
+  departmentList: 'info',
+  entityList: 'info',
 };
 
 const LABELS = {
@@ -39,13 +44,18 @@ const LABELS = {
   staleCreated: 'Stale "Created" status (>90 days)',
   testUsers: 'Test users on Active status',
   // Guide-driven
-  unapprovedEntity: 'Entity not in approved CR list',
-  unapprovedDepartment: 'Department not in approved list (18 expected)',
+  unapprovedEntity: 'Entity not in legal CR list',
+  unapprovedDepartment: 'Department needs confirmation against approved list',
   legacySiteAssigned: 'Active user on a legacy "[Not in use]" site',
-  currencyMismatch: 'Entity currency mismatch (KSA in GBP, etc.)',
-  rareJobTitles: 'Job titles used by only 1 employee (typos?)',
+  currencyMismatch: 'Entity currency mismatch with country (e.g. KSA in GBP)',
+  rareJobTitles: 'Job titles used by only 1 employee (typos / not in mastersheet)',
   duplicateJobTitleVariants: 'Job title case/spacing duplicates (LINE COOK vs Line Cook)',
   placeholderEmails: 'Active users with @dummy / @noreply emails',
+  brandDivisionAsEntity: 'Brand-division name used as Entity (should be Organization tag)',
+  unclassifiedCountry: 'Country can\'t be derived from entity/site',
+  unclassifiedOrganization: 'Organization can\'t be derived (Basecamp / MP-XX)',
+  departmentList: 'All active departments — review against approved list',
+  entityList: 'All entities seen — confirm CR vs brand-division',
 };
 
 export default function ZeltAuditPage() {
@@ -91,7 +101,7 @@ export default function ZeltAuditPage() {
   if (error) return <Wrap><Header /><div style={errBanner}>{error}</div></Wrap>;
   if (!report) return null;
 
-  const checkKeys = Object.keys(report.summary).filter(k => k !== 'ksaActiveCount');
+  const checkKeys = Object.keys(report.summary).filter(k => !['ksaActiveCount'].includes(k));
   const sorted = checkKeys.sort((a, b) => {
     const sa = SEVERITY[a] || 'low';
     const sb = SEVERITY[b] || 'low';
@@ -106,22 +116,50 @@ export default function ZeltAuditPage() {
       {/* Top stats */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12 }}>
         <StatCard label="Total Zelt users" value={report.totalUsers} />
-        <StatCard label="KSA active" value={report.summary.ksaActiveCount} />
+        <StatCard label="Unique entities" value={report.stats?.totalUniqueEntities ?? '—'} />
+        <StatCard label="Unique departments" value={report.stats?.totalUniqueDepartments ?? '—'} />
+        <StatCard label="Unique job titles" value={report.stats?.totalUniqueJobTitles ?? '—'} />
+        <StatCard label="Countries detected" value={report.stats?.totalCountries ?? '—'} />
+        <StatCard label="Organizations detected" value={report.stats?.totalOrganizations ?? '—'} />
         {Object.entries(report.statusCounts).map(([k, v]) => (
           <StatCard key={k} label={k} value={v} muted />
         ))}
       </div>
 
-      {/* Guide-driven stats — vs vs expected */}
-      {report.stats && (
+      {/* Active by country */}
+      {report.byCountry && (
         <div style={{ ...panel, padding: 16 }}>
           <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--ink-500)', letterSpacing: '.06em', textTransform: 'uppercase', marginBottom: 10 }}>
-            Taxonomy vs Data Hygiene Guide
+            Active employees by country
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12 }}>
-            <Comparison label="Job titles" actual={report.stats.totalUniqueJobTitles} expected={report.stats.expectedJobTitles} hint="From mastersheet (~50)" />
-            <Comparison label="Legal entities" actual={report.stats.totalUniqueEntities} expected={report.stats.expectedEntities} hint="From CR list" />
-            <Comparison label="Departments" actual={report.stats.totalUniqueDepartments} expected={report.stats.expectedDepartments} hint="Per guide §7" />
+          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+            {Object.entries(report.byCountry).sort((a,b) => b[1] - a[1]).map(([c, n]) => (
+              <span key={c} style={{
+                padding: '6px 12px', borderRadius: 999,
+                background: c === 'Unclassified' ? '#FDECEC' : 'var(--calo-50, #d9f0e5)',
+                color: c === 'Unclassified' ? '#9f2f2f' : 'var(--calo-700, #1e8359)',
+                fontSize: 13, fontWeight: 700,
+              }}>{c} · {n}</span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Active by organization */}
+      {report.byOrganization && (
+        <div style={{ ...panel, padding: 16 }}>
+          <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--ink-500)', letterSpacing: '.06em', textTransform: 'uppercase', marginBottom: 10 }}>
+            Active employees by organization (Basecamp / MP-XX)
+          </div>
+          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+            {Object.entries(report.byOrganization).sort((a,b) => b[1] - a[1]).map(([o, n]) => (
+              <span key={o} style={{
+                padding: '6px 12px', borderRadius: 999,
+                background: o === 'Unclassified' ? '#FDECEC' : 'var(--calo-50, #d9f0e5)',
+                color: o === 'Unclassified' ? '#9f2f2f' : 'var(--calo-700, #1e8359)',
+                fontSize: 13, fontWeight: 700,
+              }}>{o} · {n}</span>
+            ))}
           </div>
         </div>
       )}
@@ -242,7 +280,10 @@ function Spinner() {
 }
 
 function sevColor(s) {
-  return s === 'high' ? '#c0392b' : s === 'medium' ? '#9A6F0E' : '#28b17b';
+  if (s === 'high') return '#c0392b';
+  if (s === 'medium') return '#9A6F0E';
+  if (s === 'info') return '#5b6ee1';
+  return '#28b17b';
 }
 
 const panel = { background: '#fff', borderRadius: 'var(--r-md)', border: '1px solid var(--ink-200)', padding: 24, boxShadow: 'var(--shadow-sm)' };

@@ -9,6 +9,8 @@ import { existsSync } from 'fs';
 
 import { initDb, closeDb } from './db/database.js';
 import { HttpError } from './utils/httpError.js';
+import { getStatus as getZeltOauthStatus } from './services/zeltApi.js';
+import { warmSession as warmZeltSession, getBotStatus as getZeltBotStatus } from './services/zeltBot.js';
 import authRoutes from './routes/auth.js';
 import uploadRoutes from './routes/upload.js';
 import aiRoutes from './routes/ai.js';
@@ -107,7 +109,14 @@ const apiRoutes = [
 for (const [path, router] of apiRoutes) app.use(path, router);
 
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  res.json({
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    zelt: {
+      oauth: getZeltOauthStatus(),
+      bot: getZeltBotStatus(),
+    },
+  });
 });
 
 // Serve static frontend in production
@@ -150,6 +159,11 @@ process.on('SIGTERM', () => shutdown('SIGTERM'));
 
 // Initialize database (async for sql.js) then start server
 initDb().then(() => {
+  // Warm the Zelt bot session from persisted cookie + start heartbeat. Without
+  // this, the heartbeat doesn't run until the first user request triggers a
+  // lazy login, so a freshly deployed build serves the first user a re-login.
+  try { warmZeltSession(); } catch (e) { console.warn('[zelt-bot] warmSession failed:', e.message); }
+
   app.listen(PORT, () => {
     console.log(`\n  CALO Report AI Platform`);
     console.log(`  Server running on http://localhost:${PORT}`);

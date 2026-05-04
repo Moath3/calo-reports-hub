@@ -249,6 +249,34 @@ export function botConfigured() {
 }
 
 /**
+ * Public bot session state for diagnostic / health endpoints. No PII —
+ * only "is it wired up and does it have a live cookie".
+ */
+export function getBotStatus() {
+  return {
+    configured: botConfigured(),
+    hasCookie: !!cookieJar,
+    heartbeatRunning: !!heartbeatTimer,
+  };
+}
+
+/**
+ * Warm the bot session at server boot. Loads the persisted cookie from DB
+ * and starts the heartbeat immediately so the session stays fresh from the
+ * moment the new build comes up — instead of waiting for the first user
+ * request to trigger lazy login. No-op if creds aren't configured or no
+ * cookie was persisted.
+ */
+export function warmSession() {
+  if (!botConfigured()) return;
+  loadCookieFromDb();
+  if (cookieJar) {
+    startHeartbeat();
+    console.log('[zelt-bot] session warmed from DB; heartbeat running');
+  }
+}
+
+/**
  * Logout (clears cookie in-memory + DB + stops heartbeat).
  */
 export function botLogout() {

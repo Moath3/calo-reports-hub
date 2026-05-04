@@ -15,6 +15,7 @@
 import crypto from 'crypto';
 import { getDb, persistNow } from '../db/database.js';
 import { notifyAdminZeltRefreshFailing } from './emailService.js';
+import { botGet, botConfigured } from './zeltBot.js';
 
 const ZELT_BASE = 'https://go.zelt.app';
 const TOKEN_URL = `${ZELT_BASE}/apiv2/oauth/authorize/token`;
@@ -205,6 +206,9 @@ async function refreshTokens(prevUpdatedAt) {
   // CAS — if updated_at changed, another process refreshed; just re-read.
   if (tokens.updatedAt !== prevUpdatedAt) return readTokens();
 
+  // Send client credentials in BOTH the Authorization header (Basic auth) and
+  // the form body. Spec-allowed; some OAuth providers (Zelt looks like one)
+  // strictly require the body fields and ignore Basic. Sending both is safe.
   const basic = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
   const resp = await fetchWithTimeout(TOKEN_URL, {
     method: 'POST',
@@ -215,6 +219,8 @@ async function refreshTokens(prevUpdatedAt) {
     body: new URLSearchParams({
       grant_type: 'refresh_token',
       refresh_token: tokens.refreshToken,
+      client_id: clientId,
+      client_secret: clientSecret,
     }),
   });
 
@@ -315,9 +321,30 @@ export async function getAccessToken() {
 
 /**
  * Auth-aware GET. Adds Bearer header. Retries once on 5xx with backoff.
- * 401 surfaces directly (usually scope, not dead session) — caller decides.
+ * On auth failure (401, NotConnected, refresh broken) falls back transparently
+ * to the bot cookie session — Zelt's partner-API host is the same as the SPA,
+ * and most routes accept either auth method, so a working bot session can
+ * carry us through OAuth outages without users noticing.
  */
 export async function zeltGet(path, params = {}) {
+  try {
+    return await zeltGetOauth(path, params);
+  } catch (err) {
+    if (isOauthAuthFailure(err) && botConfigured()) {
+      console.warn(`[zelt] OAuth path failed (${err.status || ''} ${err.message}); falling back to bot cookie for ${path}`);
+      return botGet(path, params);
+    }
+    throw err;
+  }
+}
+
+function isOauthAuthFailure(err) {
+  return err.status === 401
+    || err.status === 403
+    || /NotConnected|Refresh failed/.test(err.message || '');
+}
+
+async function zeltGetOauth(path, params) {
   const url = new URL(path, ZELT_BASE);
   for (const [k, v] of Object.entries(params)) {
     if (v !== undefined && v !== null) url.searchParams.set(k, String(v));

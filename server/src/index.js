@@ -7,7 +7,8 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { existsSync } from 'fs';
 
-import { initDb, getDb, closeDb } from './db/database.js';
+import { initDb, closeDb } from './db/database.js';
+import { HttpError } from './utils/httpError.js';
 import authRoutes from './routes/auth.js';
 import uploadRoutes from './routes/upload.js';
 import aiRoutes from './routes/ai.js';
@@ -22,11 +23,11 @@ const __dirname = dirname(__filename);
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+const IS_PROD = process.env.NODE_ENV === 'production';
 
 // ─── Environment Validation ────────────────────────────────────────────────
-if (process.env.NODE_ENV === 'production') {
-  const required = ['JWT_SECRET'];
-  const missing = required.filter(k => !process.env[k]);
+if (IS_PROD) {
+  const missing = ['JWT_SECRET'].filter(k => !process.env[k]);
   if (missing.length) {
     console.error(`[FATAL] Missing required env vars: ${missing.join(', ')}`);
     process.exit(1);
@@ -35,7 +36,6 @@ if (process.env.NODE_ENV === 'production') {
     console.error('[FATAL] JWT_SECRET is still the default dev value. Set a strong random secret.');
     process.exit(1);
   }
-  // Warn about optional but recommended keys
   if (!process.env.CLAUDE_API_KEY) {
     console.warn('[WARN] CLAUDE_API_KEY is not set — all AI features will be disabled.');
   }
@@ -44,7 +44,7 @@ if (process.env.NODE_ENV === 'production') {
 // Trust proxy (required for Render, Railway, Heroku etc. behind reverse proxy)
 app.set('trust proxy', 1);
 
-// Security middleware — strict headers for production
+// Security middleware
 app.use(helmet({
   crossOriginResourcePolicy: { policy: 'same-origin' },
   contentSecurityPolicy: {
@@ -55,7 +55,7 @@ app.use(helmet({
       fontSrc: ["'self'", "https://fonts.gstatic.com"],
       imgSrc: ["'self'", "data:", "blob:", "https:"],
       connectSrc: ["'self'", "https://generativelanguage.googleapis.com", "https://api.anthropic.com", "https://api.perplexity.ai", "https://api.netlify.com"],
-      frameSrc: ["'self'"],  // allow iframe for report preview
+      frameSrc: ["'self'"],
       objectSrc: ["'none'"],
       upgradeInsecureRequests: []
     }
@@ -64,67 +64,48 @@ app.use(helmet({
   referrerPolicy: { policy: 'strict-origin-when-cross-origin' }
 }));
 
-// CORS — restrictive in production (same-origin serves frontend, deny cross-origin)
-const corsOrigins = process.env.NODE_ENV === 'production'
-  ? (process.env.FRONTEND_URL ? [process.env.FRONTEND_URL] : false) // false = same-origin only
-  : ['http://localhost:5173', 'http://localhost:3000', 'http://localhost:3001'];
-
+// CORS — same-origin only in prod unless FRONTEND_URL is set
 app.use(cors({
-  origin: corsOrigins,
+  origin: IS_PROD
+    ? (process.env.FRONTEND_URL ? [process.env.FRONTEND_URL] : false)
+    : ['http://localhost:5173', 'http://localhost:3000', 'http://localhost:3001'],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
 // Rate limiting
-const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 200, // limit each IP
-  message: { error: 'Too many requests, please try again later.' },
+const MIN = 60 * 1000;
+const makeLimiter = (windowMs, max, message) => rateLimit({
+  windowMs,
+  max,
+  message: { error: message },
   standardHeaders: true,
   legacyHeaders: false
 });
-app.use('/api/', limiter);
 
-// Stricter rate limit for auth routes
-const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 20,
-  message: { error: 'Too many login attempts, please try again later.' }
-});
-app.use('/api/auth/', authLimiter);
-
-// Stricter rate limit for AI routes
-const aiLimiter = rateLimit({
-  windowMs: 60 * 1000, // 1 minute
-  max: 10,
-  message: { error: 'AI rate limit reached. Please wait a moment.' }
-});
-app.use('/api/ai/', aiLimiter);
-
-// Stricter rate limit for export/netlify routes
-const exportLimiter = rateLimit({
-  windowMs: 60 * 1000,
-  max: 5,
-  message: { error: 'Export rate limit reached. Please wait a moment.' }
-});
-app.use('/api/export/', exportLimiter);
+app.use('/api/',        makeLimiter(15 * MIN, 200, 'Too many requests, please try again later.'));
+app.use('/api/auth/',   makeLimiter(15 * MIN,  20, 'Too many login attempts, please try again later.'));
+app.use('/api/ai/',     makeLimiter(     MIN,  10, 'AI rate limit reached. Please wait a moment.'));
+app.use('/api/export/', makeLimiter(     MIN,   5, 'Export rate limit reached. Please wait a moment.'));
 
 // Body parsing
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 // API routes
-app.use('/api/auth', authRoutes);
-app.use('/api/upload', uploadRoutes);
-app.use('/api/ai', aiRoutes);
-app.use('/api/reports', reportRoutes);
-app.use('/api/templates', templateRoutes);
-app.use('/api/export', exportRoutes);
-app.use('/api/dashboard', dashboardRoutes);
-app.use('/api/zelt', zeltRoutes);
+const apiRoutes = [
+  ['/api/auth',      authRoutes],
+  ['/api/upload',    uploadRoutes],
+  ['/api/ai',        aiRoutes],
+  ['/api/reports',   reportRoutes],
+  ['/api/templates', templateRoutes],
+  ['/api/export',    exportRoutes],
+  ['/api/dashboard', dashboardRoutes],
+  ['/api/zelt',      zeltRoutes],
+];
+for (const [path, router] of apiRoutes) app.use(path, router);
 
-// Health check (no sensitive info exposed)
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
@@ -133,7 +114,7 @@ app.get('/api/health', (req, res) => {
 const clientDist = join(__dirname, '..', '..', 'client', 'dist');
 if (existsSync(clientDist)) {
   app.use(express.static(clientDist, {
-    maxAge: process.env.NODE_ENV === 'production' ? '1d' : 0,
+    maxAge: IS_PROD ? '1d' : 0,
     etag: true
   }));
   app.get('*', (req, res) => {
@@ -143,29 +124,29 @@ if (existsSync(clientDist)) {
 
 // Error handler — never leak stack traces in production
 app.use((err, req, res, next) => {
-  console.error('[Error]', err.message);
+  // 4xx HttpErrors are expected client errors — already in the response, no need to log as [Error]
+  const isClientError = err instanceof HttpError && err.status < 500;
+  if (!isClientError) console.error('[Error]', err.message);
+
   if (err.type === 'entity.too.large') {
     return res.status(413).json({ error: 'File too large. Maximum size is 50MB.' });
   }
+  if (err instanceof HttpError) {
+    return res.status(err.status).json({ error: err.message, ...err.extra });
+  }
   res.status(err.status || 500).json({
-    error: process.env.NODE_ENV === 'production'
-      ? 'Internal server error'
-      : err.message
+    error: IS_PROD ? 'Internal server error' : err.message
   });
 });
 
 // Graceful shutdown
-process.on('SIGINT', () => {
-  console.log('\nShutting down...');
+const shutdown = (signal) => {
+  console.log(`\n${signal} received, shutting down...`);
   closeDb();
   process.exit(0);
-});
-
-process.on('SIGTERM', () => {
-  console.log('\nSIGTERM received, shutting down...');
-  closeDb();
-  process.exit(0);
-});
+};
+process.on('SIGINT',  () => shutdown('SIGINT'));
+process.on('SIGTERM', () => shutdown('SIGTERM'));
 
 // Initialize database (async for sql.js) then start server
 initDb().then(() => {

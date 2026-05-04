@@ -1,6 +1,8 @@
 import { Router } from "express";
 import { getDb } from "../db/database.js";
 import { requireAuth } from "../middleware/auth.js";
+import { asyncHandler } from "../utils/asyncHandler.js";
+import { badRequest, unprocessable } from "../utils/httpError.js";
 import {
   callAI, buildReportSystemPrompt, buildChatSystemPrompt, buildRefineSystemPrompt, buildPlanSystemPrompt,
   getAvailableProviders, extractJSON,
@@ -26,155 +28,135 @@ function logUsage(userId, provider, result, requestType, duration) {
 }
 
 // POST /analyze — heavy-duty one-shot: Opus by default (smart routing)
-router.post("/analyze", requireAuth, async (req, res) => {
-  try {
-    const { dataSummary, provider, customPrompt, templateId } = req.body;
-    if (!dataSummary) return res.status(400).json({ error: "dataSummary is required" });
+router.post("/analyze", requireAuth, asyncHandler(async (req, res) => {
+  const { dataSummary, provider, customPrompt, templateId } = req.body;
+  if (!dataSummary) throw badRequest("dataSummary is required");
 
-    // Fetch template data if a template was selected
-    let templateData = null;
-    if (templateId) {
-      try {
-        const db = getDb();
-        const tmpl = db.prepare("SELECT template_data FROM templates WHERE id = ?").get(templateId);
-        if (tmpl && tmpl.template_data) templateData = JSON.parse(tmpl.template_data);
-      } catch (e) {
-        console.error("Template fetch error:", e.message);
-      }
+  // Fetch template data if a template was selected
+  let templateData = null;
+  if (templateId) {
+    try {
+      const tmpl = getDb().prepare("SELECT template_data FROM templates WHERE id = ?").get(templateId);
+      if (tmpl && tmpl.template_data) templateData = JSON.parse(tmpl.template_data);
+    } catch (e) {
+      console.error("Template fetch error:", e.message);
     }
-
-    const systemPrompt = buildReportSystemPrompt(dataSummary, templateData);
-    let userMessage = "Please analyze this data and generate a comprehensive report. Return ONLY valid JSON.";
-    if (customPrompt) userMessage += "\n\nAdditional instructions: " + customPrompt;
-
-    const startTime = Date.now();
-    const result = await callAI(provider, systemPrompt, userMessage, { requestType: "analyze" });
-    const duration = Date.now() - startTime;
-
-    const report = extractJSON(result.text);
-    if (!report) {
-      return res.status(422).json({
-        error: "AI did not return valid JSON. Please try again.",
-        rawResponse: (result.text || "").slice(0, 2000),
-      });
-    }
-
-    logUsage(req.user.id, provider, result, "analyze", duration);
-    res.json({ report, reportData: report, provider: provider || "claude-auto", model: result.model, duration });
-  } catch (err) {
-    console.error("AI analyze error:", err);
-    res.status(500).json({ error: "AI analysis failed: " + err.message });
   }
-});
+
+  const systemPrompt = buildReportSystemPrompt(dataSummary, templateData);
+  let userMessage = "Please analyze this data and generate a comprehensive report. Return ONLY valid JSON.";
+  if (customPrompt) userMessage += "\n\nAdditional instructions: " + customPrompt;
+
+  const startTime = Date.now();
+  const result = await callAI(provider, systemPrompt, userMessage, { requestType: "analyze" });
+  const duration = Date.now() - startTime;
+
+  const report = extractJSON(result.text);
+  if (!report) {
+    throw unprocessable("AI did not return valid JSON. Please try again.", {
+      rawResponse: (result.text || "").slice(0, 2000),
+    });
+  }
+
+  logUsage(req.user.id, provider, result, "analyze", duration);
+  res.json({ report, reportData: report, provider: provider || "claude-auto", model: result.model, duration });
+}));
 
 // POST /chat — fast iteration: Sonnet by default
-router.post("/chat", requireAuth, async (req, res) => {
-  try {
-    const { message, reportContext, provider, history } = req.body;
-    if (!message) return res.status(400).json({ error: "Message is required" });
+router.post("/chat", requireAuth, asyncHandler(async (req, res) => {
+  const { message, reportContext, provider, history } = req.body;
+  if (!message) throw badRequest("Message is required");
 
-    const systemPrompt = buildChatSystemPrompt(reportContext);
-    let userMessage = message;
-    if (history && history.length > 0) {
-      const contextMsgs = history.slice(-6).map(m => m.role + ": " + m.content).join("\n");
-      userMessage = "Previous conversation:\n" + contextMsgs + "\n\nUser: " + message;
-    }
-
-    const startTime = Date.now();
-    const result = await callAI(provider, systemPrompt, userMessage, { requestType: "chat" });
-    const duration = Date.now() - startTime;
-
-    // Parse structured response: { message, updates }
-    const parsed = extractJSON(result.text);
-    let responseMessage;
-    let updates = null;
-
-    if (parsed && typeof parsed === "object") {
-      responseMessage = parsed.message || parsed.response || result.text;
-      if (parsed.updates && typeof parsed.updates === "object") updates = parsed.updates;
-    } else {
-      responseMessage = result.text;
-    }
-
-    logUsage(req.user.id, provider, result, "chat", duration);
-    res.json({
-      response: responseMessage,
-      message: responseMessage,
-      updates,
-      provider: provider || "claude-auto",
-      model: result.model,
-    });
-  } catch (err) {
-    console.error("AI chat error:", err);
-    res.status(500).json({ error: "AI chat failed: " + err.message });
+  const systemPrompt = buildChatSystemPrompt(reportContext);
+  let userMessage = message;
+  if (history && history.length > 0) {
+    const contextMsgs = history.slice(-6).map(m => m.role + ": " + m.content).join("\n");
+    userMessage = "Previous conversation:\n" + contextMsgs + "\n\nUser: " + message;
   }
-});
+
+  const startTime = Date.now();
+  const result = await callAI(provider, systemPrompt, userMessage, { requestType: "chat" });
+  const duration = Date.now() - startTime;
+
+  // Parse structured response: { message, updates }
+  const parsed = extractJSON(result.text);
+  let responseMessage;
+  let updates = null;
+
+  if (parsed && typeof parsed === "object") {
+    responseMessage = parsed.message || parsed.response || result.text;
+    if (parsed.updates && typeof parsed.updates === "object") updates = parsed.updates;
+  } else {
+    responseMessage = result.text;
+  }
+
+  logUsage(req.user.id, provider, result, "chat", duration);
+  res.json({
+    response: responseMessage,
+    message: responseMessage,
+    updates,
+    provider: provider || "claude-auto",
+    model: result.model,
+  });
+}));
 
 // POST /refine — single-section edit: Sonnet by default
-router.post("/refine", requireAuth, async (req, res) => {
-  try {
-    const { reportData, sectionIndex, instruction, provider } = req.body;
-    if (!reportData || sectionIndex == null || !instruction) {
-      return res.status(400).json({ error: "reportData, sectionIndex, and instruction are required" });
-    }
-
-    const section = reportData.sections?.[sectionIndex];
-    if (!section) return res.status(400).json({ error: "Section not found at index " + sectionIndex });
-
-    const systemPrompt = buildRefineSystemPrompt(section, instruction);
-
-    const startTime = Date.now();
-    const result = await callAI(provider, systemPrompt, "Refine the section as instructed. Return only JSON.", { requestType: "refine" });
-    const duration = Date.now() - startTime;
-
-    const updatedSection = extractJSON(result.text);
-    if (!updatedSection) {
-      return res.status(422).json({ error: "AI did not return valid JSON for the refined section." });
-    }
-
-    logUsage(req.user.id, provider, result, "refine", duration);
-    res.json({ updatedSection, section: updatedSection, provider: provider || "claude-auto", model: result.model });
-  } catch (err) {
-    console.error("AI refine error:", err);
-    res.status(500).json({ error: "AI refinement failed: " + err.message });
+router.post("/refine", requireAuth, asyncHandler(async (req, res) => {
+  const { reportData, sectionIndex, instruction, provider } = req.body;
+  if (!reportData || sectionIndex == null || !instruction) {
+    throw badRequest("reportData, sectionIndex, and instruction are required");
   }
-});
+
+  const section = reportData.sections?.[sectionIndex];
+  if (!section) throw badRequest("Section not found at index " + sectionIndex);
+
+  const systemPrompt = buildRefineSystemPrompt(section, instruction);
+
+  const startTime = Date.now();
+  const result = await callAI(provider, systemPrompt, "Refine the section as instructed. Return only JSON.", { requestType: "refine" });
+  const duration = Date.now() - startTime;
+
+  const updatedSection = extractJSON(result.text);
+  if (!updatedSection) {
+    throw unprocessable("AI did not return valid JSON for the refined section.");
+  }
+
+  logUsage(req.user.id, provider, result, "refine", duration);
+  res.json({ updatedSection, section: updatedSection, provider: provider || "claude-auto", model: result.model });
+}));
 
 // POST /plan — multi-turn clarification chat BEFORE generation
 // Sonnet (fast) because clarifying questions don't need Opus-level reasoning.
-router.post("/plan", requireAuth, async (req, res) => {
-  try {
-    const { history, provider } = req.body;
-    if (!Array.isArray(history) || history.length === 0) {
-      return res.status(400).json({ error: "history is required (array of messages)" });
-    }
-
-    const systemPrompt = buildPlanSystemPrompt();
-    const convo = history.slice(-8).map(m => `${m.role === 'ai' ? 'Assistant' : 'User'}: ${m.content}`).join("\n\n");
-    const userMessage = "Conversation so far:\n\n" + convo + "\n\nReply with your JSON response.";
-
-    const startTime = Date.now();
-    const result = await callAI(provider, systemPrompt, userMessage, { requestType: "chat" });
-    const duration = Date.now() - startTime;
-
-    const parsed = extractJSON(result.text);
-    if (!parsed) {
-      return res.status(422).json({ error: "AI did not return valid plan JSON.", rawResponse: (result.text || "").slice(0, 1000) });
-    }
-
-    logUsage(req.user.id, provider, result, "chat", duration);
-    res.json({
-      message: parsed.message || '',
-      ready: parsed.ready === true,
-      brief: parsed.brief || '',
-      suggestedTitle: parsed.suggestedTitle || '',
-      model: result.model,
-    });
-  } catch (err) {
-    console.error("AI plan error:", err);
-    res.status(500).json({ error: "AI plan failed: " + err.message });
+router.post("/plan", requireAuth, asyncHandler(async (req, res) => {
+  const { history, provider } = req.body;
+  if (!Array.isArray(history) || history.length === 0) {
+    throw badRequest("history is required (array of messages)");
   }
-});
+
+  const systemPrompt = buildPlanSystemPrompt();
+  const convo = history.slice(-8).map(m => `${m.role === 'ai' ? 'Assistant' : 'User'}: ${m.content}`).join("\n\n");
+  const userMessage = "Conversation so far:\n\n" + convo + "\n\nReply with your JSON response.";
+
+  const startTime = Date.now();
+  const result = await callAI(provider, systemPrompt, userMessage, { requestType: "chat" });
+  const duration = Date.now() - startTime;
+
+  const parsed = extractJSON(result.text);
+  if (!parsed) {
+    throw unprocessable("AI did not return valid plan JSON.", {
+      rawResponse: (result.text || "").slice(0, 1000),
+    });
+  }
+
+  logUsage(req.user.id, provider, result, "chat", duration);
+  res.json({
+    message: parsed.message || '',
+    ready: parsed.ready === true,
+    brief: parsed.brief || '',
+    suggestedTitle: parsed.suggestedTitle || '',
+    model: result.model,
+  });
+}));
 
 // GET /providers — lists Claude Sonnet + Opus
 router.get("/providers", requireAuth, (req, res) => {

@@ -14,6 +14,7 @@
  */
 import crypto from 'crypto';
 import { getDb, persistNow } from '../db/database.js';
+import { notifyAdminZeltRefreshFailing } from './emailService.js';
 
 const ZELT_BASE = 'https://go.zelt.app';
 const TOKEN_URL = `${ZELT_BASE}/apiv2/oauth/authorize/token`;
@@ -109,11 +110,19 @@ function clearTokens() {
   persistNow();
 }
 
-// Track consecutive refresh failures — only wipe after N to survive transient
-// 401s (parallel-refresh races, brief Zelt outages, etc.) without forcing a
-// re-bootstrap of the entire integration.
+// Track consecutive refresh failures for diagnostics + admin alerting.
+// We DELIBERATELY do NOT auto-wipe tokens after N failures — wiping would only
+// turn a recoverable state ("refresh failing, will retry") into a fully broken
+// one ("integration dead until admin re-bootstraps"), and Zelt's flow requires
+// a manual click in their admin either way. So we keep the row, surface the
+// failure via getStatus(), email the admin once per failing streak, and let
+// the admin re-bootstrap on their schedule. INSERT...ON CONFLICT DO UPDATE
+// will overwrite the stale row when they do.
 let refreshFailureCount = 0;
-const MAX_REFRESH_FAILURES = 3;
+let lastRefreshError = null;
+let lastRefreshErrorAt = null;
+let alertSentForCurrentStreak = false;
+const ALERT_AFTER_N_FAILURES = 2; // email admin starting at this consecutive failure
 
 // ---- OAuth flow -------------------------------------------------------
 
@@ -211,28 +220,23 @@ async function refreshTokens(prevUpdatedAt) {
 
   if (resp.status === 401 || resp.status === 400) {
     // Refresh token rejected — but a single failure doesn't always mean dead.
-    // Could be a parallel-refresh race (we already rotated). Don't wipe yet:
+    // Could be a parallel-refresh race (we already rotated). Don't act yet:
     // re-read tokens and check if updated_at advanced (someone else refreshed).
     const fresh = readTokens();
     if (fresh && fresh.updatedAt > prevUpdatedAt) {
-      // Another refresh succeeded in parallel — use those tokens.
-      refreshFailureCount = 0;
+      resetRefreshFailureState();
       return fresh;
     }
-    refreshFailureCount += 1;
-    console.warn(`[zelt] refresh rejected (${refreshFailureCount}/${MAX_REFRESH_FAILURES})`);
-    if (refreshFailureCount >= MAX_REFRESH_FAILURES) {
-      console.error('[zelt] refresh failed N times — clearing tokens, admin must re-bootstrap');
-      clearTokens();
-      refreshFailureCount = 0;
-      throw new Error('NotConnected');
-    }
-    // Soft fail — caller surfaces error but tokens remain for next attempt.
-    throw new Error('Refresh failed (transient) — try again');
+    const text = await resp.text().catch(() => '');
+    recordRefreshFailure(`${resp.status} ${text.slice(0, 200)}`);
+    // Soft fail — caller surfaces error but tokens remain in DB for the admin
+    // to re-bootstrap when they're ready. We never auto-wipe.
+    throw new Error('Refresh failed — admin must re-bootstrap');
   }
 
   if (!resp.ok) {
     const text = await resp.text().catch(() => '');
+    recordRefreshFailure(`${resp.status} ${text.slice(0, 200)}`);
     throw new Error(`Token refresh failed: ${resp.status} ${text.slice(0, 200)}`);
   }
 
@@ -245,8 +249,31 @@ async function refreshTokens(prevUpdatedAt) {
     refreshToken,
     expiresAt: Date.now() + expiresIn * 1000,
   });
-  refreshFailureCount = 0;
+  resetRefreshFailureState();
   return readTokens();
+}
+
+function recordRefreshFailure(message) {
+  refreshFailureCount += 1;
+  lastRefreshError = message;
+  lastRefreshErrorAt = Date.now();
+  console.warn(`[zelt] refresh failed (${refreshFailureCount}x): ${message}`);
+  if (refreshFailureCount >= ALERT_AFTER_N_FAILURES && !alertSentForCurrentStreak) {
+    alertSentForCurrentStreak = true;
+    // Fire-and-forget — don't block the refresh path on email delivery.
+    notifyAdminZeltRefreshFailing({ failureCount: refreshFailureCount, lastError: message })
+      .catch(e => console.error('[zelt] alert email failed:', e.message));
+  }
+}
+
+function resetRefreshFailureState() {
+  if (refreshFailureCount > 0) {
+    console.log(`[zelt] refresh recovered after ${refreshFailureCount} failure(s)`);
+  }
+  refreshFailureCount = 0;
+  lastRefreshError = null;
+  lastRefreshErrorAt = null;
+  alertSentForCurrentStreak = false;
 }
 
 // Module-level promise mutex — ensures only one refresh in flight at a time.
@@ -345,9 +372,28 @@ export function getStatus() {
   try {
     const tokens = readTokens();
     if (!tokens) return { connected: false };
-    return { connected: true, lastRefresh: tokens.updatedAt };
+    const status = { connected: true, lastRefresh: tokens.updatedAt };
+    if (refreshFailureCount > 0) {
+      status.refreshFailing = true;
+      status.refreshFailureCount = refreshFailureCount;
+      status.lastError = lastRefreshError;
+      status.lastErrorAt = lastRefreshErrorAt;
+    }
+    return status;
   } catch {
     return { connected: false };
+  }
+}
+
+/**
+ * Awaits any in-flight token refresh — call this from the SIGTERM handler
+ * before exiting so a deploy mid-refresh doesn't lose the rotated refresh
+ * token. Returns immediately if no refresh is in flight.
+ */
+export async function drainRefresh() {
+  if (refreshInFlight) {
+    try { await refreshInFlight; }
+    catch { /* ignore — best-effort drain on shutdown */ }
   }
 }
 

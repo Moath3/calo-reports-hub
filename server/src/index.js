@@ -9,7 +9,7 @@ import { existsSync } from 'fs';
 
 import { initDb, closeDb } from './db/database.js';
 import { HttpError } from './utils/httpError.js';
-import { getStatus as getZeltOauthStatus } from './services/zeltApi.js';
+import { getStatus as getZeltOauthStatus, drainRefresh as drainZeltRefresh } from './services/zeltApi.js';
 import { warmSession as warmZeltSession, getBotStatus as getZeltBotStatus } from './services/zeltBot.js';
 import authRoutes from './routes/auth.js';
 import uploadRoutes from './routes/upload.js';
@@ -148,9 +148,19 @@ app.use((err, req, res, next) => {
   });
 });
 
-// Graceful shutdown
-const shutdown = (signal) => {
+// Graceful shutdown — await any in-flight Zelt refresh first so a deploy
+// mid-refresh doesn't strand a rotated refresh token. 5s cap so we never
+// hang the process indefinitely on a stuck network call.
+const shutdown = async (signal) => {
   console.log(`\n${signal} received, shutting down...`);
+  try {
+    await Promise.race([
+      drainZeltRefresh(),
+      new Promise(r => setTimeout(r, 5000)),
+    ]);
+  } catch (e) {
+    console.warn('[shutdown] zelt drain error:', e.message);
+  }
   closeDb();
   process.exit(0);
 };

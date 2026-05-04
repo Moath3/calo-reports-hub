@@ -21,8 +21,8 @@ export default function ZeltLeavePage() {
   const [selectedEntities, setSelectedEntities] = useState([]);
   const [entitiesOpen, setEntitiesOpen] = useState(false);
   const entitiesDropdownRef = useRef(null);
-  const [asOfDate, setAsOfDate] = useState(''); // YYYY-MM-DD, blank = today
   const todayIso = new Date().toISOString().slice(0, 10);
+  const [asOfDate, setAsOfDate] = useState(todayIso); // YYYY-MM-DD; defaults to today
   const [data, setData] = useState(null);
   const [loadingEntities, setLoadingEntities] = useState(false);
   const [loadingBalances, setLoadingBalances] = useState(false);
@@ -229,15 +229,25 @@ export default function ZeltLeavePage() {
             )}
           </div>
           <div>
-            <Label>As of</Label>
-            <input
-              type="date"
-              value={asOfDate}
-              onChange={e => setAsOfDate(e.target.value)}
-              max={todayIso}
-              style={{ ...select, width: 160 }}
-              title="Leave blank for today. Past dates only — Zelt projects forward unreliably."
-            />
+            <Label>As of {asOfDate === todayIso && <span style={{ fontWeight: 400, color: 'var(--ink-500)' }}>(today)</span>}</Label>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <input
+                type="date"
+                value={asOfDate}
+                onChange={e => setAsOfDate(e.target.value || todayIso)}
+                max={todayIso}
+                style={{ ...select, width: 160 }}
+                title="Defaults to today. Past dates only — Zelt projects forward unreliably."
+              />
+              {asOfDate !== todayIso && (
+                <button
+                  type="button"
+                  onClick={() => setAsOfDate(todayIso)}
+                  style={{ ...ghostBtn, padding: '6px 10px', fontSize: 12 }}
+                  title="Reset to today"
+                >Today</button>
+              )}
+            </div>
           </div>
           <button
             onClick={handleGenerate}

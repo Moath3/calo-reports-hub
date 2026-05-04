@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import api from '../utils/api';
 import { Icon } from '../components/ui';
@@ -20,6 +20,7 @@ export default function ZeltLeavePage() {
   const [entity, setEntity] = useState('');
   const [selectedEntities, setSelectedEntities] = useState([]);
   const [entitiesOpen, setEntitiesOpen] = useState(false);
+  const entitiesDropdownRef = useRef(null);
   const [asOfDate, setAsOfDate] = useState(''); // YYYY-MM-DD, blank = today
   const todayIso = new Date().toISOString().slice(0, 10);
   const [data, setData] = useState(null);
@@ -38,6 +39,20 @@ export default function ZeltLeavePage() {
       .catch(() => { if (alive) setStatus({ loading: false, connected: false }); });
     return () => { alive = false; };
   }, []);
+
+  // Close the entities dropdown when the user clicks anywhere outside it.
+  // Only attach the listener while the dropdown is open so we're not paying
+  // for a global mousedown handler the rest of the time.
+  useEffect(() => {
+    if (!entitiesOpen) return;
+    const onMouseDown = (e) => {
+      if (entitiesDropdownRef.current && !entitiesDropdownRef.current.contains(e.target)) {
+        setEntitiesOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onMouseDown);
+    return () => document.removeEventListener('mousedown', onMouseDown);
+  }, [entitiesOpen]);
 
   // Once connected, load entities
   useEffect(() => {
@@ -159,7 +174,7 @@ export default function ZeltLeavePage() {
       {/* Filter bar */}
       <div style={panel}>
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
-          <div style={{ flex: '1 1 320px', minWidth: 280, position: 'relative' }}>
+          <div ref={entitiesDropdownRef} style={{ flex: '1 1 320px', minWidth: 280, position: 'relative' }}>
             <Label>Entities</Label>
             <button
               type="button"

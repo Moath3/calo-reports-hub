@@ -6,6 +6,8 @@ import { dirname, join, extname } from "path";
 import { unlinkSync, existsSync, mkdirSync } from "fs";
 import { parseFile, createDataSummary } from "../services/fileParser.js";
 import { requireAuth } from "../middleware/auth.js";
+import { asyncHandler } from "../utils/asyncHandler.js";
+import { badRequest, HttpError } from "../utils/httpError.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -33,8 +35,8 @@ const upload = multer({
 
 const router = Router();
 
-router.post("/", requireAuth, upload.single("file"), async (req, res) => {
-  if (!req.file) return res.status(400).json({ error: "No file uploaded" });
+router.post("/", requireAuth, upload.single("file"), asyncHandler(async (req, res) => {
+  if (!req.file) throw badRequest("No file uploaded");
 
   const filePath = req.file.path;
   try {
@@ -50,11 +52,10 @@ router.post("/", requireAuth, upload.single("file"), async (req, res) => {
       rawData: parsedData
     });
   } catch (err) {
-    console.error("Parse error:", err);
-    res.status(400).json({ error: "Failed to parse file: " + err.message });
+    throw new HttpError(400, "Failed to parse file: " + err.message);
   } finally {
     try { if (existsSync(filePath)) unlinkSync(filePath); } catch {}
   }
-});
+}));
 
 export default router;

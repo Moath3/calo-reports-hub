@@ -18,6 +18,8 @@ import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
 import { requireAuth, requireAdmin } from '../middleware/auth.js';
 import { getDb } from '../db/database.js';
+import { asyncHandler } from '../utils/asyncHandler.js';
+import { HttpError, badRequest } from '../utils/httpError.js';
 import {
   getBootstrapInstructions,
   exchangeCodeForTokens,
@@ -41,6 +43,20 @@ function logZeltAudit(userId, action, details = {}) {
   }
 }
 
+// Translates errors from Zelt service calls into HttpErrors with the right
+// status and extras. Returns a function suitable for `.catch(zeltUpstream(...))`.
+// NotConnected → 503 + { code: 'NOT_CONNECTED' } (UI uses this to prompt reconnect).
+// Anything else → 500 + { detail }; pass `{ stripDetailInProd: true }` to suppress detail in prod (used by /balances/export).
+function zeltUpstream(message, opts = {}) {
+  return (err) => {
+    if (err.message === 'NotConnected') {
+      throw new HttpError(503, 'Zelt not connected', { code: 'NOT_CONNECTED' });
+    }
+    const extra = opts.stripDetailInProd && IS_PROD ? {} : { detail: err.message };
+    throw new HttpError(500, message, extra);
+  };
+}
+
 const router = Router();
 
 // Looser rate limit for /status (UI may poll), tight for /oauth/*
@@ -58,31 +74,18 @@ const statusLimiter = rateLimit({
 // ---- Bootstrap (admin only) ------------------------------------------
 
 // Zelt's flow is manual — return instructions, not a URL to redirect to.
-router.post('/oauth/init', oauthLimiter, requireAuth, requireAdmin, (req, res) => {
-  try {
-    const instructions = getBootstrapInstructions();
-    logZeltAudit(req.user.id, 'zelt.oauth.init');
-    res.json(instructions);
-  } catch (err) {
-    console.error('[zelt/oauth/init]', err.message);
-    res.status(500).json({ error: 'Failed to fetch bootstrap instructions' });
-  }
-});
+router.post('/oauth/init', oauthLimiter, requireAuth, requireAdmin, asyncHandler((req, res) => {
+  const instructions = getBootstrapInstructions();
+  logZeltAudit(req.user.id, 'zelt.oauth.init');
+  res.json(instructions);
+}));
 
 /**
  * OAuth callback. Zelt redirects here with ?code=...&state=...
  *
- * Note: this endpoint does not use requireAuth — Zelt cannot pass our JWT.
- * Security comes from:
- *   1. The CSRF state token (single-use, 10-min TTL, generated only by an admin via /oauth/init)
- *   2. Zelt only redirects to the registered URI
- *   3. The endpoint can only succeed once per state
+ * NOTE: this endpoint returns HTML, not JSON, so it does NOT use asyncHandler /
+ * the central JSON error handler. Keeps its own try/catch + renderCallbackPage.
  */
-// Zelt's manual code flow doesn't pass our `state` param, so state validation is
-// not enforceable on this redirect. Mitigations:
-//   - Bootstrap is rare (one-time per environment)
-//   - Re-bootstrap simply overwrites tokens; no privilege escalation possible
-//   - Admin verifies "Connected" badge in-hub after the flow
 router.get('/oauth/callback', oauthLimiter, async (req, res) => {
   const { code, error } = req.query;
 
@@ -117,16 +120,11 @@ router.get('/oauth/callback', oauthLimiter, async (req, res) => {
   }
 });
 
-router.post('/disconnect', oauthLimiter, requireAuth, requireAdmin, (req, res) => {
-  try {
-    const result = disconnect();
-    logZeltAudit(req.user.id, 'zelt.oauth.disconnected');
-    res.json(result);
-  } catch (err) {
-    console.error('[zelt/disconnect]', err.message);
-    res.status(500).json({ error: 'Disconnect failed' });
-  }
-});
+router.post('/disconnect', oauthLimiter, requireAuth, requireAdmin, asyncHandler((req, res) => {
+  const result = disconnect();
+  logZeltAudit(req.user.id, 'zelt.oauth.disconnected');
+  res.json(result);
+}));
 
 // ---- Status ----------------------------------------------------------
 
@@ -142,92 +140,63 @@ const dataLimiter = rateLimit({
   message: { error: 'Too many data requests, please wait.' },
 });
 
-router.get('/entities', dataLimiter, requireAuth, async (req, res) => {
-  try {
-    const entities = await listEntities();
-    res.json({ entities });
-  } catch (err) {
-    console.error('[zelt/entities]', err.message, err.stack);
-    if (err.message === 'NotConnected') {
-      return res.status(503).json({ error: 'Zelt not connected', code: 'NOT_CONNECTED' });
-    }
-    // Always surface the upstream error message — this is HR-only data, not a public route.
-    // The detail helps diagnose endpoint/scope issues without spelunking render logs.
-    res.status(500).json({ error: 'Failed to fetch entities', detail: err.message });
-  }
-});
+router.get('/entities', dataLimiter, requireAuth, asyncHandler(async (req, res) => {
+  const entities = await listEntities().catch(zeltUpstream('Failed to fetch entities'));
+  res.json({ entities });
+}));
 
-router.get('/balances', dataLimiter, requireAuth, async (req, res) => {
+router.get('/balances', dataLimiter, requireAuth, asyncHandler(async (req, res) => {
   const raw = req.query.entity;
-  if (!raw || typeof raw !== 'string') {
-    return res.status(400).json({ error: 'Missing required query param: entity' });
-  }
+  if (!raw || typeof raw !== 'string') throw badRequest('Missing required query param: entity');
   const entities = raw.split(',').map(s => s.trim()).filter(Boolean);
-  if (!entities.length) {
-    return res.status(400).json({ error: 'No valid entities provided' });
-  }
+  if (!entities.length) throw badRequest('No valid entities provided');
 
   // asOfDate: optional. Past dates only — future projection is brittle.
   let asOfDate = null;
   if (req.query.asOfDate) {
     const d = String(req.query.asOfDate);
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) {
-      return res.status(400).json({ error: 'asOfDate must be YYYY-MM-DD' });
-    }
-    if (new Date(d).getTime() > Date.now()) {
-      return res.status(400).json({ error: 'asOfDate cannot be in the future' });
-    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) throw badRequest('asOfDate must be YYYY-MM-DD');
+    if (new Date(d).getTime() > Date.now()) throw badRequest('asOfDate cannot be in the future');
     asOfDate = d;
   }
-  try {
-    const datas = await Promise.all(entities.map(e => getBalancesForEntity(e, asOfDate)));
-    if (datas.length === 1) return res.json(datas[0]);
-    // Aggregate multi-entity result
-    const allRows = [];
-    const allDiagnostics = [];
-    for (const d of datas) {
-      for (const r of d.rows) allRows.push({ ...r, entity: d.entity });
-      if (d.diagnostic) allDiagnostics.push(d.diagnostic);
-    }
-    allRows.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-    res.json({
-      entity: entities.join(' + '),
-      asOf: datas[0].asOf,
-      count: allRows.length,
-      rows: allRows,
-      multi: true,
-      sources: datas.map(d => ({ entity: d.entity, count: d.count })),
-    });
-  } catch (err) {
-    console.error('[zelt/balances]', err.message);
-    if (err.message === 'NotConnected') {
-      return res.status(503).json({ error: 'Zelt not connected', code: 'NOT_CONNECTED' });
-    }
-    res.status(500).json({ error: 'Failed to fetch balances', detail: err.message });
-  }
-});
 
-router.post('/balances/export', dataLimiter, requireAuth, async (req, res) => {
+  const datas = await Promise.all(
+    entities.map(e => getBalancesForEntity(e, asOfDate).catch(zeltUpstream('Failed to fetch balances')))
+  );
+  if (datas.length === 1) return res.json(datas[0]);
+
+  // Aggregate multi-entity result
+  const allRows = [];
+  const allDiagnostics = [];
+  for (const d of datas) {
+    for (const r of d.rows) allRows.push({ ...r, entity: d.entity });
+    if (d.diagnostic) allDiagnostics.push(d.diagnostic);
+  }
+  allRows.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  res.json({
+    entity: entities.join(' + '),
+    asOf: datas[0].asOf,
+    count: allRows.length,
+    rows: allRows,
+    multi: true,
+    sources: datas.map(d => ({ entity: d.entity, count: d.count })),
+  });
+}));
+
+router.post('/balances/export', dataLimiter, requireAuth, asyncHandler(async (req, res) => {
   const { entity } = req.query;
-  if (!entity || typeof entity !== 'string') {
-    return res.status(400).json({ error: 'Missing required query param: entity' });
-  }
-  try {
-    const { rows, asOf } = await getBalancesForEntity(entity.trim());
-    const csv = toCsv(rows);
-    const safeName = entity.replace(/[^a-z0-9]+/gi, '-').toLowerCase();
-    const dateTag = asOf.slice(0, 10);
-    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-    res.setHeader('Content-Disposition', `attachment; filename="calo-available-now-${safeName}-${dateTag}.csv"`);
-    res.send(csv);
-  } catch (err) {
-    console.error('[zelt/balances/export]', err.message);
-    if (err.message === 'NotConnected') {
-      return res.status(503).json({ error: 'Zelt not connected', code: 'NOT_CONNECTED' });
-    }
-    res.status(500).json({ error: 'Export failed', detail: IS_PROD ? undefined : err.message });
-  }
-});
+  if (!entity || typeof entity !== 'string') throw badRequest('Missing required query param: entity');
+
+  const { rows, asOf } = await getBalancesForEntity(entity.trim())
+    .catch(zeltUpstream('Export failed', { stripDetailInProd: true }));
+
+  const csv = toCsv(rows);
+  const safeName = entity.replace(/[^a-z0-9]+/gi, '-').toLowerCase();
+  const dateTag = asOf.slice(0, 10);
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="calo-available-now-${safeName}-${dateTag}.csv"`);
+  res.send(csv);
+}));
 
 // Admin-only: clear server-side caches (entities + balances)
 router.post('/cache/clear', oauthLimiter, requireAuth, requireAdmin, (req, res) => {
@@ -236,31 +205,26 @@ router.post('/cache/clear', oauthLimiter, requireAuth, requireAdmin, (req, res) 
 });
 
 // Data hygiene audit — surfaces flagged employees against 10+ checks.
-router.get('/audit', dataLimiter, requireAuth, async (req, res) => {
-  try {
-    const report = await runAudit();
-    res.json(report);
-  } catch (err) {
-    console.error('[zelt/audit]', err.message);
-    if (err.message === 'NotConnected') {
-      return res.status(503).json({ error: 'Zelt not connected', code: 'NOT_CONNECTED' });
-    }
-    res.status(500).json({ error: 'Audit failed', detail: err.message });
-  }
-});
+router.get('/audit', dataLimiter, requireAuth, asyncHandler(async (req, res) => {
+  const report = await runAudit().catch(zeltUpstream('Audit failed'));
+  res.json(report);
+}));
 
 // Send the audit digest by email (admin only). Uses Resend if configured.
-router.post('/audit/digest', oauthLimiter, requireAuth, requireAdmin, async (req, res) => {
+router.post('/audit/digest', oauthLimiter, requireAuth, requireAdmin, asyncHandler(async (req, res) => {
+  const recipients = (req.body?.recipients || []).filter(e => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e));
+  if (!recipients.length) throw badRequest('Provide at least one recipient email');
+  if (!process.env.RESEND_API_KEY) {
+    throw new HttpError(503, 'RESEND_API_KEY not configured on hub');
+  }
+
+  // Original behavior: any error inside this block surfaces as 500 "Digest send failed" with detail.
+  // Preserve that — the audit/Resend errors here aren't the same as /audit's NotConnected handling.
   try {
-    const recipients = (req.body?.recipients || []).filter(e => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e));
-    if (!recipients.length) return res.status(400).json({ error: 'Provide at least one recipient email' });
     const report = await runAudit();
     const html = digestHtml(report);
     const subject = `Calo · Zelt Data Hygiene Digest · ${new Date().toLocaleDateString('en-GB')}`;
 
-    if (!process.env.RESEND_API_KEY) {
-      return res.status(503).json({ error: 'RESEND_API_KEY not configured on hub' });
-    }
     const r = await fetch('https://api.resend.com/emails', {
       method: 'POST',
       headers: {
@@ -276,15 +240,15 @@ router.post('/audit/digest', oauthLimiter, requireAuth, requireAdmin, async (req
     });
     if (!r.ok) {
       const text = await r.text();
-      return res.status(502).json({ error: 'Resend rejected', detail: text.slice(0, 200) });
+      throw new HttpError(502, 'Resend rejected', { detail: text.slice(0, 200) });
     }
     logZeltAudit(req.user.id, 'zelt.audit.digest_sent', { recipients });
     res.json({ ok: true, recipients, summary: report.summary });
   } catch (err) {
-    console.error('[zelt/audit/digest]', err.message);
-    res.status(500).json({ error: 'Digest send failed', detail: err.message });
+    if (err instanceof HttpError) throw err; // pass through 502 above
+    throw new HttpError(500, 'Digest send failed', { detail: err.message });
   }
-});
+}));
 
 function digestHtml(report) {
   const s = report.summary;
@@ -321,15 +285,10 @@ function digestHtml(report) {
 // Admin-only: returns the shape of one user record from Zelt for debugging
 // field-name mismatches. No PII shape: only key names are returned, plus
 // our extracted-field results so admin can see what we're reading.
-router.get('/debug/sample', oauthLimiter, requireAuth, requireAdmin, async (req, res) => {
-  try {
-    const sample = await debugSampleUser();
-    res.json(sample);
-  } catch (err) {
-    console.error('[zelt/debug/sample]', err.message);
-    res.status(500).json({ error: 'Sample failed', detail: err.message });
-  }
-});
+router.get('/debug/sample', oauthLimiter, requireAuth, requireAdmin, asyncHandler(async (req, res) => {
+  const sample = await debugSampleUser().catch(zeltUpstream('Sample failed'));
+  res.json(sample);
+}));
 
 function toCsv(rows) {
   const cols = ['employeeId', 'name', 'site', 'department', 'jobTitle', 'policy',

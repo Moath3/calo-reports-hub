@@ -3,25 +3,22 @@ import { createHash } from "crypto";
 import { requireAuth } from "../middleware/auth.js";
 import { buildStandaloneHTML } from "../services/htmlBuilder.js";
 import { getDb } from "../db/database.js";
+import { asyncHandler } from "../utils/asyncHandler.js";
+import { HttpError, badRequest } from "../utils/httpError.js";
 
 const router = Router();
 
 // HTML export — supports optional password protection + full tweak options
-router.post("/html", requireAuth, (req, res) => {
-  try {
-    const { reportData, brandColor, title, password, variant, tweaks } = req.body;
-    if (!reportData) return res.status(400).json({ error: "reportData is required" });
-    const options = {};
-    if (password) options.password = password;
-    if (variant) options.variant = variant;
-    // Merge explicit tweaks into options (density, pageWidth, showHero, showKpis, etc.)
-    if (tweaks && typeof tweaks === 'object') Object.assign(options, tweaks);
-    res.json({ html: buildStandaloneHTML(reportData, brandColor, title, options) });
-  } catch (err) {
-    console.error("HTML export error:", err);
-    res.status(500).json({ error: "HTML export failed" });
-  }
-});
+router.post("/html", requireAuth, asyncHandler((req, res) => {
+  const { reportData, brandColor, title, password, variant, tweaks } = req.body;
+  if (!reportData) throw badRequest("reportData is required");
+  const options = {};
+  if (password) options.password = password;
+  if (variant) options.variant = variant;
+  // Merge explicit tweaks into options (density, pageWidth, showHero, showKpis, etc.)
+  if (tweaks && typeof tweaks === 'object') Object.assign(options, tweaks);
+  res.json({ html: buildStandaloneHTML(reportData, brandColor, title, options) });
+}));
 
 // PDF generation is handled client-side via browser print
 router.post("/pdf", requireAuth, (req, res) => {
@@ -29,33 +26,33 @@ router.post("/pdf", requireAuth, (req, res) => {
 });
 
 // Netlify publish — reuses existing site on republish, creates new site only on first publish
-router.post("/netlify", requireAuth, async (req, res) => {
-  try {
-    const { html, siteName, reportId } = req.body;
-    const token = process.env.NETLIFY_ACCESS_TOKEN;
-    if (!html) return res.status(400).json({ error: "html is required" });
-    if (!token) return res.status(400).json({ error: "Netlify token not configured. Set NETLIFY_ACCESS_TOKEN in server environment." });
+router.post("/netlify", requireAuth, asyncHandler(async (req, res) => {
+  const { html, siteName, reportId } = req.body;
+  const token = process.env.NETLIFY_ACCESS_TOKEN;
+  if (!html) throw badRequest("html is required");
+  if (!token) throw badRequest("Netlify token not configured. Set NETLIFY_ACCESS_TOKEN in server environment.");
 
-    const sha1 = createHash("sha1").update(html).digest("hex");
-    const hdrs = { "Authorization": "Bearer " + token, "Content-Type": "application/json" };
+  const sha1 = createHash("sha1").update(html).digest("hex");
+  const hdrs = { "Authorization": "Bearer " + token, "Content-Type": "application/json" };
 
-    // Check if this report already has a Netlify site
-    let siteId = null;
-    let siteUrl = null;
-    if (reportId) {
-      const db = getDb();
-      const row = db.prepare("SELECT netlify_site_id, netlify_url FROM reports WHERE id = ?").get(reportId);
-      if (row?.netlify_site_id) {
-        // Verify the site still exists on Netlify
-        const checkRes = await fetch("https://api.netlify.com/api/v1/sites/" + row.netlify_site_id, { headers: hdrs });
-        if (checkRes.ok) {
-          siteId = row.netlify_site_id;
-          siteUrl = row.netlify_url;
-        }
-        // If site was deleted on Netlify, fall through to create a new one
+  // Check if this report already has a Netlify site
+  let siteId = null;
+  let siteUrl = null;
+  if (reportId) {
+    const db = getDb();
+    const row = db.prepare("SELECT netlify_site_id, netlify_url FROM reports WHERE id = ?").get(reportId);
+    if (row?.netlify_site_id) {
+      // Verify the site still exists on Netlify
+      const checkRes = await fetch("https://api.netlify.com/api/v1/sites/" + row.netlify_site_id, { headers: hdrs });
+      if (checkRes.ok) {
+        siteId = row.netlify_site_id;
+        siteUrl = row.netlify_url;
       }
+      // If site was deleted on Netlify, fall through to create a new one
     }
+  }
 
+  try {
     // Create a new site if needed
     if (!siteId) {
       const ts = Date.now().toString(36);
@@ -101,9 +98,9 @@ router.post("/netlify", requireAuth, async (req, res) => {
 
     res.json({ url: siteUrl, siteId, deployId: deploy.id });
   } catch (err) {
-    console.error("Netlify error:", err);
-    res.status(500).json({ error: "Netlify deploy failed: " + err.message });
+    // Preserve original behavior: surface Netlify error message in the response
+    throw new HttpError(500, "Netlify deploy failed: " + err.message);
   }
-});
+}));
 
 export default router;

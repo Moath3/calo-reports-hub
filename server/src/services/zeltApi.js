@@ -19,7 +19,7 @@ import { notifyAdminZeltRefreshFailing } from './emailService.js';
 const ZELT_BASE = 'https://go.zelt.app';
 const TOKEN_URL = `${ZELT_BASE}/apiv2/oauth/authorize/token`;
 const AUTHORIZE_URL = `${ZELT_BASE}/apiv2/oauth/authorize`;
-const REQUEST_TIMEOUT_MS = 10_000;
+const REQUEST_TIMEOUT_MS = 30_000; // bumped from 10s — balance fetches walk many paginated calls; Zelt is sometimes slow under WAF backoff
 
 // Browser-like User-Agent to avoid Akamai/CDN bot blocks. Default Node fetch
 // UA ('node') gets 403'd at ~30 concurrent requests on Zelt.
@@ -334,7 +334,22 @@ export async function zeltGet(path, params = {}) {
     });
   };
 
-  let resp = await attempt();
+  // Try once; if the fetch is aborted by our timeout (slow Zelt response under
+  // WAF backoff is the usual cause), retry once with a small jitter. Don't
+  // retry forever — a genuinely stuck request should still surface as an error.
+  let resp;
+  try {
+    resp = await attempt();
+  } catch (err) {
+    if (err.name === 'AbortError') {
+      console.warn(`[zelt] ${path} timed out — retrying once`);
+      await sleep(500 + Math.random() * 500);
+      resp = await attempt();
+    } else {
+      throw err;
+    }
+  }
+
   if (resp.status === 403) {
     // CDN/WAF bot-block at high concurrency. Wait longer + retry once.
     await sleep(1000 + Math.random() * 1500);

@@ -23,13 +23,14 @@ import { getDb, persistNow } from '../db/database.js';
 
 const ZELT_BASE = 'https://go.zelt.app';
 const LOGIN_URL = `${ZELT_BASE}/apiv2/auth/login`;
-const HEARTBEAT_URL = `${ZELT_BASE}/apiv2/auth/me`;
 const REQUEST_TIMEOUT_MS = 15_000;
 const HEARTBEAT_INTERVAL_MS = 15 * 60 * 1000; // 15 min — keeps session rolling
+const MAX_HEARTBEAT_FAILURES = 2; // tolerate one transient 401 before tearing down
 
 let cookieJar = null;        // in-memory cache; backed by DB
 let loginInFlight = null;    // Promise mutex for single-flight login
 let heartbeatTimer = null;
+let heartbeatFailureCount = 0; // consecutive 401s on heartbeat before tearing down
 
 // ---- Persistence -----------------------------------------------------
 
@@ -256,6 +257,16 @@ export function botLogout() {
   if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
 }
 
+// Heartbeat target: /apiv2/auth/ssocheck/{email} is the same path the login
+// warmup hits — known to work without CSRF/Origin tightening. Previously the
+// heartbeat hit /apiv2/auth/me, which 401s intermittently against bot cookies
+// when Origin/Referer/X-XSRF-TOKEN are missing — that 401 used to tear down
+// the whole session every 15 min.
+function heartbeatUrl() {
+  const { email } = getCreds();
+  return `${ZELT_BASE}/apiv2/auth/ssocheck/${encodeURIComponent(email)}`;
+}
+
 // Periodic heartbeat — keeps Zelt's rolling session alive indefinitely.
 // Without this, the cookie expires after ~few hours of inactivity.
 function startHeartbeat() {
@@ -263,18 +274,41 @@ function startHeartbeat() {
   heartbeatTimer = setInterval(async () => {
     if (!cookieJar) return;
     try {
-      const r = await fetchWithTimeout(HEARTBEAT_URL, {
-        headers: { Cookie: cookieJar, Accept: 'application/json', 'User-Agent': BROWSER_HEADERS['User-Agent'] },
+      // Send the same browser-like headers as the login flow (Origin, Referer,
+      // Accept-Language, etc). Some Zelt routes 401 on bot cookies when these
+      // are missing — see comment above.
+      const r = await fetchWithTimeout(heartbeatUrl(), {
+        headers: { ...BROWSER_HEADERS, Cookie: cookieJar },
       });
       if (r.status === 401) {
-        console.log('[zelt-bot] heartbeat got 401 — re-logging in');
-        cookieJar = null;
-        clearCookieDb();
-        try { await login(); } catch (e) { console.error('[zelt-bot] heartbeat re-login failed:', e.message); }
-      } else if (r.ok) {
-        // Refresh the cookie's updated_at in DB so we don't lose track of when last activity was.
-        saveCookieToDb(cookieJar);
+        heartbeatFailureCount += 1;
+        console.warn(`[zelt-bot] heartbeat 401 (${heartbeatFailureCount}/${MAX_HEARTBEAT_FAILURES})`);
+        if (heartbeatFailureCount >= MAX_HEARTBEAT_FAILURES) {
+          console.log('[zelt-bot] heartbeat 401 streak — re-logging in');
+          cookieJar = null;
+          clearCookieDb();
+          try { await login(); heartbeatFailureCount = 0; }
+          catch (e) { console.error('[zelt-bot] heartbeat re-login failed:', e.message); }
+        }
+        return;
       }
+      if (r.ok) {
+        heartbeatFailureCount = 0;
+        // Capture any rotated cookies (sliding session) and persist updated_at.
+        const fresh = extractCookies(r);
+        if (fresh.length) {
+          const merged = new Map();
+          for (const c of cookieJar.split('; ').filter(Boolean)) {
+            merged.set(c.split('=')[0], c);
+          }
+          for (const c of fresh) merged.set(c.split('=')[0], c);
+          cookieJar = Array.from(merged.values()).join('; ');
+        }
+        saveCookieToDb(cookieJar);
+        return;
+      }
+      // Non-401, non-ok (e.g. 5xx, transient network) — log but don't tear down.
+      console.warn(`[zelt-bot] heartbeat ${r.status}`);
     } catch (e) {
       console.warn('[zelt-bot] heartbeat error:', e.message);
     }

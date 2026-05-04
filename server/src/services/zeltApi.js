@@ -228,7 +228,19 @@ async function refreshTokens(prevUpdatedAt) {
       return fresh;
     }
     const text = await resp.text().catch(() => '');
-    recordRefreshFailure(`${resp.status} ${text.slice(0, 200)}`);
+    // Zelt has been returning 401 with empty body. Capture diagnostic headers
+    // (WWW-Authenticate often contains the OAuth error code: invalid_grant /
+    // invalid_client / insufficient_scope) so the admin has actionable detail.
+    const wwwAuth = resp.headers.get('www-authenticate') || '';
+    const xError = resp.headers.get('x-error') || resp.headers.get('x-error-code') || '';
+    const detail = [
+      `${resp.status}`,
+      text.slice(0, 200),
+      wwwAuth && `www-authenticate=${wwwAuth}`,
+      xError && `x-error=${xError}`,
+    ].filter(Boolean).join(' | ');
+    console.warn('[zelt] refresh 401 details:', detail);
+    recordRefreshFailure(detail);
     // Soft fail — caller surfaces error but tokens remain in DB for the admin
     // to re-bootstrap when they're ready. We never auto-wipe.
     throw new Error('Refresh failed — admin must re-bootstrap');

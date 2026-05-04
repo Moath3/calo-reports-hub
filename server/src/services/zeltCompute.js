@@ -58,6 +58,7 @@ export async function listEntities() {
         }
       }
     } catch (err) {
+      if (isAuthFailure(err)) throw err;
       console.warn(`[zelt] entities endpoint ${path} failed: ${err.status || ''} ${err.message}`);
     }
   }
@@ -248,6 +249,17 @@ function readItems(json) {
   return json.items || json.data || (Array.isArray(json) ? json : []);
 }
 
+// Distinguishes "auth/connection broken" errors from "this endpoint isn't the
+// right one." The endpoint-discovery loops below should swallow the latter
+// (try the next candidate) but immediately rethrow the former — otherwise an
+// expired/rejected access token surfaces as the misleading "no working users
+// endpoint" error after probing each candidate.
+function isAuthFailure(err) {
+  return err.status === 401
+    || err.status === 403
+    || /NotConnected|Refresh failed/.test(err.message || '');
+}
+
 async function resolveUsersEndpoint() {
   if (resolvedUsersEndpoint) return resolvedUsersEndpoint;
   for (const path of USERS_ENDPOINT_CANDIDATES) {
@@ -259,6 +271,7 @@ async function resolveUsersEndpoint() {
         return path;
       }
     } catch (err) {
+      if (isAuthFailure(err)) throw err;
       console.warn(`[zelt] users endpoint ${path} failed: ${err.status || ''} ${err.message}`);
     }
   }
@@ -460,6 +473,7 @@ async function fetchUserBasics(userIds) {
           break;
         }
       } catch (err) {
+        if (isAuthFailure(err)) throw err;
         console.warn(`[zelt] basic endpoint ${builder('{id}')} failed: ${err.status || ''} ${err.message}`);
       }
     }

@@ -94,6 +94,8 @@ export default function ZeltAuditPage() {
     <Wrap>
       <Header onRefresh={onRefresh} report={report} />
 
+      <ScoreCard report={report} />
+
       {/* Top stats */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12 }}>
         <StatCard label="Total Zelt users" value={report.totalUsers} />
@@ -235,6 +237,71 @@ function Header({ onRefresh, report }) {
   );
 }
 
+// ---- Score ----------------------------------------------------------------
+//
+// Single 0-100 score combining every flagged item across the audit. Each
+// flagged item costs points based on the check's severity, capped per-check
+// so a single noisy check (e.g. 200 missing managers) can't tank the score
+// past −25 alone — multiple bad checks compound. info-severity checks
+// (departmentList, entityList) are exempt; they're just lists, not violations.
+function computeScore(report) {
+  const PENALTY = { high: 2, medium: 0.75, low: 0.25, info: 0 };
+  const PER_CHECK_CAP = 25;
+  const breakdown = [];
+  for (const [key, items] of Object.entries(report.checks || {})) {
+    if (!Array.isArray(items) || items.length === 0) continue;
+    const sev = SEVERITY[key] || 'low';
+    const perItem = PENALTY[sev] ?? 0;
+    if (perItem === 0) continue;
+    const deduction = Math.min(items.length * perItem, PER_CHECK_CAP);
+    breakdown.push({ key, sev, count: items.length, deduction });
+  }
+  breakdown.sort((a, b) => b.deduction - a.deduction);
+  const totalDeduction = breakdown.reduce((s, b) => s + b.deduction, 0);
+  const score = Math.max(0, Math.round(100 - totalDeduction));
+  return { score, breakdown, totalDeduction };
+}
+
+function scoreTier(score) {
+  if (score >= 90) return { label: 'Excellent',       color: '#28b17b' };
+  if (score >= 75) return { label: 'Good',            color: '#5b8c4a' };
+  if (score >= 60) return { label: 'Needs attention', color: '#9A6F0E' };
+  return                  { label: 'Critical',        color: '#c0392b' };
+}
+
+function ScoreCard({ report }) {
+  const { score, breakdown } = computeScore(report);
+  const { label, color } = scoreTier(score);
+  return (
+    <div style={{ ...panel, padding: 24, display: 'flex', alignItems: 'center', gap: 24, flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, minWidth: 140 }}>
+        <div style={{ fontSize: 64, fontWeight: 900, color, letterSpacing: '-0.04em', lineHeight: 1 }}>{score}</div>
+        <div style={{ fontSize: 18, color: 'var(--ink-500)', fontWeight: 700 }}>/ 100</div>
+      </div>
+      <div style={{ flex: 1, minWidth: 240 }}>
+        <div style={{ fontSize: 11, fontWeight: 800, color, letterSpacing: '.06em', textTransform: 'uppercase' }}>{label}</div>
+        <div style={{ fontSize: 16, fontWeight: 800, color: 'var(--ink-900)', margin: '4px 0' }}>Data Hygiene Score</div>
+        {breakdown.length === 0 ? (
+          <div style={{ fontSize: 13, color: 'var(--ink-500)' }}>No flagged items. Clean data.</div>
+        ) : (
+          <div style={{ fontSize: 12, color: 'var(--ink-500)' }}>
+            <strong style={{ color: 'var(--ink-700)' }}>Biggest losses:</strong>{' '}
+            {breakdown.slice(0, 3).map((b, i) => (
+              <span key={b.key}>
+                {i > 0 && ' · '}
+                {LABELS[b.key] || b.key} <span style={{ color: '#c0392b', fontWeight: 700 }}>−{b.deduction.toFixed(1)}</span>
+              </span>
+            ))}
+          </div>
+        )}
+        <div style={{ fontSize: 11, color: 'var(--ink-400, #999)', marginTop: 6 }}>
+          High-severity flags weigh −2 each (capped at −25/check), medium −0.75, low −0.25. Score updates as Zelt data is fixed.
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ---- Client-side report builders ------------------------------------------
 
 function triggerDownload(filename, content, mimeType) {
@@ -347,6 +414,15 @@ function buildHtmlReport(report) {
       <div style="font-size:11px;font-weight:900;letter-spacing:.16em;color:#888">CALO · ZELT</div>
       <h1 style="margin:4px 0 0;font-size:24px;letter-spacing:-0.02em">Data Hygiene Report</h1>
       <div style="font-size:13px;color:#666;margin-top:6px">${escapeHtml(asOf)} · ${report.totalUsers} total Zelt users</div>
+      ${(() => {
+        const { score } = computeScore(report);
+        const tier = scoreTier(score);
+        return `<div style="margin-top:14px;display:flex;align-items:baseline;gap:8px">
+          <span style="font-size:48px;font-weight:900;color:${tier.color};letter-spacing:-0.04em;line-height:1">${score}</span>
+          <span style="font-size:14px;color:#666;font-weight:700">/ 100</span>
+          <span style="font-size:11px;font-weight:800;color:${tier.color};letter-spacing:.06em;text-transform:uppercase;margin-left:8px">${tier.label}</span>
+        </div>`;
+      })()}
     </header>
     ${checkBlocks || '<p style="margin-top:24px;color:#666">No flagged items.</p>'}
     <footer style="margin-top:32px;padding-top:16px;border-top:1px solid #eee;font-size:11px;color:#888">

@@ -206,9 +206,12 @@ async function refreshTokens(prevUpdatedAt) {
   // CAS — if updated_at changed, another process refreshed; just re-read.
   if (tokens.updatedAt !== prevUpdatedAt) return readTokens();
 
-  // Send client credentials in BOTH the Authorization header (Basic auth) and
-  // the form body. Spec-allowed; some OAuth providers (Zelt looks like one)
-  // strictly require the body fields and ignore Basic. Sending both is safe.
+  // Match Zelt's docs exactly: Basic auth header for client credentials,
+  // body contains only grant_type + refresh_token. Earlier we sent client_id
+  // and client_secret in the body too as a hopeful experiment, but Zelt's
+  // refresh-token docs (Settings → Security → Developer Hub → "Exchange
+  // Refresh token for new token pair") show only the two body fields, so
+  // matching the docs precisely removes a variable from the failure analysis.
   const basic = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
   const resp = await fetchWithTimeout(TOKEN_URL, {
     method: 'POST',
@@ -219,8 +222,6 @@ async function refreshTokens(prevUpdatedAt) {
     body: new URLSearchParams({
       grant_type: 'refresh_token',
       refresh_token: tokens.refreshToken,
-      client_id: clientId,
-      client_secret: clientSecret,
     }),
   });
 

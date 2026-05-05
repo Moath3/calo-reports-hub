@@ -60,42 +60,23 @@ const LABELS = {
 
 export default function ZeltAuditPage() {
   const { user } = useAuth();
-  const isAdmin = user?.role === 'admin';
   const [report, setReport] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [expanded, setExpanded] = useState(null);
-  const [digestEmails, setDigestEmails] = useState('');
-  const [sending, setSending] = useState(false);
-  const [sentMsg, setSentMsg] = useState(null);
 
-  const load = useCallback(() => {
+  const load = useCallback((force = false) => {
     setLoading(true);
     setError(null);
-    api.zeltAudit()
+    api.zeltAudit({ force })
       .then(r => setReport(r))
       .catch(e => setError(e.message || 'Failed to load audit'))
       .finally(() => setLoading(false));
   }, []);
 
-  useEffect(load, [load]);
+  useEffect(() => { load(false); }, [load]);
 
-  const sendDigest = async () => {
-    const recipients = digestEmails.split(/[,;\s]+/).map(s => s.trim()).filter(Boolean);
-    if (!recipients.length) return setError('Enter at least one email');
-    setSending(true);
-    setError(null);
-    setSentMsg(null);
-    try {
-      const r = await api.zeltAuditDigest(recipients);
-      setSentMsg(`Digest sent to ${r.recipients.length} recipient(s).`);
-      setDigestEmails('');
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setSending(false);
-    }
-  };
+  const onRefresh = () => load(true);
 
   if (loading) return <Wrap><Spinner /></Wrap>;
   if (error) return <Wrap><Header /><div style={errBanner}>{error}</div></Wrap>;
@@ -111,7 +92,7 @@ export default function ZeltAuditPage() {
 
   return (
     <Wrap>
-      <Header onRefresh={load} />
+      <Header onRefresh={onRefresh} report={report} />
 
       {/* Top stats */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12 }}>
@@ -161,26 +142,6 @@ export default function ZeltAuditPage() {
               }}>{o} · {n}</span>
             ))}
           </div>
-        </div>
-      )}
-
-      {/* Send digest */}
-      {isAdmin && (
-        <div style={{ ...panel, padding: 16 }}>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-            <strong style={{ fontSize: 13 }}>Email this digest to:</strong>
-            <input
-              type="text"
-              value={digestEmails}
-              onChange={e => setDigestEmails(e.target.value)}
-              placeholder="email1@calo.app, email2@calo.app"
-              style={{ ...input, flex: 1, minWidth: 260 }}
-            />
-            <button onClick={sendDigest} disabled={sending} style={primaryBtn(sending)}>
-              {sending ? 'Sending…' : 'Send digest'}
-            </button>
-          </div>
-          {sentMsg && <div style={{ marginTop: 8, fontSize: 13, color: 'var(--calo-700, #1e8359)' }}>{sentMsg}</div>}
         </div>
       )}
 
@@ -254,16 +215,145 @@ function prettyFallback(it) {
   return pairs.join(' · ') || '(no displayable fields)';
 }
 
-function Header({ onRefresh }) {
+function Header({ onRefresh, report }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
       <div>
         <div style={{ fontSize: 11, fontWeight: 900, letterSpacing: '.16em', color: 'var(--ink-500)' }}>HR · ZELT</div>
         <h1 style={{ fontSize: 32, fontWeight: 900, color: 'var(--ink-900)', letterSpacing: '-0.025em', margin: '4px 0 0 0' }}>Data Hygiene</h1>
       </div>
-      {onRefresh && <button onClick={onRefresh} style={ghostBtn}><Icon name="RefreshCw" size={14} /> Refresh</button>}
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+        {report && (
+          <>
+            <button onClick={() => downloadHtmlReport(report)} style={ghostBtn} title="Download as a self-contained HTML report"><Icon name="FileText" size={14} /> Download HTML</button>
+            <button onClick={() => downloadCsvReport(report)} style={ghostBtn} title="Download flagged items as a spreadsheet (.csv)"><Icon name="Table" size={14} /> Download CSV</button>
+          </>
+        )}
+        {onRefresh && <button onClick={onRefresh} style={ghostBtn}><Icon name="RefreshCw" size={14} /> Refresh</button>}
+      </div>
     </div>
   );
+}
+
+// ---- Client-side report builders ------------------------------------------
+
+function triggerDownload(filename, content, mimeType) {
+  const blob = new Blob([content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+function isoDateTag(report) {
+  return new Date(report.asOf || Date.now()).toISOString().slice(0, 10);
+}
+
+function downloadHtmlReport(report) {
+  const html = buildHtmlReport(report);
+  triggerDownload(`calo-zelt-data-hygiene-${isoDateTag(report)}.html`, html, 'text/html;charset=utf-8');
+}
+
+function downloadCsvReport(report) {
+  const csv = buildCsvReport(report);
+  triggerDownload(`calo-zelt-data-hygiene-${isoDateTag(report)}.csv`, csv, 'text/csv;charset=utf-8');
+}
+
+function escapeHtml(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+}
+
+function csvCell(v) {
+  if (v == null) return '';
+  if (typeof v === 'object') v = JSON.stringify(v);
+  const s = String(v);
+  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+function compactDetails(it) {
+  if (it == null || typeof it !== 'object') return '';
+  const skip = new Set(['name', 'legalName', 'value', 'employeeId', 'email', 'entity', 'department', 'site', 'suggestion']);
+  const pairs = Object.entries(it)
+    .filter(([k, v]) => !skip.has(k) && v != null && (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean'))
+    .map(([k, v]) => `${k}=${v}`);
+  return pairs.join('; ');
+}
+
+function buildCsvReport(report) {
+  const cols = ['Check', 'Severity', 'Name', 'Employee ID', 'Entity', 'Department', 'Site', 'Suggestion', 'Details'];
+  const rows = [cols];
+  for (const [key, items] of Object.entries(report.checks || {})) {
+    if (!Array.isArray(items) || !items.length) continue;
+    const sev = SEVERITY[key] || 'low';
+    const label = LABELS[key] || key;
+    for (const it of items) {
+      rows.push([
+        label,
+        sev,
+        it.name || it.legalName || it.value || '',
+        it.employeeId || '',
+        it.entity || '',
+        it.department || '',
+        it.site || '',
+        it.suggestion || '',
+        compactDetails(it),
+      ]);
+    }
+  }
+  return rows.map(r => r.map(csvCell).join(',')).join('\n') + '\n';
+}
+
+function buildHtmlReport(report) {
+  const asOf = new Date(report.asOf || Date.now()).toLocaleString('en-GB');
+  const checkBlocks = Object.entries(report.checks || {})
+    .filter(([, items]) => Array.isArray(items) && items.length > 0)
+    .sort(([a], [b]) => {
+      const order = { high: 0, medium: 1, low: 2, info: 3 };
+      return (order[SEVERITY[a] || 'low'] - order[SEVERITY[b] || 'low']);
+    })
+    .map(([key, items]) => {
+      const sev = SEVERITY[key] || 'low';
+      const sevColor = sev === 'high' ? '#c0392b' : sev === 'medium' ? '#9A6F0E' : sev === 'info' ? '#5b6ee1' : '#28b17b';
+      const rows = items.map(it => {
+        const title = it.name || it.legalName || it.value || it.employeeId || it.email || '(item)';
+        const meta = [
+          it.employeeId && `ID ${it.employeeId}`,
+          it.entity, it.department, it.site,
+          it.leaveDate && `leaveDate ${it.leaveDate}`,
+          it.suggestion,
+        ].filter(Boolean).map(escapeHtml).join(' · ');
+        return `<li style="padding:6px 0;border-bottom:1px solid #eee"><strong>${escapeHtml(title)}</strong>${meta ? `<div style="font-size:12px;color:#777">${meta}</div>` : ''}</li>`;
+      }).join('');
+      return `
+        <section style="margin-top:24px">
+          <div style="border-left:4px solid ${sevColor};padding-left:12px">
+            <div style="font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:${sevColor}">${sev} · ${items.length} flagged</div>
+            <h2 style="margin:4px 0 0;font-size:16px;color:#222">${escapeHtml(LABELS[key] || key)}</h2>
+          </div>
+          <ul style="list-style:none;padding:0;margin:8px 0 0">${rows}</ul>
+        </section>`;
+    })
+    .join('');
+
+  return `<!doctype html>
+<html><head><meta charset="utf-8"><title>Calo · Zelt Data Hygiene · ${escapeHtml(asOf)}</title></head>
+<body style="font-family:-apple-system,system-ui,sans-serif;background:#f7f7f7;margin:0;padding:24px;color:#222">
+  <div style="max-width:820px;margin:0 auto;background:#fff;border-radius:12px;padding:32px;box-shadow:0 4px 24px rgba(0,0,0,.06)">
+    <header style="border-bottom:1px solid #eee;padding-bottom:16px">
+      <div style="font-size:11px;font-weight:900;letter-spacing:.16em;color:#888">CALO · ZELT</div>
+      <h1 style="margin:4px 0 0;font-size:24px;letter-spacing:-0.02em">Data Hygiene Report</h1>
+      <div style="font-size:13px;color:#666;margin-top:6px">${escapeHtml(asOf)} · ${report.totalUsers} total Zelt users</div>
+    </header>
+    ${checkBlocks || '<p style="margin-top:24px;color:#666">No flagged items.</p>'}
+    <footer style="margin-top:32px;padding-top:16px;border-top:1px solid #eee;font-size:11px;color:#888">
+      Generated from CALO Reports Hub · Data Hygiene
+    </footer>
+  </div>
+</body></html>`;
 }
 
 function Comparison({ label, actual, expected, hint }) {

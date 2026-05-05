@@ -205,82 +205,12 @@ router.post('/cache/clear', oauthLimiter, requireAuth, requireAdmin, (req, res) 
 });
 
 // Data hygiene audit — surfaces flagged employees against 10+ checks.
+// `?force=1` clears caches first so Refresh actually re-pulls live data.
 router.get('/audit', dataLimiter, requireAuth, asyncHandler(async (req, res) => {
-  const report = await runAudit().catch(zeltUpstream('Audit failed'));
+  const forceRefresh = req.query.force === '1' || req.query.force === 'true';
+  const report = await runAudit({ forceRefresh }).catch(zeltUpstream('Audit failed'));
   res.json(report);
 }));
-
-// Send the audit digest by email (admin only). Uses Resend if configured.
-router.post('/audit/digest', oauthLimiter, requireAuth, requireAdmin, asyncHandler(async (req, res) => {
-  const recipients = (req.body?.recipients || []).filter(e => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e));
-  if (!recipients.length) throw badRequest('Provide at least one recipient email');
-  if (!process.env.RESEND_API_KEY) {
-    throw new HttpError(503, 'RESEND_API_KEY not configured on hub');
-  }
-
-  // Original behavior: any error inside this block surfaces as 500 "Digest send failed" with detail.
-  // Preserve that — the audit/Resend errors here aren't the same as /audit's NotConnected handling.
-  try {
-    const report = await runAudit();
-    const html = digestHtml(report);
-    const subject = `Calo · Zelt Data Hygiene Digest · ${new Date().toLocaleDateString('en-GB')}`;
-
-    const r = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        from: process.env.RESEND_FROM || 'CALO Hub <hub@calo.app>',
-        to: recipients,
-        subject,
-        html,
-      }),
-    });
-    if (!r.ok) {
-      const text = await r.text();
-      throw new HttpError(502, 'Resend rejected', { detail: text.slice(0, 200) });
-    }
-    logZeltAudit(req.user.id, 'zelt.audit.digest_sent', { recipients });
-    res.json({ ok: true, recipients, summary: report.summary });
-  } catch (err) {
-    if (err instanceof HttpError) throw err; // pass through 502 above
-    throw new HttpError(500, 'Digest send failed', { detail: err.message });
-  }
-}));
-
-function digestHtml(report) {
-  const s = report.summary;
-  const row = (label, count, severity) => `
-    <tr>
-      <td style="padding:10px 12px;border-bottom:1px solid #eee;font-size:14px">${label}</td>
-      <td style="padding:10px 12px;border-bottom:1px solid #eee;text-align:right;font-weight:700;font-size:14px;color:${severity === 'high' ? '#c0392b' : severity === 'medium' ? '#9A6F0E' : '#28b17b'}">${count}</td>
-    </tr>`;
-  return `<!doctype html><html><body style="font-family:-apple-system,system-ui,sans-serif;background:#f7f7f7;margin:0;padding:24px">
-    <div style="max-width:640px;margin:0 auto;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,.06)">
-      <div style="background:#28b17b;color:#fff;padding:24px 28px"><h1 style="margin:0;font-size:20px;letter-spacing:-0.02em">Zelt Data Hygiene Digest</h1>
-        <div style="font-size:13px;opacity:0.85;margin-top:4px">${new Date(report.asOf).toLocaleString('en-GB')} · ${report.totalUsers} total users</div></div>
-      <table style="width:100%;border-collapse:collapse;background:#fff">
-        ${row('Active employees with leaveDate set', s.activeWithLeaveDate, s.activeWithLeaveDate > 0 ? 'high' : 'ok')}
-        ${row('Active but userEvent=Terminated/Resigned', s.activeButTerminated, s.activeButTerminated > 0 ? 'high' : 'ok')}
-        ${row('Duplicate employee IDs', s.duplicateEmployeeIds, s.duplicateEmployeeIds > 0 ? 'high' : 'ok')}
-        ${row('Missing employee ID (active)', s.missingEmployeeId, s.missingEmployeeId > 0 ? 'medium' : 'ok')}
-        ${row('Duplicate display names', s.duplicateNames, s.duplicateNames > 0 ? 'medium' : 'ok')}
-        ${row('Missing entity', s.missingEntity, s.missingEntity > 0 ? 'medium' : 'ok')}
-        ${row('Missing site', s.missingSite, s.missingSite > 0 ? 'low' : 'ok')}
-        ${row('Missing department', s.missingDepartment, s.missingDepartment > 0 ? 'low' : 'ok')}
-        ${row('Missing manager', s.missingManager, s.missingManager > 0 ? 'medium' : 'ok')}
-        ${row('Future joiners (>90d)', s.futureJoiners, 'low')}
-        ${row('Stale Created (>90d, never onboarded)', s.staleCreated, s.staleCreated > 50 ? 'medium' : 'low')}
-        ${row('Test users on Active', s.testUsers, s.testUsers > 0 ? 'medium' : 'ok')}
-        ${row('KSA active employees', s.ksaActiveCount, 'ok')}
-      </table>
-      <div style="padding:16px 28px;background:#fafafa;font-size:12px;color:#777;border-top:1px solid #eee">
-        Full report at <a href="https://calo-reports-hub.onrender.com/data-hygiene" style="color:#28b17b">CALO Hub → Data Hygiene</a>.
-      </div>
-    </div></body></html>`;
-}
 
 // Admin-only: returns the shape of one user record from Zelt for debugging
 // field-name mismatches. No PII shape: only key names are returned, plus

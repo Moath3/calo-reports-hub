@@ -331,14 +331,8 @@ class ApiClient {
   async zeltClearCache() {
     return this.request('/zelt/cache/clear', { method: 'POST' });
   }
-  async zeltAudit() {
-    return this.request('/zelt/audit');
-  }
-  async zeltAuditDigest(recipients) {
-    return this.request('/zelt/audit/digest', {
-      method: 'POST',
-      body: JSON.stringify({ recipients }),
-    });
+  async zeltAudit({ force = false } = {}) {
+    return this.request('/zelt/audit' + (force ? '?force=1' : ''));
   }
 
   // Logout

@@ -5,7 +5,7 @@
  * AND the guide-driven checks (project zelt-audit/references/data-hygiene-guide.md)
  * against live Zelt data.
  */
-import { fetchAllUsersForAudit } from './zeltCompute.js';
+import { fetchAllUsersForAudit, clearCaches } from './zeltCompute.js';
 
 // ---- Guide-derived approved lists (data-hygiene-guide.md §3, §7, §11) ----
 
@@ -103,7 +103,11 @@ function isKsa(u) {
   return e.includes('ksa') || s.includes('ksa') || s.includes('jeddah') || s.includes('riyadh');
 }
 
-export async function runAudit() {
+export async function runAudit({ forceRefresh = false } = {}) {
+  // Force-refresh wipes the entities + basics caches so the next fetch
+  // re-pulls live data from Zelt. Use when the audit page's Refresh button
+  // is clicked — without this, results are bounded by the 5min/24h cache TTLs.
+  if (forceRefresh) clearCaches();
   const users = await fetchAllUsersForAudit();
   const today = new Date();
   const out = {

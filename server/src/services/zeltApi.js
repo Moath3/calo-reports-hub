@@ -214,6 +214,9 @@ export async function exchangeCodeForTokens(code) {
     refreshToken,
     expiresAt: Date.now() + expiresIn * 1000,
   });
+  // Bootstrap means "fresh start" — clear any stale refresh-failure state from
+  // the previous (now-replaced) token pair so /api/health reflects reality.
+  resetRefreshFailureState();
   // Log lengths only — never the values themselves. Confirms Zelt actually
   // returned both tokens during bootstrap. If refresh_token is ever missing
   // here, that's the root cause of subsequent refresh 401s.

@@ -25,7 +25,10 @@ import {
   exchangeCodeForTokens,
   getStatus,
   disconnect,
+  getAccessToken,
+  zeltGet,
 } from '../services/zeltApi.js';
+import { botGet, botConfigured, getBotStatus } from '../services/zeltBot.js';
 import { listEntities, getBalancesForEntity, clearCaches, debugSampleUser } from '../services/zeltCompute.js';
 import { runAudit } from '../services/zeltAudit.js';
 
@@ -218,6 +221,34 @@ router.get('/audit', dataLimiter, requireAuth, asyncHandler(async (req, res) => 
 router.get('/debug/sample', oauthLimiter, requireAuth, requireAdmin, asyncHandler(async (req, res) => {
   const sample = await debugSampleUser().catch(zeltUpstream('Sample failed'));
   res.json(sample);
+}));
+
+// Admin-only: exercise each Zelt connectivity layer independently and report
+// per-call status. Use this when the leave portal "isn't working" — the
+// response tells you exactly which layer is broken (OAuth bearer, bot cookie
+// at /users/cache, bot cookie at /absences/balance, partner /entities, etc.).
+router.get('/debug/probe', oauthLimiter, requireAuth, requireAdmin, asyncHandler(async (req, res) => {
+  const probe = async (label, fn) => {
+    const start = Date.now();
+    try {
+      const result = await fn();
+      return { label, ok: true, ms: Date.now() - start, sample: typeof result === 'object' ? Object.keys(result || {}).slice(0, 8) : null };
+    } catch (e) {
+      return { label, ok: false, ms: Date.now() - start, error: e.message, status: e.status || null };
+    }
+  };
+
+  const results = [];
+  results.push({ label: 'oauthStatus',  ok: true, value: getStatus() });
+  results.push({ label: 'botStatus',    ok: true, value: getBotStatus() });
+  results.push(await probe('oauth.getAccessToken', () => getAccessToken().then(t => ({ tokenLength: t.length }))));
+  results.push(await probe('oauth.partner/entities (page=1)', () => zeltGet('/apiv2/partner/entities', { page: 1, pageSize: 1 })));
+  if (botConfigured()) {
+    results.push(await probe('bot./apiv2/users/cache', () => botGet('/apiv2/users/cache')));
+    results.push(await probe('bot./apiv2/auth/me', () => botGet('/apiv2/auth/me')));
+  }
+
+  res.json({ asOf: new Date().toISOString(), results });
 }));
 
 function toCsv(rows) {

@@ -211,11 +211,15 @@ export default function ZeltAuditPage() {
                 <div style={{ borderTop: '1px solid var(--ink-100)', maxHeight: 320, overflowY: 'auto' }}>
                   {items.slice(0, 50).map((it, i) => (
                     <div key={i} style={{ padding: '8px 16px', borderBottom: '1px solid var(--ink-100)', fontSize: 13 }}>
-                      <div style={{ fontWeight: 700 }}>{it.name || it.employeeId || JSON.stringify(it).slice(0, 60)}</div>
+                      <div style={{ fontWeight: 700 }}>
+                        {it.name || it.legalName || it.value || it.employeeId || it.email || prettyFallback(it)}
+                      </div>
                       {it.employeeId && <div style={{ fontSize: 11, color: 'var(--ink-500)' }}>ID: {it.employeeId}</div>}
                       {it.leaveDate && <div style={{ fontSize: 11, color: 'var(--ink-500)' }}>leaveDate: {it.leaveDate}</div>}
                       {it.eventStatus && <div style={{ fontSize: 11, color: 'var(--ink-500)' }}>event: {it.eventStatus}</div>}
                       {it.startDate && <div style={{ fontSize: 11, color: 'var(--ink-500)' }}>start: {it.startDate}</div>}
+                      {it.suggestion && <div style={{ fontSize: 11, color: 'var(--ink-500)', fontStyle: 'italic' }}>{it.suggestion}</div>}
+                      {it.count != null && <div style={{ fontSize: 11, color: 'var(--ink-500)' }}>{it.count} matches</div>}
                     </div>
                   ))}
                   {items.length > 50 && (
@@ -235,6 +239,19 @@ export default function ZeltAuditPage() {
 
 function Wrap({ children }) {
   return <div style={{ maxWidth: 1280, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 16 }}>{children}</div>;
+}
+
+// Last-resort renderer for audit-row shapes the explicit fields above don't cover.
+// Joins primitive values from the object into "key: value · key: value" instead of
+// dumping a truncated JSON.stringify, which read as gibberish in the UI.
+function prettyFallback(it) {
+  if (it == null) return '';
+  if (typeof it !== 'object') return String(it);
+  const pairs = Object.entries(it)
+    .filter(([, v]) => v != null && (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean'))
+    .slice(0, 4)
+    .map(([k, v]) => `${k}: ${v}`);
+  return pairs.join(' · ') || '(no displayable fields)';
 }
 
 function Header({ onRefresh }) {

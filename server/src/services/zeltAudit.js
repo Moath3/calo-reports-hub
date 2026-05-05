@@ -368,6 +368,22 @@ export async function runAudit({ forceRefresh = false } = {}) {
     totalOrganizations: Object.keys(orgCounts).length,
   };
 
+  // Compact active-user list for client-side cross-checks against uploaded
+  // masterfile sheets (KSA Luqmat, 3rd Party Production, etc.). Only the
+  // join/comparison fields — no PII beyond what the audit page already shows.
+  out.activeUsers = users
+    .filter(u => u.accountStatus === 'Active')
+    .map(u => ({
+      userId: u.userId,
+      employeeId: readEmployeeId(u),
+      name: u.displayName,
+      email: u.emailAddress || null,
+      entity: readEntity(u),
+      dept: u?.role?.department?.name || null,
+      position: u?.role?.jobTitle || null,
+      site: u?.role?.site?.name || null,
+    }));
+
   // Headline counts
   out.summary = Object.fromEntries(
     Object.entries(out.checks).map(([k, v]) => [k, Array.isArray(v) ? v.length : v])

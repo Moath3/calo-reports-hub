@@ -1,7 +1,15 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import api from '../utils/api';
 import { Icon } from '../components/ui';
+import {
+  loadMasterfile,
+  saveMasterfilesToStorage,
+  loadMasterfilesFromStorage,
+  clearMasterfilesFromStorage,
+  crossCheckMasterfiles,
+  SOURCE_LABELS,
+} from '../utils/masterfile';
 
 const SEVERITY = {
   activeWithLeaveDate: 'high',
@@ -11,6 +19,11 @@ const SEVERITY = {
   legacySiteAssigned: 'high',
   currencyMismatch: 'high',
   placeholderEmails: 'high',
+  // Cross-source checks (vs uploaded masterfiles)
+  zeltNotInMasterfile: 'high',
+  masterfileNotInZelt: 'high',
+  deptMismatchVsMasterfile: 'medium',
+  positionMismatchVsMasterfile: 'low',
   missingEmployeeId: 'medium',
   duplicateNames: 'medium',
   missingEntity: 'medium',
@@ -56,20 +69,28 @@ const LABELS = {
   unclassifiedOrganization: 'Organization can\'t be derived (Basecamp / MP-XX)',
   departmentList: 'All active departments — review against approved list',
   entityList: 'All entities seen — confirm CR vs brand-division',
+  // Cross-source checks
+  zeltNotInMasterfile: 'Active in Zelt but not in any uploaded masterfile',
+  masterfileNotInZelt: 'Active in masterfile but not active in Zelt',
+  deptMismatchVsMasterfile: 'Department mismatch: Zelt vs masterfile',
+  positionMismatchVsMasterfile: 'Position mismatch: Zelt vs masterfile',
 };
 
 export default function ZeltAuditPage() {
   const { user } = useAuth();
-  const [report, setReport] = useState(null);
+  const [reportRaw, setReportRaw] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [expanded, setExpanded] = useState(null);
+  const [masterfiles, setMasterfiles] = useState(() => loadMasterfilesFromStorage());
+  const [mfError, setMfError] = useState(null);
+  const [mfBusy, setMfBusy] = useState(null);
 
   const load = useCallback((force = false) => {
     setLoading(true);
     setError(null);
     api.zeltAudit({ force })
-      .then(r => setReport(r))
+      .then(r => setReportRaw(r))
       .catch(e => setError(e.message || 'Failed to load audit'))
       .finally(() => setLoading(false));
   }, []);
@@ -77,6 +98,49 @@ export default function ZeltAuditPage() {
   useEffect(() => { load(false); }, [load]);
 
   const onRefresh = () => load(true);
+
+  // Augment the audit report with cross-checks against uploaded masterfiles.
+  // Recomputes whenever the raw report or any masterfile changes; the score
+  // (which reads from report.checks) updates automatically.
+  const report = useMemo(() => {
+    if (!reportRaw) return null;
+    const cross = crossCheckMasterfiles(reportRaw.activeUsers, masterfiles);
+    if (!cross) return reportRaw;
+    const checks = { ...reportRaw.checks };
+    const summary = { ...reportRaw.summary };
+    for (const [k, items] of Object.entries(cross)) {
+      checks[k] = items;
+      summary[k] = items.length;
+    }
+    return { ...reportRaw, checks, summary };
+  }, [reportRaw, masterfiles]);
+
+  const handleMasterfileUpload = useCallback(async (sourceKey, file) => {
+    setMfError(null);
+    setMfBusy(sourceKey);
+    try {
+      const parsed = await loadMasterfile(file, sourceKey);
+      setMasterfiles(prev => {
+        const next = { ...prev, [sourceKey]: parsed };
+        saveMasterfilesToStorage(next);
+        return next;
+      });
+    } catch (e) {
+      setMfError(`${SOURCE_LABELS[sourceKey]}: ${e.message}`);
+    } finally {
+      setMfBusy(null);
+    }
+  }, []);
+
+  const removeMasterfile = useCallback((sourceKey) => {
+    setMasterfiles(prev => {
+      const next = { ...prev };
+      delete next[sourceKey];
+      if (Object.keys(next).length === 0) clearMasterfilesFromStorage();
+      else saveMasterfilesToStorage(next);
+      return next;
+    });
+  }, []);
 
   if (loading) return <Wrap><Spinner /></Wrap>;
   if (error) return <Wrap><Header /><div style={errBanner}>{error}</div></Wrap>;
@@ -95,6 +159,14 @@ export default function ZeltAuditPage() {
       <Header onRefresh={onRefresh} report={report} />
 
       <ScoreCard report={report} />
+
+      <MasterfileUploadPanel
+        masterfiles={masterfiles}
+        onUpload={handleMasterfileUpload}
+        onRemove={removeMasterfile}
+        busy={mfBusy}
+        error={mfError}
+      />
 
       {/* Top stats */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12 }}>
@@ -233,6 +305,65 @@ function Header({ onRefresh, report }) {
         )}
         {onRefresh && <button onClick={onRefresh} style={ghostBtn}><Icon name="RefreshCw" size={14} /> Refresh</button>}
       </div>
+    </div>
+  );
+}
+
+// ---- Masterfile upload panel ----------------------------------------------
+//
+// Two slots — KSA Luqmat masterfile + 3rd Party Production masterfile.
+// Files are parsed entirely in the browser via dynamic import of SheetJS
+// (no PII upload). Parsed snapshots persist in localStorage so the user
+// doesn't have to re-upload every visit.
+function MasterfileUploadPanel({ masterfiles, onUpload, onRemove, busy, error }) {
+  const slots = [
+    { key: 'ksaLuqmat',  label: 'KSA Masterfile (Luqmat Active)',     hint: 'Loads only the "Luqmat Active Employees" sheet.' },
+    { key: 'thirdParty', label: 'HR Masterfile (3rd Party Production)', hint: 'Loads only the "Data-Full Time" sheet (skips monthly contractors).' },
+  ];
+
+  return (
+    <div style={{ ...panel, padding: 16 }}>
+      <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--ink-500)', letterSpacing: '.06em', textTransform: 'uppercase', marginBottom: 10 }}>
+        Cross-source masterfiles (parsed in your browser, never uploaded)
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 12 }}>
+        {slots.map(slot => {
+          const loaded = masterfiles?.[slot.key];
+          const isBusy = busy === slot.key;
+          return (
+            <div key={slot.key} style={{ border: '1px solid var(--ink-200)', borderRadius: 8, padding: 12 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--ink-900)' }}>{slot.label}</div>
+              <div style={{ fontSize: 11, color: 'var(--ink-500)', marginTop: 2 }}>{slot.hint}</div>
+              <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                <label style={{ ...ghostBtn, cursor: isBusy ? 'wait' : 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                  <Icon name="Upload" size={14} />
+                  {isBusy ? 'Parsing…' : (loaded ? 'Replace file' : 'Upload XLSX')}
+                  <input
+                    type="file"
+                    accept=".xlsx,.xls"
+                    style={{ display: 'none' }}
+                    disabled={isBusy}
+                    onChange={e => {
+                      const f = e.target.files?.[0];
+                      if (f) onUpload(slot.key, f);
+                      e.target.value = '';
+                    }}
+                  />
+                </label>
+                {loaded && (
+                  <>
+                    <span style={{ fontSize: 11, color: 'var(--calo-700, #1e8359)', fontWeight: 700 }}>
+                      ✓ {loaded.rows.length} rows · {loaded.fileName}
+                    </span>
+                    <button onClick={() => onRemove(slot.key)} style={{ ...ghostBtn, color: '#9f2f2f', padding: '6px 10px', fontSize: 12 }}>Remove</button>
+                  </>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      {error && <div style={{ ...errBanner, marginTop: 10, fontSize: 12 }}>{error}</div>}
     </div>
   );
 }

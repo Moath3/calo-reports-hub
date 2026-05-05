@@ -192,6 +192,10 @@ export async function exchangeCodeForTokens(code) {
     refreshToken,
     expiresAt: Date.now() + expiresIn * 1000,
   });
+  // Log lengths only — never the values themselves. Confirms Zelt actually
+  // returned both tokens during bootstrap. If refresh_token is ever missing
+  // here, that's the root cause of subsequent refresh 401s.
+  console.log(`[zelt] bootstrap stored tokens (access=${accessToken.length}b, refresh=${refreshToken.length}b, ttl=${expiresIn}s)`);
   return { connected: true };
 }
 
@@ -263,11 +267,17 @@ async function refreshTokens(prevUpdatedAt) {
   const accessToken = json.access_token;
   const refreshToken = json.refresh_token || tokens.refreshToken; // some providers don't rotate every time
   const expiresIn = json.expires_in || 3600;
+  const rotated = json.refresh_token && json.refresh_token !== tokens.refreshToken;
   writeTokens({
     accessToken,
     refreshToken,
     expiresAt: Date.now() + expiresIn * 1000,
   });
+  // Confirm refresh actually succeeded — and whether Zelt rotated the
+  // refresh token (which their docs say happens on every refresh). If
+  // we're getting bare 401s on refresh, this log proves we WERE sending
+  // the right token and the issue is server-side.
+  console.log(`[zelt] refresh ok (access=${accessToken.length}b, ${rotated ? 'refresh rotated' : 'refresh kept'}, ttl=${expiresIn}s)`);
   resetRefreshFailureState();
   return readTokens();
 }
@@ -427,7 +437,15 @@ export function getStatus() {
   try {
     const tokens = readTokens();
     if (!tokens) return { connected: false };
-    const status = { connected: true, lastRefresh: tokens.updatedAt };
+    const status = {
+      connected: true,
+      lastRefresh: tokens.updatedAt,
+      // Confirms the refresh-token side of the pair was actually captured
+      // and stored. If hasRefreshToken=false, bootstrap broke; if true and
+      // refresh still 401s, the failure is server-side at Zelt.
+      hasRefreshToken: !!tokens.refreshToken,
+      accessTokenExpiresAt: tokens.expiresAt,
+    };
     if (refreshFailureCount > 0) {
       status.refreshFailing = true;
       status.refreshFailureCount = refreshFailureCount;

@@ -26,6 +26,32 @@ const REQUEST_TIMEOUT_MS = 30_000; // bumped from 10s — balance fetches walk m
 // UA ('node') gets 403'd at ~30 concurrent requests on Zelt.
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 
+// Headers for the OAuth token endpoint (auth-code exchange AND refresh). The
+// rest of the API uses the same UA + Accept, but for /apiv2/oauth/authorize/token
+// we previously sent ONLY Authorization + Content-Type. Zelt's edge/auth
+// middleware appears to bare-401 requests that lack browser-like signals
+// (UA, Accept, Origin, Referer) — same pattern zeltBot.js documented for the
+// SPA login endpoint. Sending these on token requests too removes the
+// suspected-bot path as a variable.
+function tokenEndpointHeaders(clientId, clientSecret) {
+  const basic = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
+  return {
+    Authorization: `Basic ${basic}`,
+    'Content-Type': 'application/x-www-form-urlencoded',
+    Accept: 'application/json, text/plain, */*',
+    'User-Agent': UA,
+    'Accept-Language': 'en-US,en;q=0.9',
+    Origin: ZELT_BASE,
+    Referer: `${ZELT_BASE}/`,
+  };
+}
+
+// Refresh proactively when the access token has fewer than this many ms left.
+// Earlier we used 60s, but if Zelt's refresh endpoint rejects requests once the
+// access token is genuinely expired, a larger skew avoids ever bumping into
+// that failure mode. 10 minutes is well clear of any reasonable expiry-edge bug.
+const REFRESH_SKEW_MS = 10 * 60 * 1000;
+
 // ---- Crypto -----------------------------------------------------------
 
 function getEncryptionKey() {
@@ -160,14 +186,10 @@ export function getBootstrapInstructions() {
  */
 export async function exchangeCodeForTokens(code) {
   const { clientId, clientSecret, redirectUri } = getConfig();
-  const basic = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
 
   const resp = await fetchWithTimeout(TOKEN_URL, {
     method: 'POST',
-    headers: {
-      Authorization: `Basic ${basic}`,
-      'Content-Type': 'application/x-www-form-urlencoded',
-    },
+    headers: tokenEndpointHeaders(clientId, clientSecret),
     body: new URLSearchParams({
       grant_type: 'authorization_code',
       code,
@@ -210,19 +232,15 @@ async function refreshTokens(prevUpdatedAt) {
   // CAS — if updated_at changed, another process refreshed; just re-read.
   if (tokens.updatedAt !== prevUpdatedAt) return readTokens();
 
-  // Match Zelt's docs exactly: Basic auth header for client credentials,
-  // body contains only grant_type + refresh_token. Earlier we sent client_id
-  // and client_secret in the body too as a hopeful experiment, but Zelt's
-  // refresh-token docs (Settings → Security → Developer Hub → "Exchange
-  // Refresh token for new token pair") show only the two body fields, so
-  // matching the docs precisely removes a variable from the failure analysis.
-  const basic = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
+  // Match Zelt's docs for body shape (grant_type + refresh_token, Basic auth
+  // for client creds), but ALSO send the same browser-like headers the regular
+  // API path uses — UA, Accept, Origin, Referer. Zelt's edge has been bare-
+  // 401-ing requests on this endpoint, and the documented SPA login flow in
+  // zeltBot.js shows their backend rejects bare API requests when these are
+  // missing. Sending them removes "looks like a bot" as a variable.
   const resp = await fetchWithTimeout(TOKEN_URL, {
     method: 'POST',
-    headers: {
-      Authorization: `Basic ${basic}`,
-      'Content-Type': 'application/x-www-form-urlencoded',
-    },
+    headers: tokenEndpointHeaders(clientId, clientSecret),
     body: new URLSearchParams({
       grant_type: 'refresh_token',
       refresh_token: tokens.refreshToken,
@@ -318,8 +336,10 @@ export async function getAccessToken() {
   let tokens = readTokens();
   if (!tokens) throw new Error('NotConnected');
 
-  // Refresh if expired or expiring within 60s.
-  if (tokens.expiresAt < Date.now() + 60_000) {
+  // Refresh proactively when the token has < REFRESH_SKEW_MS left. Earlier
+  // we used 60s, but a larger skew avoids any "refresh after expiry rejected"
+  // edge case at Zelt's side.
+  if (tokens.expiresAt < Date.now() + REFRESH_SKEW_MS) {
     if (refreshInFlight) {
       tokens = await refreshInFlight;
     } else {

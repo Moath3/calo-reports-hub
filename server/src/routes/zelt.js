@@ -274,13 +274,28 @@ router.get('/debug/probe', oauthLimiter, requireAuth, requireAdmin, asyncHandler
 
 // Admin-only: force the OAuth refresh-token grant now. This rotates the stored
 // token pair if Zelt accepts the refresh token. It never returns token values.
+// Returns 200 even on failure with ok=false + the underlying error, so the
+// caller doesn't get a generic prod-stripped 500. (Probe-style endpoint.)
 router.post('/debug/refresh', oauthLimiter, requireAuth, requireAdmin, asyncHandler(async (req, res) => {
-  const result = await forceRefreshForDebug();
-  logZeltAudit(req.user.id, 'zelt.oauth.debug_refresh', {
-    refreshed: result.refreshed,
-    refreshRotated: result.refreshRotated,
-  });
-  res.json({ ok: true, ...result });
+  try {
+    const result = await forceRefreshForDebug();
+    logZeltAudit(req.user.id, 'zelt.oauth.debug_refresh', {
+      refreshed: result.refreshed,
+      refreshRotated: result.refreshRotated,
+    });
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    logZeltAudit(req.user.id, 'zelt.oauth.debug_refresh_failed', {
+      error: err.message,
+    });
+    // Also surface the post-attempt status so caller can see refreshFailureCount, lastError etc.
+    res.json({
+      ok: false,
+      error: err.message,
+      status: err.status || null,
+      oauthStatus: getStatus(),
+    });
+  }
 }));
 
 function toCsv(rows) {

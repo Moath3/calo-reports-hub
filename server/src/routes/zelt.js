@@ -26,7 +26,9 @@ import {
   getStatus,
   disconnect,
   getAccessToken,
+  forceRefreshForDebug,
   zeltGet,
+  zeltGetOauthOnly,
 } from '../services/zeltApi.js';
 import { botGet, botConfigured, getBotStatus } from '../services/zeltBot.js';
 import { listEntities, getBalancesForEntity, clearCaches, debugSampleUser } from '../services/zeltCompute.js';
@@ -242,13 +244,26 @@ router.get('/debug/probe', oauthLimiter, requireAuth, requireAdmin, asyncHandler
   results.push({ label: 'oauthStatus',  ok: true, value: getStatus() });
   results.push({ label: 'botStatus',    ok: true, value: getBotStatus() });
   results.push(await probe('oauth.getAccessToken', () => getAccessToken().then(t => ({ tokenLength: t.length }))));
-  results.push(await probe('oauth.partner/entities (page=1)', () => zeltGet('/apiv2/partner/entities', { page: 1, pageSize: 1 })));
+  results.push(await probe('oauthOnly.partner/users (page=1)', () => zeltGetOauthOnly('/apiv2/partner/users', { page: 1, pageSize: 1 })));
+  results.push(await probe('oauthOnly.partner/entities (page=1)', () => zeltGetOauthOnly('/apiv2/partner/entities', { page: 1, pageSize: 1 })));
+  results.push(await probe('fallback.partner/entities (page=1)', () => zeltGet('/apiv2/partner/entities', { page: 1, pageSize: 1 })));
   if (botConfigured()) {
     results.push(await probe('bot./apiv2/users/cache', () => botGet('/apiv2/users/cache')));
     results.push(await probe('bot./apiv2/auth/me', () => botGet('/apiv2/auth/me')));
   }
 
   res.json({ asOf: new Date().toISOString(), results });
+}));
+
+// Admin-only: force the OAuth refresh-token grant now. This rotates the stored
+// token pair if Zelt accepts the refresh token. It never returns token values.
+router.post('/debug/refresh', oauthLimiter, requireAuth, requireAdmin, asyncHandler(async (req, res) => {
+  const result = await forceRefreshForDebug();
+  logZeltAudit(req.user.id, 'zelt.oauth.debug_refresh', {
+    refreshed: result.refreshed,
+    refreshRotated: result.refreshRotated,
+  });
+  res.json({ ok: true, ...result });
 }));
 
 function toCsv(rows) {

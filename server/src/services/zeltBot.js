@@ -217,7 +217,7 @@ export async function botGet(path, params = {}) {
   const attempt = async (forceLogin = false) => {
     if (forceLogin) await login();
     return fetchWithTimeout(url.toString(), {
-      headers: { Cookie: cookieJar, Accept: 'application/json' },
+      headers: { ...BROWSER_HEADERS, Cookie: cookieJar, Accept: 'application/json' },
     });
   };
 

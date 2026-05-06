@@ -372,6 +372,12 @@ export async function zeltGet(path, params = {}) {
   }
 }
 
+// Diagnostic-only public surface for admin probes. Unlike zeltGet(), this does
+// not fall back to the bot cookie session, so it proves the OAuth bearer path.
+export async function zeltGetOauthOnly(path, params = {}) {
+  return zeltGetOauth(path, params);
+}
+
 function isOauthAuthFailure(err) {
   return err.status === 401
     || err.status === 403
@@ -496,6 +502,33 @@ export async function drainRefresh() {
 export function disconnect() {
   clearTokens();
   return { connected: false };
+}
+
+/**
+ * Admin diagnostic helper: force a refresh even if the access token is still
+ * fresh. This lets us test Zelt's refresh-token grant immediately after a
+ * bootstrap instead of waiting for the 1h access-token expiry window.
+ */
+export async function forceRefreshForDebug() {
+  const before = readTokens();
+  if (!before) throw new Error('NotConnected');
+
+  let tokens;
+  if (refreshInFlight) {
+    tokens = await refreshInFlight;
+  } else {
+    refreshInFlight = refreshTokens(before.updatedAt).finally(() => { refreshInFlight = null; });
+    tokens = await refreshInFlight;
+  }
+
+  return {
+    refreshed: !!tokens && tokens.updatedAt !== before.updatedAt,
+    refreshRotated: !!tokens && tokens.refreshToken !== before.refreshToken,
+    accessTokenLength: tokens?.accessToken?.length || 0,
+    refreshTokenLength: tokens?.refreshToken?.length || 0,
+    accessTokenExpiresAt: tokens?.expiresAt || null,
+    updatedAt: tokens?.updatedAt || null,
+  };
 }
 
 // ---- Internals --------------------------------------------------------

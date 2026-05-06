@@ -119,12 +119,36 @@ export async function getBalancesForEntity(entityName, asOfDate = null) {
   // contain employeeId (true when bot's /users/cache succeeded).
   const hasEmpIdAlready = targets.length > 0 && targets.every(u => readEmployeeId(u) != null);
 
-  // Run absence fetch + (maybe) basic info + balance probe in parallel.
-  const [absencesByUser, basicsByUser, balancesByUser] = await Promise.all([
+  // Run absence fetch + (maybe) basic info + balance probe in parallel. Absence
+  // history is useful, but it should not take down the leave portal when the
+  // live bot balance endpoint is available and OAuth is the only broken layer.
+  const [absencesResult, basicsResult, balancesResult] = await Promise.allSettled([
     fetchAbsencesByUser(targetUserIds),
     hasEmpIdAlready ? Promise.resolve(new Map()) : fetchUserBasics(targetUserIds),
     tryFetchBalances(targetUserIds, asOfDate),
   ]);
+
+  const balancesByUser = balancesResult.status === 'fulfilled' ? balancesResult.value : new Map();
+  if (balancesResult.status === 'rejected') {
+    const err = balancesResult.reason;
+    console.warn(`[zelt] live balance fetch failed (${err.status || ''} ${err.message}) - falling back to computed balances`);
+  }
+
+  let absencesByUser = new Map();
+  if (absencesResult.status === 'fulfilled') {
+    absencesByUser = absencesResult.value;
+  } else if (balancesByUser.size > 0) {
+    const err = absencesResult.reason;
+    console.warn(`[zelt] absence fetch failed (${err.status || ''} ${err.message}) - continuing with live balances only`);
+  } else {
+    throw absencesResult.reason;
+  }
+
+  const basicsByUser = basicsResult.status === 'fulfilled' ? basicsResult.value : new Map();
+  if (basicsResult.status === 'rejected') {
+    const err = basicsResult.reason;
+    console.warn(`[zelt] basic-info fetch failed (${err.status || ''} ${err.message}) - employeeId may be unavailable`);
+  }
   if (hasEmpIdAlready) console.log('[zelt] skipping per-user basics fetch (emp IDs already in user list)');
 
   const today = new Date();
@@ -163,6 +187,7 @@ export async function getBalancesForEntity(entityName, asOfDate = null) {
     const liveBalance = balancesByUser.get(userId);
     if (liveBalance) {
       availableNow = round1(liveBalance.available_now);
+      if (liveBalance.upcoming_booked != null) upcoming = round1(liveBalance.upcoming_booked);
       confidence = 'high';
     } else if (allowance != null) {
       // Fallback: compute from allowance + history + upcoming

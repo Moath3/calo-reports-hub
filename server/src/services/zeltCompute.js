@@ -40,7 +40,10 @@ export async function listEntities() {
   if (cache.entities.value && cache.entities.expiresAt > Date.now()) {
     return cache.entities.value;
   }
-  // Try a dedicated endpoint first — much faster than scanning all users.
+  // Try the dedicated partner endpoints first — much faster than scanning all users.
+  // Auth failures here (401 OAuth dead / 403 bot lacks partner scope) are NOT
+  // fatal: we drop through to the bot-driven user scan, which only relies on
+  // the bot session (which works independently of partner OAuth).
   for (const path of ENTITY_ENDPOINT_CANDIDATES) {
     try {
       const data = await zeltGet(path, { page: 1, pageSize: 200 });
@@ -59,14 +62,18 @@ export async function listEntities() {
         }
       }
     } catch (err) {
-      if (isAuthFailure(err)) throw err;
+      // Used to throw on auth failures, but that short-circuited the
+      // user-scan fallback below. The bot can derive entities even when
+      // every partner endpoint is unreachable, so let it try.
       console.warn(`[zelt] entities endpoint ${path} failed: ${err.status || ''} ${err.message}`);
     }
   }
 
-  // Fallback: scan users but cap at 5 pages (500 users) — usually enough to surface all entity names.
-  console.log('[zelt] no dedicated entity endpoint, falling back to user scan (capped at 500 users)');
-  const users = await fetchUsersFirstPages(5);
+  // Final fallback: derive entities from the full user list. fetchAllUsers()
+  // prefers the bot's /apiv2/users/cache (single non-paginated call, works
+  // when partner OAuth is dead), which is exactly the path we need here.
+  console.log('[zelt] partner entity endpoints unavailable; deriving entities from bot user list');
+  const users = await fetchAllUsers();
   const set = new Set();
   for (const u of users) {
     const e = u?.userContract?.entity?.legalName || u?.entity?.legalName || u?.entity;
@@ -74,6 +81,7 @@ export async function listEntities() {
   }
   const entities = Array.from(set).sort();
   cache.entities = { value: entities, expiresAt: Date.now() + ENTITIES_TTL_MS };
+  console.log(`[zelt] entities derived from ${users.length} users (${entities.length} entities)`);
   return entities;
 }
 

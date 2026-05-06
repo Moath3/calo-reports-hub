@@ -259,6 +259,27 @@ export default function ZeltLeavePage() {
         </div>
       </div>
 
+      {/* Stale-snapshot banner — shown when the live fetch failed and we're
+          serving the last persisted snapshot from DB instead of an error. */}
+      {data && data.stale && (
+        <div style={{
+          background: '#FFF8E5', border: '1px solid #F1D785', borderRadius: 8,
+          padding: 14, display: 'flex', gap: 12, alignItems: 'flex-start',
+        }}>
+          <div style={{ fontSize: 18, lineHeight: 1, color: '#9A6F0E' }}>⚠</div>
+          <div style={{ flex: 1, fontSize: 13, color: '#7B5A0E' }}>
+            <div style={{ fontWeight: 800, fontSize: 14, color: '#9A6F0E' }}>
+              Showing cached data from {fmtDate(new Date(data.capturedAt).toISOString())}
+            </div>
+            <div style={{ marginTop: 4 }}>
+              The live Zelt fetch failed, so balances below are the last successful snapshot.
+              Re-bootstrap Zelt or wait for the integration to recover, then click Refresh.
+              {data.staleReason ? <> Reason: <code style={{ background: '#fff', padding: '1px 4px', borderRadius: 3 }}>{data.staleReason}</code></> : null}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Diagnostic when zero rows */}
       {data && data.count === 0 && data.diagnostic && (
         <div style={{ ...panel, background: '#FFF8E5', borderColor: '#F1D785' }}>

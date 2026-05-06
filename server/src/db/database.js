@@ -232,6 +232,14 @@ function initSchema() {
       cookie_jar TEXT NOT NULL,
       updated_at INTEGER NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS zelt_balance_snapshots (
+      entity TEXT NOT NULL,
+      as_of_date TEXT NOT NULL DEFAULT '',
+      data TEXT NOT NULL,
+      captured_at INTEGER NOT NULL,
+      PRIMARY KEY (entity, as_of_date)
+    );
   `);
 
   // Create indexes individually (sql.js exec doesn't support multiple statements well with IF NOT EXISTS)

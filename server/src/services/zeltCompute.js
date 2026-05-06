@@ -16,6 +16,7 @@
  */
 import { zeltGet } from './zeltApi.js';
 import { botGet, botConfigured } from './zeltBot.js';
+import { getDb, persistNow } from '../db/database.js';
 
 const ENTITIES_TTL_MS = 6 * 60 * 60 * 1000; // 6h — entities barely change
 const BALANCES_TTL_MS = 5 * 60 * 1000;
@@ -76,7 +77,60 @@ export async function listEntities() {
   return entities;
 }
 
+// Public entry point: tries a fresh fetch, persists the result on success,
+// and falls back to the last persisted snapshot (with stale=true and the
+// captured-at timestamp) if the fresh path fully fails. Means a Zelt outage
+// shows the last known balances + a banner instead of a hard error.
 export async function getBalancesForEntity(entityName, asOfDate = null) {
+  try {
+    const fresh = await fetchBalancesForEntityFresh(entityName, asOfDate);
+    saveBalanceSnapshot(entityName, asOfDate, fresh);
+    return { ...fresh, stale: false };
+  } catch (err) {
+    const snapshot = loadBalanceSnapshot(entityName, asOfDate);
+    if (snapshot) {
+      console.warn(`[zelt] balance fetch failed for "${entityName}" (${err.message}); serving snapshot from ${new Date(snapshot.capturedAt).toISOString()}`);
+      return {
+        ...snapshot.data,
+        stale: true,
+        capturedAt: snapshot.capturedAt,
+        staleReason: err.message,
+      };
+    }
+    // No snapshot available → original behavior, propagate the error.
+    throw err;
+  }
+}
+
+function saveBalanceSnapshot(entityName, asOfDate, data) {
+  try {
+    getDb().prepare(`
+      INSERT INTO zelt_balance_snapshots (entity, as_of_date, data, captured_at)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(entity, as_of_date) DO UPDATE SET
+        data = excluded.data,
+        captured_at = excluded.captured_at
+    `).run(entityName, asOfDate || '', JSON.stringify(data), Date.now());
+    persistNow();
+  } catch (e) {
+    console.warn('[zelt] saveBalanceSnapshot failed:', e.message);
+  }
+}
+
+function loadBalanceSnapshot(entityName, asOfDate) {
+  try {
+    const row = getDb().prepare(
+      'SELECT data, captured_at FROM zelt_balance_snapshots WHERE entity = ? AND as_of_date = ?'
+    ).get(entityName, asOfDate || '');
+    if (!row) return null;
+    return { data: JSON.parse(row.data), capturedAt: row.captured_at };
+  } catch (e) {
+    console.warn('[zelt] loadBalanceSnapshot failed:', e.message);
+    return null;
+  }
+}
+
+async function fetchBalancesForEntityFresh(entityName, asOfDate = null) {
   // asOfDate: ISO date string (YYYY-MM-DD), past only, optional
   const key = `${entityName.toLowerCase()}|${asOfDate || 'today'}`;
   const cached = cache.balances.get(key);

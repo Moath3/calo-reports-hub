@@ -178,13 +178,30 @@ router.get('/balances', dataLimiter, requireAuth, asyncHandler(async (req, res) 
     if (d.diagnostic) allDiagnostics.push(d.diagnostic);
   }
   allRows.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+
+  // Surface stale-snapshot status: top-level stale=true if ANY entity is stale,
+  // capturedAt = oldest snapshot timestamp across the stale entities.
+  const staleEntities = datas.filter(d => d.stale);
+  const aggregateStale = staleEntities.length > 0;
+  const oldestCapturedAt = aggregateStale
+    ? Math.min(...staleEntities.map(d => d.capturedAt || 0).filter(t => t > 0))
+    : null;
+
   res.json({
     entity: entities.join(' + '),
     asOf: datas[0].asOf,
     count: allRows.length,
     rows: allRows,
     multi: true,
-    sources: datas.map(d => ({ entity: d.entity, count: d.count })),
+    sources: datas.map(d => ({
+      entity: d.entity,
+      count: d.count,
+      stale: !!d.stale,
+      capturedAt: d.capturedAt || null,
+    })),
+    stale: aggregateStale,
+    capturedAt: oldestCapturedAt,
+    staleReason: aggregateStale ? staleEntities[0].staleReason : null,
   });
 }));
 

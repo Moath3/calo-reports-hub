@@ -13,7 +13,15 @@ import {
 
 const SEVERITY = {
   activeWithLeaveDate: 'high',
-  activeButTerminated: 'high',
+  // 'info' = displayed but not penalized in the score. These two checks turned
+  // out to be filtering/categorization quirks rather than real data debt:
+  //   - activeButTerminated: people in mid-termination flow who are filtered
+  //     out by HR's normal queries; not a hygiene problem.
+  //   - staleCreated (further down): pre-onboarding records held in 'Created'
+  //     status for >90 days, which is just how Zelt buckets them. Not stale.
+  // Real cleanness/accuracy will come from masterfile cross-checks once the
+  // KSA Luqmat + 3rd Party masterfiles are uploaded.
+  activeButTerminated: 'info',
   duplicateEmployeeIds: 'high',
   brandDivisionAsEntity: 'high',
   legacySiteAssigned: 'high',
@@ -37,7 +45,7 @@ const SEVERITY = {
   duplicateJobTitleVariants: 'medium',
   rareJobTitles: 'low',
   futureJoiners: 'low',
-  staleCreated: 'low',
+  staleCreated: 'info',
   testUsers: 'medium',
   departmentList: 'info',
   entityList: 'info',

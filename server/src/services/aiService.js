@@ -1,8 +1,12 @@
-const TIMEOUT_MS = 120000; // 2 min — Opus full reports can take a while
+const TIMEOUT_MS = 120000; // 2 min — chat/refine
+const ANALYZE_TIMEOUT_MS = 480000; // 8 min — Opus 4.7 with adaptive thinking on full reports
 
 // Model IDs. Override via env if needed.
-const SONNET_MODEL = process.env.CLAUDE_SONNET_MODEL || "claude-sonnet-4-5-20250929";
-const OPUS_MODEL   = process.env.CLAUDE_OPUS_MODEL   || "claude-opus-4-1-20250805";
+// Defaults bumped to the current generation: Sonnet 4.6 + Opus 4.7. Opus 4.7
+// is the strongest reasoning model and the right choice for the /analyze
+// path; Sonnet 4.6 stays as the fast iteration model for /chat and /refine.
+const SONNET_MODEL = process.env.CLAUDE_SONNET_MODEL || "claude-sonnet-4-6";
+const OPUS_MODEL   = process.env.CLAUDE_OPUS_MODEL   || "claude-opus-4-7";
 
 /**
  * Smart routing: pick the right Claude model for the job.
@@ -24,8 +28,8 @@ export function getAvailableProviders() {
   const hasKey = Boolean(process.env.CLAUDE_API_KEY);
   if (!hasKey) return [];
   return [
-    { id: "claude-sonnet", name: "Claude Sonnet 4.5 — fast & smart",      model: SONNET_MODEL, available: true },
-    { id: "claude-opus",   name: "Claude Opus 4.1 — heavy-duty reasoning", model: OPUS_MODEL,   available: true },
+    { id: "claude-sonnet", name: "Claude Sonnet 4.6 — fast & smart",      model: SONNET_MODEL, available: true },
+    { id: "claude-opus",   name: "Claude Opus 4.7 — heavy-duty reasoning", model: OPUS_MODEL,   available: true },
   ];
 }
 
@@ -41,10 +45,33 @@ export function extractJSON(text) {
 
 /**
  * Low-level Anthropic API call.
- * Uses prompt caching on the system prompt so repeated calls (especially
- * in AI chat) pay 90% off on the cached tokens.
+ *
+ * Prompt caching: the static system prompt is one cacheable block; an optional
+ * `dynamicContext` (e.g. the current report state for the chat path) is a
+ * SECOND cacheable block placed AFTER the static one. Splitting them this
+ * way means the static-block cache hits every chat turn even though the
+ * report state changes — previously the two were concatenated and any
+ * change to the report invalidated the whole system prompt.
+ *
+ * Thinking: pass `thinking: true` to enable adaptive thinking on Opus 4.7
+ * (heavy /analyze path). Adaptive thinking automatically interleaves with
+ * tool calls and decides depth per request. Sonnet 4.6 chat/refine paths
+ * stay non-thinking for fast iteration.
+ *
+ * Effort: pass `effort: "low" | "medium" | "high" | "xhigh" | "max"` to
+ * control thinking depth + overall token spend. Higher = more thorough,
+ * more tokens, more latency.
  */
-async function callClaude({ model, systemPrompt, userMessage, maxTokens = 8192, timeout = TIMEOUT_MS }) {
+async function callClaude({
+  model,
+  systemPrompt,
+  dynamicContext,
+  userMessage,
+  maxTokens = 16000,
+  timeout = TIMEOUT_MS,
+  thinking = false,
+  effort = null,
+}) {
   const apiKey = process.env.CLAUDE_API_KEY;
   if (!apiKey) throw new Error("CLAUDE_API_KEY not configured");
 
@@ -52,11 +79,24 @@ async function callClaude({ model, systemPrompt, userMessage, maxTokens = 8192, 
   const timer = setTimeout(() => controller.abort(), timeout);
 
   try {
-    // System prompt as a cacheable block so Anthropic can reuse it across calls.
-    // (Min block size is 1024 tokens — our system prompts are ~2K–8K so they qualify.)
+    // System prompt as cacheable blocks. Block 1 is the stable rules/schemas
+    // (always cache-hits across turns); Block 2 is the dynamic report context
+    // (cache-hits when a user makes a duplicate edit in the same session).
     const system = [
       { type: "text", text: systemPrompt, cache_control: { type: "ephemeral" } }
     ];
+    if (dynamicContext) {
+      system.push({ type: "text", text: dynamicContext, cache_control: { type: "ephemeral" } });
+    }
+
+    const body = {
+      model,
+      max_tokens: maxTokens,
+      system,
+      messages: [{ role: "user", content: userMessage }],
+    };
+    if (thinking) body.thinking = { type: "adaptive" };
+    if (effort) body.output_config = { effort };
 
     const res = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
@@ -65,12 +105,7 @@ async function callClaude({ model, systemPrompt, userMessage, maxTokens = 8192, 
         "x-api-key": apiKey,
         "anthropic-version": "2023-06-01",
       },
-      body: JSON.stringify({
-        model,
-        max_tokens: maxTokens,
-        system,
-        messages: [{ role: "user", content: userMessage }],
-      }),
+      body: JSON.stringify(body),
       signal: controller.signal,
     });
 
@@ -80,7 +115,11 @@ async function callClaude({ model, systemPrompt, userMessage, maxTokens = 8192, 
     }
 
     const data = await res.json();
-    const text = data?.content?.[0]?.text || "";
+    // Scan content blocks for the first text block. When thinking is enabled,
+    // content[0] is a `thinking` block (empty text on Opus 4.7 by default) and
+    // the actual response is the next `text` block.
+    const textBlock = (data?.content || []).find(b => b?.type === "text");
+    const text = textBlock?.text || "";
     const usage = data?.usage || {};
     return {
       text,
@@ -108,12 +147,21 @@ async function callClaude({ model, systemPrompt, userMessage, maxTokens = 8192, 
 export async function callAI(provider, systemPrompt, userMessage, options = {}) {
   const normalized = normalizeProvider(provider);
   const model = pickModel(normalized, options.requestType);
+
+  // Per-request-type tuning. /analyze is the heavy data-reasoning path that
+  // benefits from adaptive thinking + high effort + a larger output budget.
+  // /chat and /refine stay terse and fast (low effort, no thinking).
+  const isAnalyze = options.requestType === "analyze";
+
   return callClaude({
     model,
     systemPrompt,
+    dynamicContext: options.dynamicContext,
     userMessage,
-    maxTokens: options.maxTokens || 8192,
-    timeout: options.timeout,
+    maxTokens: options.maxTokens || (isAnalyze ? 32000 : 16000),
+    timeout: options.timeout || (isAnalyze ? ANALYZE_TIMEOUT_MS : TIMEOUT_MS),
+    thinking: options.thinking ?? isAnalyze,
+    effort: options.effort ?? (isAnalyze ? "high" : "low"),
   });
 }
 
@@ -165,7 +213,15 @@ export function buildReportSystemPrompt(dataSummary, templateData) {
   return prompt;
 }
 
-export function buildChatSystemPrompt(reportContext) {
+/**
+ * Returns the STATIC chat system prompt — schemas, rules, output format.
+ * No longer interpolates the current report state; that's now passed
+ * separately as `dynamicContext` so prompt caching can actually hit on
+ * the static block across chat turns. Callers should pass the current
+ * report state via `buildChatContextBlock(reportContext)` as the
+ * `dynamicContext` option to `callAI`.
+ */
+export function buildChatSystemPrompt() {
   return `You are CALO Report AI Assistant. You help users edit and improve their reports.
 
 CRITICAL: Always return a JSON object with this EXACT structure:
@@ -207,9 +263,17 @@ RULES:
 - Each section must have a "title" string and a "blocks" array with at least one block
 - The "message" field should NEVER contain JSON or code — always natural language
 - ALL field values must be strings (even numbers: "1234" not 1234)
-- Return ONLY the JSON object, no markdown code blocks or extra text
+- Return ONLY the JSON object, no markdown code blocks or extra text`;
+}
 
-${reportContext ? "\nCurrent report data:\n" + JSON.stringify(reportContext, null, 2).slice(0, 8000) : ""}`;
+/**
+ * Builds the dynamic context block (current report state) for the chat path.
+ * Returned as a string ready to be passed to callAI as options.dynamicContext.
+ * Empty/null reportContext returns an empty string (no extra block sent).
+ */
+export function buildChatContextBlock(reportContext) {
+  if (!reportContext) return "";
+  return "Current report data:\n" + JSON.stringify(reportContext, null, 2).slice(0, 8000);
 }
 
 export function buildRefineSystemPrompt(section, instruction) {

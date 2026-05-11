@@ -4,7 +4,8 @@ import { requireAuth } from "../middleware/auth.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { badRequest, unprocessable } from "../utils/httpError.js";
 import {
-  callAI, buildReportSystemPrompt, buildChatSystemPrompt, buildRefineSystemPrompt, buildPlanSystemPrompt,
+  callAI, buildReportSystemPrompt, buildChatSystemPrompt, buildChatContextBlock,
+  buildRefineSystemPrompt, buildPlanSystemPrompt,
   getAvailableProviders, extractJSON,
 } from "../services/aiService.js";
 
@@ -67,7 +68,8 @@ router.post("/chat", requireAuth, asyncHandler(async (req, res) => {
   const { message, reportContext, provider, history } = req.body;
   if (!message) throw badRequest("Message is required");
 
-  const systemPrompt = buildChatSystemPrompt(reportContext);
+  const systemPrompt = buildChatSystemPrompt();
+  const dynamicContext = buildChatContextBlock(reportContext);
   let userMessage = message;
   if (history && history.length > 0) {
     const contextMsgs = history.slice(-6).map(m => m.role + ": " + m.content).join("\n");
@@ -75,7 +77,7 @@ router.post("/chat", requireAuth, asyncHandler(async (req, res) => {
   }
 
   const startTime = Date.now();
-  const result = await callAI(provider, systemPrompt, userMessage, { requestType: "chat" });
+  const result = await callAI(provider, systemPrompt, userMessage, { requestType: "chat", dynamicContext });
   const duration = Date.now() - startTime;
 
   // Parse structured response: { message, updates }

@@ -280,7 +280,10 @@ async function fetchBalancesForEntityFresh(entityName, asOfDate = null) {
 
   const payload = {
     entity: entityName,
-    asOf: today.toISOString(),
+    // Reflect the requested as-of date so the UI header ("as of …") and any
+    // consumer of this field match what was actually computed. Without this it
+    // always stamped "now", making honored past-date requests look ignored.
+    asOf: asOfDate ? new Date(asOfDate + 'T00:00:00Z').toISOString() : today.toISOString(),
     count: rows.length,
     rows,
     // Diagnostic: when 0 rows match, surface what entities WERE seen in user

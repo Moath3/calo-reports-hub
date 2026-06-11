@@ -205,21 +205,6 @@ router.get('/balances', dataLimiter, requireAuth, asyncHandler(async (req, res) 
   });
 }));
 
-router.post('/balances/export', dataLimiter, requireAuth, asyncHandler(async (req, res) => {
-  const { entity } = req.query;
-  if (!entity || typeof entity !== 'string') throw badRequest('Missing required query param: entity');
-
-  const { rows, asOf } = await getBalancesForEntity(entity.trim())
-    .catch(zeltUpstream('Export failed', { stripDetailInProd: true }));
-
-  const csv = toCsv(rows);
-  const safeName = entity.replace(/[^a-z0-9]+/gi, '-').toLowerCase();
-  const dateTag = asOf.slice(0, 10);
-  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-  res.setHeader('Content-Disposition', `attachment; filename="calo-available-now-${safeName}-${dateTag}.csv"`);
-  res.send(csv);
-}));
-
 // Admin-only: clear server-side caches (entities + balances)
 router.post('/cache/clear', oauthLimiter, requireAuth, requireAdmin, (req, res) => {
   clearCaches();
@@ -297,21 +282,6 @@ router.post('/debug/refresh', oauthLimiter, requireAuth, requireAdmin, asyncHand
     });
   }
 }));
-
-function toCsv(rows) {
-  const cols = ['employeeId', 'name', 'site', 'department', 'jobTitle', 'policy',
-                'startDate', 'upcoming', 'availableNow'];
-  const header = cols.join(',');
-  const body = rows.map(r => cols.map(c => csvCell(r[c])).join(',')).join('\n');
-  return `${header}\n${body}\n`;
-}
-
-function csvCell(v) {
-  if (v == null) return '';
-  const s = String(v);
-  if (/[",\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
-  return s;
-}
 
 // ---- HTML for callback (so admin sees a friendly result page) --------
 

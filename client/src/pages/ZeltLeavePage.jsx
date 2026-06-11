@@ -335,14 +335,19 @@ export default function ZeltLeavePage() {
                 placeholder="Search name, ID, dept…"
                 style={searchInput}
               />
-              <button onClick={async () => {
+              <button onClick={() => {
                 try {
-                  const blob = await api.zeltExportCsv(data.entity);
+                  // Build the CSV in the browser from the rows already on screen,
+                  // so the file always matches the table: same as-of date, same
+                  // entity selection, same (possibly cached) snapshot. The old
+                  // server-side export ignored asOfDate and mishandled multi-entity.
+                  const csv = buildLeaveCsv(data);
+                  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
                   const url = URL.createObjectURL(blob);
                   const a = document.createElement('a');
                   a.href = url;
-                  const safe = data.entity.replace(/[^a-z0-9]+/gi, '-').toLowerCase();
-                  a.download = `calo-available-now-${safe}-${data.asOf.slice(0, 10)}.csv`;
+                  const safe = (data.entity || 'entities').replace(/[^a-z0-9]+/gi, '-').toLowerCase();
+                  a.download = `calo-available-now-${safe}-${asOfDate}.csv`;
                   document.body.appendChild(a);
                   a.click();
                   a.remove();
@@ -607,6 +612,27 @@ function formatErr(e, fallback) {
   if (e?.status === 503) return 'Zelt is not connected. Ask your admin to connect it.';
   if (e?.status === 403) return 'You do not have access to this action.';
   return e?.message || fallback;
+}
+
+// Serialize the on-screen balances to CSV. Column order mirrors the server's
+// toCsv (so downstream tooling that consumed the old export still works), and
+// an Entity column is added for multi-entity reports — which the server-side
+// export dropped entirely. Cell escaping matches the server's csvCell exactly.
+function buildLeaveCsv(data) {
+  const rows = data?.rows || [];
+  const cols = data?.multi
+    ? ['employeeId', 'name', 'site', 'department', 'jobTitle', 'entity', 'policy', 'startDate', 'upcoming', 'availableNow']
+    : ['employeeId', 'name', 'site', 'department', 'jobTitle', 'policy', 'startDate', 'upcoming', 'availableNow'];
+  const header = cols.join(',');
+  const body = rows.map(r => cols.map(c => csvCell(r[c])).join(',')).join('\n');
+  return `${header}\n${body}\n`;
+}
+
+function csvCell(v) {
+  if (v == null) return '';
+  const s = String(v);
+  if (/[",\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+  return s;
 }
 
 function fmtDate(iso) {

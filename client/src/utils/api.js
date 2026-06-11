@@ -314,20 +314,6 @@ class ApiClient {
     const q = new URLSearchParams(params).toString();
     return this.request(`/zelt/balances?${q}`);
   }
-  async zeltExportCsv(entity) {
-    // CSV download via fetch so the bearer token is sent (anchor `download` won't include headers).
-    const res = await fetch(`${API_BASE}/zelt/balances/export?${new URLSearchParams({ entity })}`, {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${this.token}` },
-    });
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      const error = new Error(data.error || 'Export failed');
-      error.status = res.status;
-      throw error;
-    }
-    return res.blob();
-  }
   async zeltClearCache() {
     return this.request('/zelt/cache/clear', { method: 'POST' });
   }

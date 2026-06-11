@@ -139,7 +139,7 @@ All routes live under the authenticated `<Layout>` shell except `/login`.
 
 - Desktop: split screen — left = green gradient marketing panel with logo, headline, feature bullets; right = form card.
 - Mobile: single column, logo-over-form.
-- Registration flow requires company code `CALO2026`; new accounts enter pending state; admin email notified via Resend; admin approves via Settings.
+- Registration flow requires the company code (env `COMPANY_REG_CODE`); new accounts enter pending state; admin email notified via Resend; admin approves via Settings.
 
 ### 4.2 Dashboard
 

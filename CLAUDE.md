@@ -72,7 +72,7 @@ The AI chat uses a structured update format:
 
 ### Auth & Registration
 
-- Company code `CALO2026` required to register
+- Company code (env `COMPANY_REG_CODE`) required to register
 - First user auto-becomes admin (is_active=1); all others pending (is_active=0)
 - Admin approves users via Settings page (PATCH `/users/:id/toggle`)
 - JWT: 7-day expiry, stored in localStorage
@@ -100,7 +100,7 @@ Migrations run automatically on startup via `database.js` migrations array (ALTE
 PORT=3001                    # Server port
 NODE_ENV=development         # development | production
 JWT_SECRET=<secret>          # Required in production
-COMPANY_REG_CODE=CALO2026    # Registration gate
+COMPANY_REG_CODE=<your-code>  # Registration gate
 DB_DIR=/data                 # Persistent disk path (Render)
 GEMINI_API_KEY=<key>         # Enables Gemini provider
 CLAUDE_API_KEY=<key>         # Enables Claude provider

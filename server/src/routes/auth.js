@@ -14,8 +14,8 @@ router.post('/register', asyncHandler(async (req, res) => {
   const { email, password, name, department, companyCode } = req.body;
 
   // Validate company code
-  const validCode = process.env.COMPANY_REG_CODE || 'CALO2026';
-  if (companyCode !== validCode) {
+  const validCode = process.env.COMPANY_REG_CODE;
+  if (!validCode || companyCode !== validCode) {
     throw forbidden('Invalid company registration code. Contact your administrator.');
   }
 

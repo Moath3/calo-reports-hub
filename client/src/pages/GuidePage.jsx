@@ -753,7 +753,7 @@ export default function GuidePage() {
             <ul style={listStyle}>
               <li>Uploaded files are parsed server-side and stored inline with the report.</li>
               <li>API keys (Netlify, Claude) are admin-only and live in server env vars, never on the client.</li>
-              <li>Admin-approved registration only — company code <code>CALO2026</code>.</li>
+              <li>Admin-approved registration only — ask an admin for the company code.</li>
             </ul>
           </Card>
         </div>

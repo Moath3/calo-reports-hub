@@ -15,7 +15,7 @@ services:
       - key: JWT_SECRET
         generateValue: true
       - key: COMPANY_REG_CODE
-        value: CALO2026
+        sync: false
       - key: DB_DIR
         value: /data
       - key: GEMINI_API_KEY

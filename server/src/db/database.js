@@ -1,17 +1,21 @@
 import initSqlJs from 'sql.js';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
-import { mkdirSync, existsSync, readFileSync, writeFileSync } from 'fs';
+import { mkdirSync, existsSync, readFileSync, writeFileSync, renameSync, copyFileSync, readdirSync, unlinkSync, statSync } from 'fs';
 import { seedDefaultTemplates, seedAdminUser } from './seedTemplates.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 // Use DB_DIR env var for persistent storage (Render Disk), fallback to local for dev
 const DATA_DIR = process.env.DB_DIR || join(__dirname, '..', '..', 'data');
-const DB_PATH = join(DATA_DIR, 'calo-reports.db');
+const DB_BASENAME = 'calo-reports.db';
+const DB_PATH = join(DATA_DIR, DB_BASENAME);
+const BACKUP_KEEP = 7; // dated daily backups retained on the /data disk
 
 let wrapper = null;
 let saveTimer = null;
+let lastSaveAt = null;
+let lastSaveError = null;
 
 // Wrapper around sql.js to match better-sqlite3 API
 class DbWrapper {
@@ -77,8 +81,22 @@ function saveToDisk() {
   try {
     const data = wrapper._db.export();
     const buffer = Buffer.from(data);
-    writeFileSync(DB_PATH, buffer);
+    const tmp = DB_PATH + '.tmp';
+    try {
+      // Atomic on POSIX (Render): write a temp file then rename over the target,
+      // so a crash mid-write can never leave a truncated/corrupt DB file.
+      writeFileSync(tmp, buffer);
+      renameSync(tmp, DB_PATH);
+    } catch {
+      // Windows can reject rename-over-existing under a file lock; fall back to
+      // a direct write so a dev save is never silently lost. (Prod uses rename.)
+      writeFileSync(DB_PATH, buffer);
+      try { if (existsSync(tmp)) unlinkSync(tmp); } catch { /* ignore */ }
+    }
+    lastSaveAt = Date.now();
+    lastSaveError = null;
   } catch (err) {
+    lastSaveError = err.message;
     console.error('Failed to save database:', err.message);
   }
 }
@@ -86,6 +104,74 @@ function saveToDisk() {
 // Exposed for callers that must persist immediately (e.g. after Zelt token rotation)
 export function persistNow() {
   saveToDisk();
+}
+
+// ─── Backups & corruption recovery ───────────────────────────────────────────
+
+function listBackups() {
+  try {
+    return readdirSync(DATA_DIR)
+      .filter(f => f.startsWith(DB_BASENAME + '.') && f.endsWith('.bak'))
+      .sort(); // dated 'YYYY-MM-DD' suffix sorts chronologically (oldest first)
+  } catch { return []; }
+}
+
+// Copy the current DB to a dated .bak and keep only the newest BACKUP_KEEP.
+// Runs at boot and daily, so a corrupt or accidentally-wiped DB can be restored
+// from the last good day — on the same Render disk, no external service needed.
+function backupDb() {
+  if (!existsSync(DB_PATH)) return;
+  try {
+    const stamp = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+    copyFileSync(DB_PATH, join(DATA_DIR, `${DB_BASENAME}.${stamp}.bak`));
+    const backups = listBackups();
+    while (backups.length > BACKUP_KEEP) {
+      const old = backups.shift();
+      try { unlinkSync(join(DATA_DIR, old)); } catch { /* ignore */ }
+    }
+  } catch (err) {
+    console.error('DB backup failed:', err.message);
+  }
+}
+
+// Open a sql.js DB from a buffer and prove it's readable (throws if corrupt).
+function openValidated(SQL, buffer) {
+  const d = new SQL.Database(buffer);
+  d.exec('SELECT 1 FROM sqlite_master LIMIT 1'); // throws on a corrupt image
+  return d;
+}
+
+// Load the DB, falling back to the newest readable backup if the main file is
+// corrupt — instead of crashing the whole platform on one bad file.
+function loadDbWithRecovery(SQL) {
+  const tmp = DB_PATH + '.tmp';
+  if (existsSync(tmp)) { try { unlinkSync(tmp); } catch { /* leftover from a crashed write */ } }
+  try {
+    return openValidated(SQL, readFileSync(DB_PATH));
+  } catch (err) {
+    console.error(`Main DB file is unreadable (${err.message}) — trying backups`);
+    for (const b of listBackups().reverse()) { // newest first
+      try {
+        const d = openValidated(SQL, readFileSync(join(DATA_DIR, b)));
+        console.warn(`Recovered database from backup: ${b}`);
+        return d;
+      } catch { /* try the next-newest backup */ }
+    }
+    console.error('No readable backup — starting fresh. Corrupt file left in place at ' + DB_PATH);
+    return new SQL.Database();
+  }
+}
+
+// Surfaced via /api/health so a silently failing save / missing backups is detectable.
+export function getDbHealth() {
+  let fileSize = null;
+  try { fileSize = existsSync(DB_PATH) ? statSync(DB_PATH).size : 0; } catch { /* ignore */ }
+  return {
+    lastSaveAt: lastSaveAt ? new Date(lastSaveAt).toISOString() : null,
+    lastSaveError,
+    fileSize,
+    backups: listBackups().length,
+  };
 }
 
 export async function initDb() {
@@ -97,13 +183,7 @@ export async function initDb() {
 
   const SQL = await initSqlJs();
 
-  let db;
-  if (existsSync(DB_PATH)) {
-    const fileBuffer = readFileSync(DB_PATH);
-    db = new SQL.Database(fileBuffer);
-  } else {
-    db = new SQL.Database();
-  }
+  const db = existsSync(DB_PATH) ? loadDbWithRecovery(SQL) : new SQL.Database();
 
   wrapper = new DbWrapper(db);
   wrapper.pragma('journal_mode = WAL');
@@ -116,6 +196,10 @@ export async function initDb() {
   try { await seedAdminUser(); } catch (e) { console.error('Admin seed error:', e.message); }
 
   saveToDisk();
+
+  // Take a dated backup at boot and daily thereafter (kept on the /data disk).
+  backupDb();
+  setInterval(backupDb, 24 * 60 * 60 * 1000);
 
   // Save periodically and on exit
   setInterval(saveToDisk, 30000);

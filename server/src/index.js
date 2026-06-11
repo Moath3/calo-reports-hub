@@ -7,7 +7,7 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { existsSync } from 'fs';
 
-import { initDb, closeDb } from './db/database.js';
+import { initDb, closeDb, getDbHealth } from './db/database.js';
 import { HttpError } from './utils/httpError.js';
 import { getStatus as getZeltOauthStatus, drainRefresh as drainZeltRefresh } from './services/zeltApi.js';
 import { warmSession as warmZeltSession, getBotStatus as getZeltBotStatus } from './services/zeltBot.js';
@@ -112,6 +112,7 @@ app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
     timestamp: new Date().toISOString(),
+    db: getDbHealth(),
     zelt: {
       oauth: getZeltOauthStatus(),
       bot: getZeltBotStatus(),

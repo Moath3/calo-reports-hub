@@ -4,7 +4,7 @@ import { requireAuth } from "../middleware/auth.js";
 import { buildStandaloneHTML } from "../services/htmlBuilder.js";
 import { getDb } from "../db/database.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
-import { HttpError, badRequest } from "../utils/httpError.js";
+import { HttpError, badRequest, notFound, forbidden } from "../utils/httpError.js";
 
 const router = Router();
 
@@ -25,31 +25,47 @@ router.post("/pdf", requireAuth, (req, res) => {
   res.status(501).json({ error: "PDF export is available via browser Print (Ctrl+P) in the preview page." });
 });
 
-// Netlify publish — reuses existing site on republish, creates new site only on first publish
+// Netlify publish — owner/admin only; rebuilds the HTML server-side from the
+// stored report so a caller can never push arbitrary markup to (or hijack) a
+// site. Reuses the report's existing site on republish, creates one only first.
 router.post("/netlify", requireAuth, asyncHandler(async (req, res) => {
-  const { html, siteName, reportId } = req.body;
+  const { siteName, reportId, password, variant, tweaks, brandColor, title } = req.body;
   const token = process.env.NETLIFY_ACCESS_TOKEN;
-  if (!html) throw badRequest("html is required");
+  if (!reportId) throw badRequest("reportId is required");
   if (!token) throw badRequest("Netlify token not configured. Set NETLIFY_ACCESS_TOKEN in server environment.");
+
+  // Ownership gate — only the report's owner (or an admin) may publish it.
+  const db = getDb();
+  const report = db.prepare("SELECT user_id, report_data, title, netlify_site_id, netlify_url FROM reports WHERE id = ?").get(reportId);
+  if (!report) throw notFound("Report not found");
+  if (report.user_id !== req.user.id && req.user.role !== "admin") {
+    throw forbidden("You can only publish your own reports");
+  }
+
+  // Rebuild the standalone HTML from STORED report data — never trust a
+  // caller-supplied html body (that was the hijack vector).
+  let reportData;
+  try { reportData = JSON.parse(report.report_data || "{}"); }
+  catch { throw badRequest("Stored report data is invalid"); }
+  const options = {};
+  if (password) options.password = password;
+  if (variant) options.variant = variant;
+  if (tweaks && typeof tweaks === "object") Object.assign(options, tweaks);
+  const html = buildStandaloneHTML(reportData, brandColor, title || report.title, options);
 
   const sha1 = createHash("sha1").update(html).digest("hex");
   const hdrs = { "Authorization": "Bearer " + token, "Content-Type": "application/json" };
 
-  // Check if this report already has a Netlify site
+  // Reuse the report's existing Netlify site if it still exists.
   let siteId = null;
   let siteUrl = null;
-  if (reportId) {
-    const db = getDb();
-    const row = db.prepare("SELECT netlify_site_id, netlify_url FROM reports WHERE id = ?").get(reportId);
-    if (row?.netlify_site_id) {
-      // Verify the site still exists on Netlify
-      const checkRes = await fetch("https://api.netlify.com/api/v1/sites/" + row.netlify_site_id, { headers: hdrs });
-      if (checkRes.ok) {
-        siteId = row.netlify_site_id;
-        siteUrl = row.netlify_url;
-      }
-      // If site was deleted on Netlify, fall through to create a new one
+  if (report.netlify_site_id) {
+    const checkRes = await fetch("https://api.netlify.com/api/v1/sites/" + report.netlify_site_id, { headers: hdrs });
+    if (checkRes.ok) {
+      siteId = report.netlify_site_id;
+      siteUrl = report.netlify_url;
     }
+    // If site was deleted on Netlify, fall through to create a new one
   }
 
   try {
@@ -89,12 +105,10 @@ router.post("/netlify", requireAuth, asyncHandler(async (req, res) => {
       throw new Error("Netlify file upload failed: " + uploadRes.statusText);
     }
 
-    // Store the site ID on the report for future reuse
-    if (reportId) {
-      const db = getDb();
-      db.prepare("UPDATE reports SET netlify_site_id = ?, netlify_url = ?, status = 'published', updated_at = CURRENT_TIMESTAMP WHERE id = ?")
-        .run(siteId, siteUrl, reportId);
-    }
+    // Store the site ID on the report for future reuse (reportId is required
+    // and ownership was already verified above).
+    db.prepare("UPDATE reports SET netlify_site_id = ?, netlify_url = ?, status = 'published', updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+      .run(siteId, siteUrl, reportId);
 
     res.json({ url: siteUrl, siteId, deployId: deploy.id });
   } catch (err) {

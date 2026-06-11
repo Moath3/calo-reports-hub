@@ -402,13 +402,13 @@ export default function ReportPreviewPage() {
   const handlePublish = async () => {
     setPublishing(true);
     try {
-      // Build HTML with optional password protection + selected variant
+      // The server rebuilds the HTML from the stored report (ownership-checked);
+      // we just pass the styling options + reportId so it reuses the site.
       const password = accessCode.trim() || undefined;
-      const res1 = await api.exportHTML(report.report_data, brandColor, report.title, password, variant, currentTweaks());
-      const html = res1.html;
       const slug = (report.title || 'report').toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 30);
-      // Pass reportId so backend reuses existing Netlify site on republish
-      const res = await api.deployNetlify(html, slug, id);
+      const res = await api.deployNetlify(slug, id, {
+        password, variant, tweaks: currentTweaks(), brandColor, title: report.title,
+      });
       const url = res.url || res.netlifyUrl;
       if (url) {
         setNetlifyUrl(url);

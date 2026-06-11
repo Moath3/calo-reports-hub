@@ -262,12 +262,12 @@ class ApiClient {
     });
   }
 
-  async deployNetlify(html, siteName, reportId) {
-    const payload = { html, siteName };
-    if (reportId) payload.reportId = reportId;
+  async deployNetlify(siteName, reportId, options = {}) {
+    // Server rebuilds the HTML from the stored report; we only send the
+    // styling options (variant/tweaks/password/brandColor/title) + reportId.
     return this.request('/export/netlify', {
       method: 'POST',
-      body: JSON.stringify(payload),
+      body: JSON.stringify({ siteName, reportId, ...options }),
     });
   }
 

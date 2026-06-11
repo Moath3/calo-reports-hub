@@ -1,6 +1,4 @@
-import { createHash } from 'crypto';
-
-function sha256(str) { return createHash('sha256').update(str).digest('hex'); }
+import { randomBytes, pbkdf2Sync, createCipheriv } from 'crypto';
 
 // ─── HTML escaping (XSS guard) ───────────────────────────────────────────────
 // Escape user/AI-supplied text before interpolating into HTML markup or a
@@ -212,14 +210,39 @@ function renderBlock(b, color, colorDark) {
 
 // ─── Shared chart/collapse script + password gate ────────────────────────────
 
-function chartAndCollapseScript(hasCollapse) {
-  var s = 'document.addEventListener("DOMContentLoaded",function(){';
-  s += 'document.querySelectorAll("canvas[data-chartcfg]").forEach(function(c){try{var d=JSON.parse(c.getAttribute("data-chartcfg"));new Chart(c,{type:d.type,data:d.data,options:{responsive:true,plugins:{legend:{labels:{font:{family:"Lato",weight:700}}}}}});}catch(e){}});';
+// PBKDF2 work factor — shared by the server (pbkdf2Sync) and the in-page
+// WebCrypto decrypt below. SHA-256 into a 256-bit AES-GCM key.
+const PW_PBKDF2_ITERS = 150000;
+
+// Body of the chart-init + section-collapse script, WITHOUT a DOMContentLoaded
+// wrapper. For open reports htmlShell wraps it in DOMContentLoaded; for
+// password-protected reports it runs right after the body is decrypted+injected.
+function chartCollapseBody(hasCollapse) {
+  var s = 'document.querySelectorAll("canvas[data-chartcfg]").forEach(function(c){try{var d=JSON.parse(c.getAttribute("data-chartcfg"));new Chart(c,{type:d.type,data:d.data,options:{responsive:true,plugins:{legend:{labels:{font:{family:"Lato",weight:700}}}}}});}catch(e){}});';
   if (hasCollapse) {
     s += 'document.querySelectorAll(".sec-title").forEach(function(el){el.addEventListener("click",function(){this.classList.toggle("collapsed");var body=this.parentElement.querySelector(".sec-body");if(body)body.classList.toggle("hidden");});});';
   }
-  s += '});';
   return s;
+}
+
+// Real password protection: AES-256-GCM encrypt the report body with a key
+// derived from the access code (PBKDF2). Only ciphertext ships in the file, so
+// the content can't be read from source or revealed by toggling CSS. Returns
+// base64 parts the in-page WebCrypto routine reassembles.
+function encryptBody(html, accessPassword) {
+  const salt = randomBytes(16);
+  const iv = randomBytes(12);
+  const key = pbkdf2Sync(accessPassword, salt, PW_PBKDF2_ITERS, 32, 'sha256');
+  const cipher = createCipheriv('aes-256-gcm', key, iv);
+  const ct = Buffer.concat([cipher.update(html, 'utf8'), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return {
+    s: salt.toString('base64'),
+    i: iv.toString('base64'),
+    // WebCrypto AES-GCM expects the auth tag appended to the ciphertext.
+    d: Buffer.concat([ct, tag]).toString('base64'),
+    n: PW_PBKDF2_ITERS,
+  };
 }
 
 function passwordGateCSS(color) {
@@ -238,9 +261,8 @@ function passwordGateCSS(color) {
   return c;
 }
 
-function passwordGateHTML(color, accessPassword) {
-  var hashHex = sha256(accessPassword);
-  var o = '<div id="pw-gate" class="pw-gate" data-h="' + hashHex + '">';
+function passwordGateHTML(color) {
+  var o = '<div id="pw-gate" class="pw-gate">';
   o += '<div class="pw-box">';
   o += '<div class="pw-logo">' + caloLogoSvg(color, 32) + '</div>';
   o += '<h2>Confidential report</h2>';
@@ -248,43 +270,56 @@ function passwordGateHTML(color, accessPassword) {
   o += '<input id="pw-input" type="password" placeholder="Enter access code" autocomplete="off" />';
   o += '<button id="pw-btn">View report</button>';
   o += '<div id="pw-err" class="pw-err"></div>';
-  o += '<div class="pw-notice">&#128274; Protected by Calo Reports</div>';
+  o += '<div class="pw-notice">&#128274; Encrypted by Calo Reports</div>';
   o += '</div></div>';
   return o;
 }
 
-var PW_SCRIPT = `
+// In-page decrypt routine. Reads the encrypted payload, derives the AES-GCM key
+// from the entered code via WebCrypto PBKDF2, decrypts, injects the report, then
+// runs the chart/collapse script. A wrong code fails GCM auth => "incorrect".
+function buildPwScript(reportScriptBody) {
+  return `
 (function(){
   var gate=document.getElementById('pw-gate');
-  var content=document.getElementById('pw-content');
+  var mount=document.getElementById('pw-mount');
   var input=document.getElementById('pw-input');
   var btn=document.getElementById('pw-btn');
   var err=document.getElementById('pw-err');
-  if(!gate||!content)return;
-  content.style.display='none';
-  async function hashStr(s){var e=new TextEncoder().encode(s);var h=await crypto.subtle.digest('SHA-256',e);return Array.from(new Uint8Array(h)).map(function(b){return b.toString(16).padStart(2,'0')}).join('');}
+  var payloadEl=document.getElementById('pw-payload');
+  if(!gate||!mount||!payloadEl)return;
+  var payload=JSON.parse(payloadEl.textContent);
+  function b64(b){var s=atob(b);var a=new Uint8Array(s.length);for(var i=0;i<s.length;i++)a[i]=s.charCodeAt(i);return a;}
+  async function decrypt(pw){
+    var base=await crypto.subtle.importKey('raw',new TextEncoder().encode(pw),'PBKDF2',false,['deriveKey']);
+    var key=await crypto.subtle.deriveKey({name:'PBKDF2',salt:b64(payload.s),iterations:payload.n,hash:'SHA-256'},base,{name:'AES-GCM',length:256},false,['decrypt']);
+    var pt=await crypto.subtle.decrypt({name:'AES-GCM',iv:b64(payload.i)},key,b64(payload.d));
+    return new TextDecoder().decode(pt);
+  }
+  function runReport(){ ${reportScriptBody} }
   async function check(){
     var val=input.value.trim();
     if(!val){err.style.display='block';err.textContent='Please enter the access code.';return;}
-    var h=await hashStr(val);
-    if(h===gate.getAttribute('data-h')){
+    btn.disabled=true;
+    try{
+      var html=await decrypt(val);
+      mount.innerHTML=html;
       gate.style.display='none';
-      content.style.display='block';
-      sessionStorage.setItem('calo-pw-ok','1');
-    }else{
+      runReport();
+    }catch(e){
+      btn.disabled=false;
       err.style.display='block';
       err.textContent='Incorrect access code. Please try again.';
-      input.value='';
-      input.focus();
+      input.value='';input.focus();
     }
   }
-  if(sessionStorage.getItem('calo-pw-ok')==='1'){gate.style.display='none';content.style.display='block';return;}
   btn.addEventListener('click',check);
   input.addEventListener('keydown',function(e){if(e.key==='Enter')check();});
   input.focus();
 })();`;
+}
 
-function htmlShell(title, css, innerHtml, accessPassword, color, extraScript) {
+function htmlShell(title, css, innerHtml, accessPassword, color, reportScriptBody) {
   var o = "";
   o += '<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">';
   o += '<meta name="robots" content="noindex,nofollow">';
@@ -293,10 +328,19 @@ function htmlShell(title, css, innerHtml, accessPassword, color, extraScript) {
   o += '<link href="https://fonts.googleapis.com/css2?family=Lato:wght@300;400;700;900&display=swap" rel="stylesheet">';
   o += '<script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"><\/script>';
   o += "<style>" + css + "</style></head><body>";
-  if (accessPassword) o += passwordGateHTML(color, accessPassword);
-  o += innerHtml;
-  if (extraScript) o += "<script>" + extraScript + "</script>";
-  if (accessPassword) o += "<script>" + PW_SCRIPT + "</script>";
+  if (accessPassword) {
+    // Encrypted path: ship only the gate + ciphertext. The report body is
+    // decrypted and injected client-side on the correct code, so it never
+    // appears in page source and can't be revealed by toggling CSS.
+    var enc = encryptBody(innerHtml, accessPassword);
+    o += passwordGateHTML(color);
+    o += '<div id="pw-mount"></div>';
+    o += '<script id="pw-payload" type="application/json">' + JSON.stringify(enc) + '</script>';
+    o += "<script>" + buildPwScript(reportScriptBody || '') + "</script>";
+  } else {
+    o += innerHtml;
+    if (reportScriptBody) o += '<script>document.addEventListener("DOMContentLoaded",function(){' + reportScriptBody + '});</script>';
+  }
   o += "</body></html>";
   return o;
 }
@@ -749,5 +793,5 @@ export function buildStandaloneHTML(reportData, brandColor, title, options = {})
   else                              body = buildEditorialHTML(r, color, colorDark, colorDeepest, rt, accessPassword, t);
 
   const hasCollapse = variant === 'editorial' && t.showSections;
-  return htmlShell(rt, body.css, body.html, accessPassword, body.color, chartAndCollapseScript(hasCollapse));
+  return htmlShell(rt, body.css, body.html, accessPassword, body.color, chartCollapseBody(hasCollapse));
 }

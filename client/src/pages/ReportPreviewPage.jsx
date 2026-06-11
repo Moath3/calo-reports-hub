@@ -8,6 +8,25 @@ import {
   FileDown, ExternalLink, CheckCircle, CheckCircle2, Printer, ImageDown, Lock, Shield, Users, LockKeyhole, CircleDot, Share2, Search, UserCheck, X, Sliders
 } from 'lucide-react';
 
+// XSS guard for the client-side fallback renderer. Mirrors server htmlBuilder's
+// escapeHtml/safeUrl (the client can't import the server module). Escapes text
+// before it goes into this same-origin preview iframe / downloadable HTML.
+function escapeHtml(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+  });
+}
+function safeUrl(u, opts) {
+  opts = opts || {};
+  const raw = String(u == null ? '' : u).trim();
+  const probe = raw.replace(/[\x00-\x20]+/g, '').toLowerCase();
+  if (opts.allowImageData && /^data:image\/(png|jpe?g|gif|webp|avif|bmp);base64,/.test(probe)) {
+    return escapeHtml(raw);
+  }
+  if (/^(javascript|vbscript|data):/.test(probe)) return opts.fallback || '';
+  return escapeHtml(raw);
+}
+
 function renderReportHTML(data, { collapsible = false } = {}) {
   const gi = data?.generalInfo || {};
   const brand = gi.brandColor || '#02B376';
@@ -18,10 +37,10 @@ function renderReportHTML(data, { collapsible = false } = {}) {
     const trendIcon = k.trend === 'up' ? '&#9650;' : k.trend === 'down' ? '&#9660;' : '&#8226;';
     const trendColor = k.trend === 'up' ? '#16a34a' : k.trend === 'down' ? '#dc2626' : '#6b7280';
     return `<div class="kpi-card">
-      <div class="kpi-label">${k.label || ''}</div>
-      <div class="kpi-value">${k.value || ''}</div>
-      ${k.unit ? `<div class="kpi-unit">${k.unit}</div>` : ''}
-      ${k.trend ? `<div style="font-size:11px;color:${trendColor};margin-top:4px"><span>${trendIcon}</span> ${k.change || k.trend}</div>` : ''}
+      <div class="kpi-label">${escapeHtml(k.label || '')}</div>
+      <div class="kpi-value">${escapeHtml(k.value || '')}</div>
+      ${k.unit ? `<div class="kpi-unit">${escapeHtml(k.unit)}</div>` : ''}
+      ${k.trend ? `<div style="font-size:11px;color:${trendColor};margin-top:4px"><span>${trendIcon}</span> ${escapeHtml(k.change || k.trend)}</div>` : ''}
     </div>`;
   }).join('');
 
@@ -31,16 +50,16 @@ function renderReportHTML(data, { collapsible = false } = {}) {
         const colors = { green: { bg: '#E8F8F0', border: '#02B376', text: '#166534' }, amber: { bg: '#FEF3C7', border: '#F59E0B', text: '#92400E' }, red: { bg: '#FEE2E2', border: '#EF4444', text: '#991B1B' }, blue: { bg: '#DBEAFE', border: '#3B82F6', text: '#1E40AF' } };
         const c = colors[b.style] || colors.green;
         return `<div style="background:${c.bg};border-left:4px solid ${c.border};border-radius:10px;padding:14px 18px;margin-bottom:14px">
-          <div style="font-size:15px;font-weight:700;color:${c.text}">${b.title || b.label || ''}</div>
-          ${b.subtitle ? `<div style="font-size:13px;color:${c.text};opacity:.8;margin-top:2px">${b.subtitle}</div>` : ''}
-          ${b.period ? `<div style="font-size:12px;color:${c.text};opacity:.6;margin-top:4px">${b.period}</div>` : ''}
+          <div style="font-size:15px;font-weight:700;color:${c.text}">${escapeHtml(b.title || b.label || '')}</div>
+          ${b.subtitle ? `<div style="font-size:13px;color:${c.text};opacity:.8;margin-top:2px">${escapeHtml(b.subtitle)}</div>` : ''}
+          ${b.period ? `<div style="font-size:12px;color:${c.text};opacity:.6;margin-top:4px">${escapeHtml(b.period)}</div>` : ''}
         </div>`;
       }
       case 'notes': {
         const items = b.items || (b.content ? b.content.split('\n').filter(Boolean) : (b.text ? [b.text] : []));
-        return `<div style="margin-bottom:14px">${b.label ? `<div style="font-weight:600;margin-bottom:8px;color:#1A1D23;font-size:14px">${b.label}</div>` : ''}
+        return `<div style="margin-bottom:14px">${b.label ? `<div style="font-weight:600;margin-bottom:8px;color:#1A1D23;font-size:14px">${escapeHtml(b.label)}</div>` : ''}
           <ul style="margin:0;padding-left:20px;color:#5F6B7A;font-size:13.5px;line-height:1.85">
-            ${items.map(it => `<li style="margin-bottom:4px">${it}</li>`).join('')}
+            ${items.map(it => `<li style="margin-bottom:4px">${escapeHtml(it)}</li>`).join('')}
           </ul></div>`;
       }
       case 'metrics':
@@ -48,58 +67,58 @@ function renderReportHTML(data, { collapsible = false } = {}) {
           ${(b.items || []).map(m => {
             const tColor = m.trend === 'up' ? '#16a34a' : m.trend === 'down' ? '#dc2626' : '#6b7280';
             return `<div style="background:white;border:1px solid #E2E8F0;border-radius:12px;padding:16px;box-shadow:0 1px 3px rgba(0,0,0,.04)">
-            <div style="font-size:11px;color:#5F6B7A;text-transform:uppercase;letter-spacing:.3px">${m.label || ''}</div>
-            <div style="font-size:22px;font-weight:800;color:#1A1D23;margin-top:4px">${m.value || ''}</div>
-            ${m.change ? `<div style="font-size:12px;color:${tColor};font-weight:600;margin-top:4px">${m.change}</div>` : ''}
+            <div style="font-size:11px;color:#5F6B7A;text-transform:uppercase;letter-spacing:.3px">${escapeHtml(m.label || '')}</div>
+            <div style="font-size:22px;font-weight:800;color:#1A1D23;margin-top:4px">${escapeHtml(m.value || '')}</div>
+            ${m.change ? `<div style="font-size:12px;color:${tColor};font-weight:600;margin-top:4px">${escapeHtml(m.change)}</div>` : ''}
           </div>`;
           }).join('')}</div>`;
       case 'table':
         return `<div style="overflow-x:auto;margin-bottom:14px;border-radius:10px;border:1px solid #E2E8F0;overflow:hidden"><table style="width:100%;border-collapse:collapse;font-size:13px">
-          <thead><tr>${(b.headers || []).map(h => `<th style="background:${brand};color:white;padding:11px 14px;text-align:left;font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.3px">${h}</th>`).join('')}</tr></thead>
+          <thead><tr>${(b.headers || []).map(h => `<th style="background:${brand};color:white;padding:11px 14px;text-align:left;font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.3px">${escapeHtml(h)}</th>`).join('')}</tr></thead>
           <tbody>${(b.rows || []).map((r, i) => `<tr class="trow" style="background:${i % 2 ? '#F8FAFB' : 'white'}">
             ${r.map(c => {
               const isNeg = typeof c === 'string' && c.startsWith('-');
-              return `<td style="padding:10px 14px;border-bottom:1px solid #E2E8F0;${isNeg ? 'color:#dc2626;font-weight:600' : ''}">${c}</td>`;
+              return `<td style="padding:10px 14px;border-bottom:1px solid #E2E8F0;${isNeg ? 'color:#dc2626;font-weight:600' : ''}">${escapeHtml(c)}</td>`;
             }).join('')}
           </tr>`).join('')}</tbody></table></div>`;
       case 'keyvalue':
-        return `<div style="margin-bottom:14px">${b.label ? `<div style="font-weight:600;margin-bottom:10px;color:#1A1D23;font-size:14px">${b.label}</div>` : ''}
+        return `<div style="margin-bottom:14px">${b.label ? `<div style="font-weight:600;margin-bottom:10px;color:#1A1D23;font-size:14px">${escapeHtml(b.label)}</div>` : ''}
           <div style="display:grid;gap:6px">${(b.items || []).map(kv =>
             `<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 14px;background:#F8FAFB;border-radius:10px;border:1px solid #E2E8F0">
-              <span style="color:#5F6B7A;font-size:13px">${kv.key || ''}</span>
-              <span style="font-weight:700;color:#1A1D23;font-size:13px">${kv.value || ''}</span>
+              <span style="color:#5F6B7A;font-size:13px">${escapeHtml(kv.key || '')}</span>
+              <span style="font-weight:700;color:#1A1D23;font-size:13px">${escapeHtml(kv.value || '')}</span>
             </div>`).join('')}</div></div>`;
       case 'comparison':
         return `<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
           ${[{ title: b.leftTitle, rows: b.leftRows }, { title: b.rightTitle, rows: b.rightRows }].map(side =>
             `<div style="background:white;border:1px solid #E2E8F0;border-radius:12px;padding:16px;box-shadow:0 1px 3px rgba(0,0,0,.04)">
-              <div style="font-weight:700;margin-bottom:10px;color:${brand};font-size:14px;padding-bottom:8px;border-bottom:2px solid ${brand}33">${side.title || ''}</div>
+              <div style="font-weight:700;margin-bottom:10px;color:${brand};font-size:14px;padding-bottom:8px;border-bottom:2px solid ${brand}33">${escapeHtml(side.title || '')}</div>
               ${(side.rows || []).map(r => `<div style="display:flex;justify-content:space-between;padding:6px 0;font-size:13px;border-bottom:1px solid #F1F5F9">
-                <span style="color:#5F6B7A">${r.key || r.label || ''}</span><span style="font-weight:600;color:#1A1D23">${r.value || ''}</span>
+                <span style="color:#5F6B7A">${escapeHtml(r.key || r.label || '')}</span><span style="font-weight:600;color:#1A1D23">${escapeHtml(r.value || '')}</span>
               </div>`).join('')}</div>`).join('')}</div>`;
       case 'callout':
         return `<div style="background:linear-gradient(135deg,${b.bgColor || '#E8F8F0'},${b.bgColor || '#E8F8F0'}dd);border:2px solid ${b.borderColor || brand};border-radius:14px;padding:24px;text-align:center;margin-bottom:14px">
-          ${b.icon ? `<div style="font-size:32px;margin-bottom:8px">${b.icon}</div>` : ''}
-          <div style="font-size:14px;color:${b.textColor || '#166534'};font-weight:600">${b.title || ''}</div>
-          <div style="font-size:30px;font-weight:800;color:${b.textColor || '#166534'};margin-top:6px">${b.value || ''}</div>
+          ${b.icon ? `<div style="font-size:32px;margin-bottom:8px">${escapeHtml(b.icon)}</div>` : ''}
+          <div style="font-size:14px;color:${b.textColor || '#166534'};font-weight:600">${escapeHtml(b.title || '')}</div>
+          <div style="font-size:30px;font-weight:800;color:${b.textColor || '#166534'};margin-top:6px">${escapeHtml(b.value || '')}</div>
         </div>`;
       case 'image':
         return `<div style="margin-bottom:14px;text-align:center">
-          <img src="${b.url || ''}" style="max-width:100%;border-radius:10px;box-shadow:0 2px 8px rgba(0,0,0,.08)" alt="${b.caption || ''}" />
-          ${b.caption ? `<div style="font-size:12px;color:#5F6B7A;margin-top:8px">${b.caption}</div>` : ''}
+          <img src="${safeUrl(b.url, { allowImageData: true })}" style="max-width:100%;border-radius:10px;box-shadow:0 2px 8px rgba(0,0,0,.08)" alt="${escapeHtml(b.caption || '')}" />
+          ${b.caption ? `<div style="font-size:12px;color:#5F6B7A;margin-top:8px">${escapeHtml(b.caption)}</div>` : ''}
         </div>`;
       case 'link':
         return `<div style="margin-bottom:14px;padding:14px 18px;background:#E8F8F0;border:1px solid #bbf7d0;border-radius:10px;display:flex;align-items:center;gap:12px">
           <div style="width:36px;height:36px;border-radius:10px;background:${brand};display:flex;align-items:center;justify-content:center;flex-shrink:0"><span style="color:white;font-size:16px">&#128279;</span></div>
           <div>
-            <a href="${b.url || '#'}" target="_blank" rel="noopener noreferrer" style="color:${brand};font-weight:700;font-size:14px;text-decoration:none">${b.text || b.url || 'Link'}</a>
-            ${b.description ? `<div style="font-size:12px;color:#5F6B7A;margin-top:2px">${b.description}</div>` : ''}
+            <a href="${safeUrl(b.url, { fallback: '#' })}" target="_blank" rel="noopener noreferrer" style="color:${brand};font-weight:700;font-size:14px;text-decoration:none">${escapeHtml(b.text || b.url || 'Link')}</a>
+            ${b.description ? `<div style="font-size:12px;color:#5F6B7A;margin-top:2px">${escapeHtml(b.description)}</div>` : ''}
           </div>
         </div>`;
       case 'chart': {
         const cid = 'ch' + Math.random().toString(36).slice(2, 8);
         const cd = JSON.stringify({ type: b.chartType || 'bar', data: { labels: b.labels || [], datasets: b.datasets || [] } }).replace(/"/g, '&quot;');
-        return `<div style="background:white;padding:20px;border-radius:12px;border:1px solid #E2E8F0;margin-bottom:14px"><div style="font-weight:700;margin-bottom:10px;color:#1A1D23">${b.title || 'Chart'}</div><canvas id="${cid}" data-chartcfg="${cd}"></canvas></div>`;
+        return `<div style="background:white;padding:20px;border-radius:12px;border:1px solid #E2E8F0;margin-bottom:14px"><div style="font-weight:700;margin-bottom:10px;color:#1A1D23">${escapeHtml(b.title || 'Chart')}</div><canvas id="${cid}" data-chartcfg="${cd}"></canvas></div>`;
       }
       default: return '';
     }
@@ -145,23 +164,23 @@ function renderReportHTML(data, { collapsible = false } = {}) {
   });`;
 
   return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
-    <title>${gi.title || 'CALO Report'}</title>
+    <title>${escapeHtml(gi.title || 'CALO Report')}</title>
     <link href="https://fonts.googleapis.com/css2?family=Lato:wght@300;400;700;900&display=swap" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"><\/script>
     <style>${css}</style></head>
     <body><div class="ctr">
     <div class="hdr">
       <div style="margin-bottom:4px"><svg viewBox="0 0 746 320" height="44" style="display:inline-block;vertical-align:middle" xmlns="http://www.w3.org/2000/svg"><g fill="white"><path d="M89.2,299.5c-18.1,0-33.5-6.3-46.1-19s-18.9-28-18.9-46v-149c0-18,6.4-33.4,19.1-46 c12.7-12.7,28.1-19,45.9-19c18.1,0,33.4,6.4,46,19.1c12.6,12.7,18.9,28,18.9,46v31h-42.5V84.8c0-6.6-2.3-12.2-6.9-16.8 s-10.2-6.9-16.8-6.9c-6.5,0-12,2.3-16.6,6.9c-4.6,4.6-6.9,10.2-6.9,16.8v149.4c0,6.6,2.3,12.1,6.9,16.7c4.6,4.6,10.1,6.9,16.6,6.9 c6.6,0,12.2-2.3,16.8-6.9s6.9-10.2,6.9-16.7v-37.5h42.5v37.9c0,18.1-6.4,33.5-19.1,46C122.3,293.2,107,299.5,89.2,299.5z"/><path d="M260.7,233.5l-10,62.5h-42.7l46.1-272.1h56.5l45.5,272.1h-43l-9.7-62.5H260.7z M282.2,86.3L267,193.6h30.4 L282.2,86.3z"/><path d="M533.3,296.1H421.4V23.9h41v231.4h70.9L533.3,296.1L533.3,296.1z"/><path d="M656.7,20.6c18.1,0,33.5,6.4,46.2,19.1s19,28.1,19,46.1v148.4c0,18.1-6.4,33.5-19.1,46.2 c-12.7,12.7-28.1,19-46.1,19s-33.3-6.4-45.9-19.1c-12.6-12.7-18.9-28.1-18.9-46.1V85.9c0-18.1,6.4-33.5,19.1-46.2 C623.7,27,639,20.6,656.7,20.6z M679,85.1c0-6.6-2.3-12.1-6.8-16.6c-4.5-4.5-10.1-6.8-16.6-6.8c-6.5,0-12,2.3-16.6,6.8 S632,78.5,632,85.1V234c0,6.5,2.3,12,6.9,16.5s10.2,6.9,16.6,6.9c6.6,0,12.1-2.3,16.6-6.9c4.5-4.6,6.8-10.1,6.8-16.5V85.1z"/></g></svg></div>
-      <h1>${gi.title || 'Report'}</h1>
-      ${gi.reportDate ? `<div style="margin-top:8px;font-size:14px;opacity:.9">${gi.reportDate}</div>` : ''}
-      ${gi.prevMonth ? `<div style="display:inline-block;margin-top:8px;padding:4px 14px;background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.2);border-radius:20px;font-size:12px">${gi.prevMonth}</div>` : ''}
-      ${gi.companyName ? `<div style="margin-top:8px;font-size:13px;opacity:.7">${gi.companyName}</div>` : ''}
+      <h1>${escapeHtml(gi.title || 'Report')}</h1>
+      ${gi.reportDate ? `<div style="margin-top:8px;font-size:14px;opacity:.9">${escapeHtml(gi.reportDate)}</div>` : ''}
+      ${gi.prevMonth ? `<div style="display:inline-block;margin-top:8px;padding:4px 14px;background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.2);border-radius:20px;font-size:12px">${escapeHtml(gi.prevMonth)}</div>` : ''}
+      ${gi.companyName ? `<div style="margin-top:8px;font-size:13px;opacity:.7">${escapeHtml(gi.companyName)}</div>` : ''}
     </div>
     ${kpiCards ? `<div class="kpi-grid">${kpiCards}</div>` : ''}
     ${sections.map(s => `<div class="sec">
       <div class="sec-hdr">
-        <div class="sec-icon">${s.icon || '📊'}</div>
-        <div class="sec-title">${s.title || ''}</div>
+        <div class="sec-icon">${escapeHtml(s.icon || '📊')}</div>
+        <div class="sec-title">${escapeHtml(s.title || '')}</div>
       </div>
       <div class="sec-body">
         ${(s.blocks || []).map(renderBlock).join('')}
@@ -169,7 +188,7 @@ function renderReportHTML(data, { collapsible = false } = {}) {
     </div>`).join('')}
     ${data?.summary ? `<div class="summary-box">
       <h3 style="font-size:18px;font-weight:700;margin-bottom:12px;color:#1A1D23">Executive Summary</h3>
-      <p style="color:#5F6B7A;line-height:1.8;font-size:14px">${data.summary}</p>
+      <p style="color:#5F6B7A;line-height:1.8;font-size:14px">${escapeHtml(data.summary)}</p>
     </div>` : ''}
     ${(data?.insights || []).length ? `<div class="sec" style="overflow:visible">
       <div class="sec-hdr" style="cursor:default">
@@ -177,7 +196,7 @@ function renderReportHTML(data, { collapsible = false } = {}) {
         <div class="sec-title">Key Insights</div>
       </div>
       <div class="sec-body">
-        ${data.insights.map(i => `<div class="insight-item">${i}</div>`).join('')}
+        ${data.insights.map(i => `<div class="insight-item">${escapeHtml(i)}</div>`).join('')}
       </div>
     </div>` : ''}
     <div class="footer">

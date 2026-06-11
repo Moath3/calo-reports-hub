@@ -2,6 +2,33 @@ import { createHash } from 'crypto';
 
 function sha256(str) { return createHash('sha256').update(str).digest('hex'); }
 
+// ─── HTML escaping (XSS guard) ───────────────────────────────────────────────
+// Escape user/AI-supplied text before interpolating into HTML markup or a
+// double-quoted attribute value. Without this, a stored value like
+// `<img src=x onerror=...>` executes when a report is previewed, exported, or
+// published. Mirrors the helper already used in routes/zelt.js.
+export function escapeHtml(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+  });
+}
+
+// For href/src attributes: block script-executing URL schemes, then escape for
+// the attribute context. Permits http(s), mailto, relative URLs, and — only
+// when allowImageData is set (image blocks) — base64 raster data URIs. Never
+// allows javascript:, vbscript:, data:text/html, or data:image/svg+xml (SVG can
+// carry script). Returns opts.fallback (default '') for anything blocked.
+function safeUrl(u, opts) {
+  opts = opts || {};
+  var raw = String(u == null ? '' : u).trim();
+  var probe = raw.replace(/[\x00-\x20]+/g, '').toLowerCase();
+  if (opts.allowImageData && /^data:image\/(png|jpe?g|gif|webp|avif|bmp);base64,/.test(probe)) {
+    return escapeHtml(raw);
+  }
+  if (/^(javascript|vbscript|data):/.test(probe)) return opts.fallback || '';
+  return escapeHtml(raw);
+}
+
 // Official CALO logo SVG paths
 const LOGO_PATHS = [
   'M89.2,299.5c-18.1,0-33.5-6.3-46.1-19s-18.9-28-18.9-46v-149c0-18,6.4-33.4,19.1-46 c12.7-12.7,28.1-19,45.9-19c18.1,0,33.4,6.4,46,19.1c12.6,12.7,18.9,28,18.9,46v31h-42.5V84.8c0-6.6-2.3-12.2-6.9-16.8 s-10.2-6.9-16.8-6.9c-6.5,0-12,2.3-16.6,6.9c-4.6,4.6-6.9,10.2-6.9,16.8v149.4c0,6.6,2.3,12.1,6.9,16.7c4.6,4.6,10.1,6.9,16.6,6.9 c6.6,0,12.2-2.3,16.8-6.9s6.9-10.2,6.9-16.7v-37.5h42.5v37.9c0,18.1-6.4,33.5-19.1,46C122.3,293.2,107,299.5,89.2,299.5z',
@@ -80,17 +107,17 @@ function renderBlock(b, color, colorDark) {
     };
     var c = cs[b.style] || cs.green;
     return '<div style="background:' + c.bg + ';border-left:4px solid ' + c.border + ';border-radius:14px;padding:18px 22px;margin-bottom:16px">' +
-      '<div style="font-size:15px;font-weight:900;color:' + c.text + ';letter-spacing:-0.01em">' + (b.title || b.label || '') + '</div>' +
-      (b.subtitle ? '<div style="font-size:13px;color:' + c.text + ';opacity:.82;margin-top:3px">' + b.subtitle + '</div>' : '') +
-      (b.period ? '<div style="font-size:11px;color:' + c.text + ';opacity:.7;margin-top:5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase">' + b.period + '</div>' : '') +
+      '<div style="font-size:15px;font-weight:900;color:' + c.text + ';letter-spacing:-0.01em">' + escapeHtml(b.title || b.label || '') + '</div>' +
+      (b.subtitle ? '<div style="font-size:13px;color:' + c.text + ';opacity:.82;margin-top:3px">' + escapeHtml(b.subtitle) + '</div>' : '') +
+      (b.period ? '<div style="font-size:11px;color:' + c.text + ';opacity:.7;margin-top:5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase">' + escapeHtml(b.period) + '</div>' : '') +
       '</div>';
   }
   if (b.type === "notes") {
     var items = b.items || (b.content ? b.content.split('\n').filter(Boolean) : (b.text ? [b.text] : []));
-    var label = b.label ? '<div style="font-size:11px;font-weight:900;color:' + color + ';letter-spacing:.14em;text-transform:uppercase;margin-bottom:10px">' + b.label + '</div>' : '';
+    var label = b.label ? '<div style="font-size:11px;font-weight:900;color:' + color + ';letter-spacing:.14em;text-transform:uppercase;margin-bottom:10px">' + escapeHtml(b.label) + '</div>' : '';
     return '<div style="margin-bottom:16px">' + label +
       '<ul style="margin:0;padding-left:22px;color:#2F332C;font-size:15px;line-height:1.7;font-weight:300">' +
-      items.map(function(it) { return '<li style="margin-bottom:6px">' + it + '</li>'; }).join('') +
+      items.map(function(it) { return '<li style="margin-bottom:6px">' + escapeHtml(it) + '</li>'; }).join('') +
       '</ul></div>';
   }
   if (b.type === "metrics") {
@@ -98,9 +125,9 @@ function renderBlock(b, color, colorDark) {
     (b.items || []).forEach(function(m) {
       var tc = m.trend === "up" ? "#029A66" : m.trend === "down" ? "#D94F4F" : "#787C72";
       h += '<div style="background:#FAFAF7;border:1px solid #E8E9E3;border-radius:14px;padding:16px 18px">';
-      h += '<div style="font-size:11px;color:#787C72;text-transform:uppercase;letter-spacing:.1em;font-weight:900">' + (m.label || '') + '</div>';
-      h += '<div class="num" style="font-size:26px;font-weight:900;color:#0A1F17;margin-top:6px;letter-spacing:-0.03em">' + (m.value || '') + '</div>';
-      if (m.change) h += '<div style="font-size:12px;color:' + tc + ';font-weight:700;margin-top:4px">' + m.change + '</div>';
+      h += '<div style="font-size:11px;color:#787C72;text-transform:uppercase;letter-spacing:.1em;font-weight:900">' + escapeHtml(m.label || '') + '</div>';
+      h += '<div class="num" style="font-size:26px;font-weight:900;color:#0A1F17;margin-top:6px;letter-spacing:-0.03em">' + escapeHtml(m.value || '') + '</div>';
+      if (m.change) h += '<div style="font-size:12px;color:' + tc + ';font-weight:700;margin-top:4px">' + escapeHtml(m.change) + '</div>';
       h += '</div>';
     });
     return h + '</div>';
@@ -109,7 +136,7 @@ function renderBlock(b, color, colorDark) {
     var headerCols = (b.headers || []).length || 1;
     h = '<div style="margin-bottom:16px;border-radius:14px;border:1px solid #E8E9E3;overflow:hidden">';
     h += '<div style="display:grid;grid-template-columns:repeat(' + headerCols + ', 1fr);background:#0A1F17;color:#fff;padding:14px 20px;font-size:11px;font-weight:900;letter-spacing:.1em;text-transform:uppercase">';
-    (b.headers || []).forEach(function(hd) { h += '<span>' + hd + '</span>'; });
+    (b.headers || []).forEach(function(hd) { h += '<span>' + escapeHtml(hd) + '</span>'; });
     h += '</div>';
     (b.rows || []).forEach(function(row, i) {
       var cols = row.length || 1;
@@ -117,19 +144,19 @@ function renderBlock(b, color, colorDark) {
       row.forEach(function(cell) {
         var isNeg = typeof cell === 'string' && cell.startsWith('-');
         var isPos = typeof cell === 'string' && /^[+↑]/.test(cell);
-        h += '<span class="num" style="font-size:14px;font-weight:700;' + (isNeg ? 'color:#D94F4F;' : '') + (isPos ? 'color:' + color + ';font-weight:900;' : '') + '">' + cell + '</span>';
+        h += '<span class="num" style="font-size:14px;font-weight:700;' + (isNeg ? 'color:#D94F4F;' : '') + (isPos ? 'color:' + color + ';font-weight:900;' : '') + '">' + escapeHtml(cell) + '</span>';
       });
       h += '</div>';
     });
     return h + '</div>';
   }
   if (b.type === "keyvalue") {
-    var kvLabel = b.label ? '<div style="font-size:11px;font-weight:900;color:' + color + ';letter-spacing:.14em;text-transform:uppercase;margin-bottom:10px">' + b.label + '</div>' : '';
+    var kvLabel = b.label ? '<div style="font-size:11px;font-weight:900;color:' + color + ';letter-spacing:.14em;text-transform:uppercase;margin-bottom:10px">' + escapeHtml(b.label) + '</div>' : '';
     h = '<div style="margin-bottom:16px">' + kvLabel + '<div style="display:grid;gap:8px">';
     (b.items || []).forEach(function(kv) {
       h += '<div style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;background:#FAFAF7;border-radius:12px;border:1px solid #F4F4F0">';
-      h += '<span style="color:#4E524A;font-size:13px;font-weight:700">' + (kv.key || '') + '</span>';
-      h += '<span class="num" style="font-weight:900;color:#0A1F17;font-size:14px">' + (kv.value || '') + '</span></div>';
+      h += '<span style="color:#4E524A;font-size:13px;font-weight:700">' + escapeHtml(kv.key || '') + '</span>';
+      h += '<span class="num" style="font-weight:900;color:#0A1F17;font-size:14px">' + escapeHtml(kv.value || '') + '</span></div>';
     });
     return h + '</div></div>';
   }
@@ -144,12 +171,12 @@ function renderBlock(b, color, colorDark) {
       var sh = p.accent ? 'box-shadow:0 10px 30px rgba(2,179,118,.25);' : '';
       h += '<div style="padding:22px;border-radius:14px;' + bg + sh + '">';
       h += '<div style="font-size:11px;font-weight:900;letter-spacing:.14em;opacity:' + (p.accent ? '.85' : '.6') + ';text-transform:uppercase">' + p.meta + '</div>';
-      h += '<div style="font-size:17px;font-weight:900;margin-top:4px;letter-spacing:-0.01em">' + (p.title || '') + '</div>';
+      h += '<div style="font-size:17px;font-weight:900;margin-top:4px;letter-spacing:-0.01em">' + escapeHtml(p.title || '') + '</div>';
       h += '<div style="border-top:1px solid ' + (p.accent ? 'rgba(255,255,255,.2)' : '#F4F4F0') + ';margin-top:14px;padding-top:12px">';
       (p.rows || []).forEach(function(rv) {
         h += '<div style="display:flex;justify-content:space-between;padding:7px 0;font-size:13px;font-weight:700">';
-        h += '<span style="opacity:' + (p.accent ? '.85' : '.7') + '">' + (rv.key || rv.label || '') + '</span>';
-        h += '<span class="num">' + (rv.value || '') + '</span></div>';
+        h += '<span style="opacity:' + (p.accent ? '.85' : '.7') + '">' + escapeHtml(rv.key || rv.label || '') + '</span>';
+        h += '<span class="num">' + escapeHtml(rv.value || '') + '</span></div>';
       });
       h += '</div></div>';
     });
@@ -158,27 +185,27 @@ function renderBlock(b, color, colorDark) {
   if (b.type === "callout") {
     return '<div style="padding:32px;background:#0A1F17;border-radius:18px;color:#fff;display:flex;gap:22px;align-items:center;margin-bottom:16px;position:relative;overflow:hidden">' +
       '<div style="position:absolute;right:-40px;bottom:-40px;width:220px;height:220px;border-radius:50%;background:' + color + ';opacity:.12;pointer-events:none"></div>' +
-      (b.icon ? '<div style="font-size:44px;flex-shrink:0;position:relative">' + b.icon + '</div>' : '') +
+      (b.icon ? '<div style="font-size:44px;flex-shrink:0;position:relative">' + escapeHtml(b.icon) + '</div>' : '') +
       '<div style="position:relative">' +
-      '<div style="font-size:11px;font-weight:900;letter-spacing:.2em;color:#66D7A5;margin-bottom:6px;text-transform:uppercase">' + (b.title || 'Highlight') + '</div>' +
-      '<div style="font-size:26px;font-weight:900;letter-spacing:-0.03em;line-height:1.15">' + (b.value || '') + '</div>' +
+      '<div style="font-size:11px;font-weight:900;letter-spacing:.2em;color:#66D7A5;margin-bottom:6px;text-transform:uppercase">' + escapeHtml(b.title || 'Highlight') + '</div>' +
+      '<div style="font-size:26px;font-weight:900;letter-spacing:-0.03em;line-height:1.15">' + escapeHtml(b.value || '') + '</div>' +
       '</div></div>';
   }
   if (b.type === "chart") {
     var cid = "ch" + Math.random().toString(36).slice(2, 8);
     var cd = JSON.stringify({ type: b.chartType || "bar", data: { labels: b.labels || [], datasets: b.datasets || [] } }).replace(/"/g, "&quot;");
-    return '<div style="background:#FAFAF7;padding:24px;border-radius:16px;border:1px solid #F4F4F0;margin-bottom:16px"><div style="font-size:11px;font-weight:900;color:' + color + ';letter-spacing:.14em;text-transform:uppercase;margin-bottom:12px">' + (b.title || "Chart") + '</div><canvas id="' + cid + '" data-chartcfg="' + cd + '"></canvas></div>';
+    return '<div style="background:#FAFAF7;padding:24px;border-radius:16px;border:1px solid #F4F4F0;margin-bottom:16px"><div style="font-size:11px;font-weight:900;color:' + color + ';letter-spacing:.14em;text-transform:uppercase;margin-bottom:12px">' + escapeHtml(b.title || "Chart") + '</div><canvas id="' + cid + '" data-chartcfg="' + cd + '"></canvas></div>';
   }
   if (b.type === "link") {
     return '<div style="margin-bottom:16px;padding:16px 20px;background:#E6F9F1;border:1px solid #CFF3E3;border-radius:14px;display:flex;align-items:center;gap:14px">' +
       '<div style="width:40px;height:40px;border-radius:12px;background:' + color + ';display:flex;align-items:center;justify-content:center;flex-shrink:0"><span style="color:white;font-size:18px">&#128279;</span></div>' +
-      '<div><a href="' + (b.url || '#') + '" target="_blank" rel="noopener noreferrer" style="color:' + colorDark + ';font-weight:900;font-size:15px;text-decoration:none;letter-spacing:-0.01em">' + (b.text || b.url || 'Link') + '</a>' +
-      (b.description ? '<div style="font-size:13px;color:#4E524A;margin-top:2px">' + b.description + '</div>' : '') +
+      '<div><a href="' + safeUrl(b.url, { fallback: '#' }) + '" target="_blank" rel="noopener noreferrer" style="color:' + colorDark + ';font-weight:900;font-size:15px;text-decoration:none;letter-spacing:-0.01em">' + escapeHtml(b.text || b.url || 'Link') + '</a>' +
+      (b.description ? '<div style="font-size:13px;color:#4E524A;margin-top:2px">' + escapeHtml(b.description) + '</div>' : '') +
       '</div></div>';
   }
   if (b.type === "image") {
-    return '<div style="margin-bottom:16px;text-align:center"><img src="' + (b.url || '') + '" style="max-width:100%;border-radius:14px;box-shadow:0 4px 10px rgba(10,31,23,.08)" alt="' + (b.caption || '') + '" />' +
-      (b.caption ? '<div style="font-size:12px;color:#787C72;margin-top:10px;font-weight:700">' + b.caption + '</div>' : '') + '</div>';
+    return '<div style="margin-bottom:16px;text-align:center"><img src="' + safeUrl(b.url, { allowImageData: true }) + '" style="max-width:100%;border-radius:14px;box-shadow:0 4px 10px rgba(10,31,23,.08)" alt="' + escapeHtml(b.caption || '') + '" />' +
+      (b.caption ? '<div style="font-size:12px;color:#787C72;margin-top:10px;font-weight:700">' + escapeHtml(b.caption) + '</div>' : '') + '</div>';
   }
   return "";
 }
@@ -261,7 +288,7 @@ function htmlShell(title, css, innerHtml, accessPassword, color, extraScript) {
   var o = "";
   o += '<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">';
   o += '<meta name="robots" content="noindex,nofollow">';
-  o += "<title>" + title + "</title>";
+  o += "<title>" + escapeHtml(title) + "</title>";
   o += '<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>';
   o += '<link href="https://fonts.googleapis.com/css2?family=Lato:wght@300;400;700;900&display=swap" rel="stylesheet">';
   o += '<script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"><\/script>';
@@ -336,10 +363,10 @@ function buildEditorialHTML(r, color, colorDark, colorDeepest, title, accessPass
   if (t.showHero) {
     o += '<div class="hero">';
     o += '<div class="hero-top">' + caloLogoSvg('#ffffff', 28);
-    if (prevMonth || reportDate) o += '<div class="hero-eyebrow">' + (prevMonth || reportDate) + '</div>';
+    if (prevMonth || reportDate) o += '<div class="hero-eyebrow">' + escapeHtml(prevMonth || reportDate) + '</div>';
     o += '</div>';
-    if (reportSubtitle) o += '<div class="hero-sub">' + reportSubtitle + '</div>';
-    o += '<h1>' + reportTitle + '</h1>';
+    if (reportSubtitle) o += '<div class="hero-sub">' + escapeHtml(reportSubtitle) + '</div>';
+    o += '<h1>' + escapeHtml(reportTitle) + '</h1>';
     var metaItems = [];
     if (reportDate && !prevMonth) metaItems.push({ l: 'Date', v: reportDate });
     if (prevMonth && reportDate) metaItems.push({ l: 'Published', v: reportDate });
@@ -347,14 +374,14 @@ function buildEditorialHTML(r, color, colorDark, colorDeepest, title, accessPass
     metaItems.push({ l: 'Sections', v: t.showSections ? (sections.length || 0) : 0 });
     if (metaItems.length) {
       o += '<div class="hero-meta">';
-      metaItems.forEach(function(m) { o += '<div class="meta-item"><div class="meta-label">' + m.l + '</div><div class="meta-value">' + m.v + '</div></div>'; });
+      metaItems.forEach(function(m) { o += '<div class="meta-item"><div class="meta-label">' + escapeHtml(m.l) + '</div><div class="meta-value">' + escapeHtml(m.v) + '</div></div>'; });
       o += '</div>';
     }
     o += '</div>';
   } else {
     o += '<div class="thin-hero">' + caloLogoSvg(color, 20);
-    o += '<div style="flex:1"><h1>' + reportTitle + '</h1>';
-    if (prevMonth || reportDate) o += '<div style="font-size:11px;color:#787C72;font-weight:700;letter-spacing:.1em;text-transform:uppercase;margin-top:4px">' + (prevMonth || reportDate) + '</div>';
+    o += '<div style="flex:1"><h1>' + escapeHtml(reportTitle) + '</h1>';
+    if (prevMonth || reportDate) o += '<div style="font-size:11px;color:#787C72;font-weight:700;letter-spacing:.1em;text-transform:uppercase;margin-top:4px">' + escapeHtml(prevMonth || reportDate) + '</div>';
     o += '</div></div>';
   }
   // KPIs
@@ -363,14 +390,14 @@ function buildEditorialHTML(r, color, colorDark, colorDeepest, title, accessPass
     kpis.forEach(function(k) {
       var trendClass = k.trend === 'up' ? 'kpi-up' : k.trend === 'down' ? 'kpi-down' : 'kpi-stable';
       var trendIcon  = k.trend === 'up' ? '&#9650;' : k.trend === 'down' ? '&#9660;' : '';
-      o += '<div><div class="kpi-label">' + (k.label || '') + '</div>';
-      o += '<div class="kpi-value num">' + (k.value || '');
-      if (k.unit) o += '<span class="kpi-unit">' + k.unit + '</span>';
+      o += '<div><div class="kpi-label">' + escapeHtml(k.label || '') + '</div>';
+      o += '<div class="kpi-value num">' + escapeHtml(k.value || '');
+      if (k.unit) o += '<span class="kpi-unit">' + escapeHtml(k.unit) + '</span>';
       o += '</div>';
       if (k.trend || k.change) {
         o += '<div class="kpi-trend ' + trendClass + '">';
         if (trendIcon) o += '<span>' + trendIcon + '</span> ';
-        o += (k.change || k.trend || '');
+        o += escapeHtml(k.change || k.trend || '');
         o += '</div>';
       }
       o += '</div>';
@@ -380,13 +407,13 @@ function buildEditorialHTML(r, color, colorDark, colorDeepest, title, accessPass
   // Summary
   if (t.showSummary && summary) {
     o += '<div class="sec"><div class="sec-eyebrow">Executive summary</div><h2 class="sec-title"><span>Highlights</span><span class="chev">&#9662;</span></h2>';
-    o += '<div class="sec-body"><div class="summary">' + summary + '</div></div></div>';
+    o += '<div class="sec-body"><div class="summary">' + escapeHtml(summary) + '</div></div></div>';
   }
   // Sections
   if (t.showSections) {
     sections.forEach(function(sec, idx) {
       o += '<div class="sec"><div class="sec-eyebrow">Section · ' + String(idx + 1).padStart(2, '0') + '</div>';
-      o += '<h2 class="sec-title"><span>' + (sec.icon ? sec.icon + ' ' : '') + (sec.title || '') + '</span><span class="chev">&#9662;</span></h2>';
+      o += '<h2 class="sec-title"><span>' + (sec.icon ? escapeHtml(sec.icon) + ' ' : '') + escapeHtml(sec.title || '') + '</span><span class="chev">&#9662;</span></h2>';
       o += '<div class="sec-body">';
       (sec.blocks || []).forEach(function(b) { o += renderBlock(b, color, colorDark); });
       o += '</div></div>';
@@ -396,14 +423,14 @@ function buildEditorialHTML(r, color, colorDark, colorDeepest, title, accessPass
   if (t.showInsights && insights && insights.length) {
     o += '<div class="sec"><div class="sec-eyebrow">Takeaways</div><h2 class="sec-title"><span>Key insights</span><span class="chev">&#9662;</span></h2>';
     o += '<div class="sec-body"><div class="insights">';
-    insights.forEach(function(i) { o += '<div class="insight">' + i + '</div>'; });
+    insights.forEach(function(i) { o += '<div class="insight">' + escapeHtml(i) + '</div>'; });
     o += '</div></div></div>';
   }
   // Footer
   if (t.showFooter) {
     o += '<div class="footer"><div class="footer-brand">' + caloLogoSvg('#A8ABA1', 18);
     o += '<div><div class="footer-brand-text">Calo Reports Platform</div>';
-    o += '<div class="footer-brand-sub">Prepared with care' + (reportDate ? ' · ' + reportDate : '') + '</div></div></div>';
+    o += '<div class="footer-brand-sub">Prepared with care' + (reportDate ? ' · ' + escapeHtml(reportDate) : '') + '</div></div></div>';
     o += '<div class="footer-tag">Confidential · Internal use only</div></div>';
   }
   o += '</div></div>';
@@ -463,9 +490,9 @@ function buildDashboardHTML(r, color, colorDark, colorDeepest, title, accessPass
   if (t.showHero) {
     o += '<div class="dash-header">' + caloLogoSvg('#ffffff', 22);
     o += '<div class="divider"></div>';
-    o += '<div style="flex:1;min-width:200px"><div class="dash-eyebrow">' + (reportSubtitle || prevMonth || 'REPORT') + '</div>';
-    o += '<div class="dash-title">' + reportTitle + '</div></div>';
-    if (reportDate) o += '<span class="live-pill">' + reportDate + '</span>';
+    o += '<div style="flex:1;min-width:200px"><div class="dash-eyebrow">' + escapeHtml(reportSubtitle || prevMonth || 'REPORT') + '</div>';
+    o += '<div class="dash-title">' + escapeHtml(reportTitle) + '</div></div>';
+    if (reportDate) o += '<span class="live-pill">' + escapeHtml(reportDate) + '</span>';
     o += '</div>';
   }
 
@@ -475,13 +502,13 @@ function buildDashboardHTML(r, color, colorDark, colorDeepest, title, accessPass
     o += '<div class="kpi-strip">';
     ks.forEach(function(k) {
       o += '<div class="kpi-col">';
-      o += '<div class="kpi-label">' + (k.label || '') + '</div>';
+      o += '<div class="kpi-label">' + escapeHtml(k.label || '') + '</div>';
       if (k.value) {
-        o += '<div class="kpi-value num">' + k.value;
-        if (k.unit) o += '<span class="kpi-unit">' + k.unit + '</span>';
+        o += '<div class="kpi-value num">' + escapeHtml(k.value);
+        if (k.unit) o += '<span class="kpi-unit">' + escapeHtml(k.unit) + '</span>';
         o += '</div>';
       }
-      if (k.change || k.trend) o += '<div class="kpi-change">' + (k.change || k.trend) + '</div>';
+      if (k.change || k.trend) o += '<div class="kpi-change">' + escapeHtml(k.change || k.trend) + '</div>';
       o += '</div>';
     });
     o += '</div>';
@@ -491,7 +518,7 @@ function buildDashboardHTML(r, color, colorDark, colorDeepest, title, accessPass
   var slot = 0;
   if (t.showSummary && summary) {
     o += '<div class="dash-full"><div class="section-label"><span class="section-num">01</span><span class="section-title">Executive summary</span><span class="section-rule"></span></div>';
-    o += '<div class="summary">' + summary + '</div></div>';
+    o += '<div class="summary">' + escapeHtml(summary) + '</div></div>';
     slot = 1;
   }
   if (t.showSections) {
@@ -499,7 +526,7 @@ function buildDashboardHTML(r, color, colorDark, colorDeepest, title, accessPass
       var isFull = (sec.blocks || []).some(function(b) { return b.type === 'table' || b.type === 'chart' || b.type === 'comparison'; }) || (sec.blocks || []).length > 2;
       var wrap = isFull ? 'dash-full' : '';
       var numStr = String(slot + idx + 1).padStart(2, '0');
-      o += '<div class="' + wrap + '"><div class="section-label"><span class="section-num">' + numStr + '</span><span class="section-title">' + (sec.icon ? sec.icon + ' ' : '') + (sec.title || '') + '</span><span class="section-rule"></span></div>';
+      o += '<div class="' + wrap + '"><div class="section-label"><span class="section-num">' + numStr + '</span><span class="section-title">' + (sec.icon ? escapeHtml(sec.icon) + ' ' : '') + escapeHtml(sec.title || '') + '</span><span class="section-rule"></span></div>';
       (sec.blocks || []).forEach(function(b) { o += renderBlock(b, color, colorDark); });
       o += '</div>';
     });
@@ -508,7 +535,7 @@ function buildDashboardHTML(r, color, colorDark, colorDeepest, title, accessPass
     var insNum = String(slot + (t.showSections ? sections.length : 0) + 1).padStart(2, '0');
     o += '<div class="dash-full"><div class="section-label"><span class="section-num">' + insNum + '</span><span class="section-title">Key insights</span><span class="section-rule"></span></div>';
     o += '<div class="insights">';
-    insights.forEach(function(i) { o += '<div class="insight">' + i + '</div>'; });
+    insights.forEach(function(i) { o += '<div class="insight">' + escapeHtml(i) + '</div>'; });
     o += '</div></div>';
   }
   o += '</div>';
@@ -516,7 +543,7 @@ function buildDashboardHTML(r, color, colorDark, colorDeepest, title, accessPass
   if (t.showFooter) {
     o += '<div class="footer"><div class="footer-brand">' + caloLogoSvg('#A8ABA1', 18);
     o += '<div><div class="footer-brand-text">Calo Reports Platform</div>';
-    o += '<div class="footer-brand-sub">Dashboard view' + (reportDate ? ' · ' + reportDate : '') + '</div></div></div>';
+    o += '<div class="footer-brand-sub">Dashboard view' + (reportDate ? ' · ' + escapeHtml(reportDate) : '') + '</div></div></div>';
     o += '<div class="footer-tag">Confidential · Internal use only</div></div>';
   }
 
@@ -562,18 +589,18 @@ function buildMinimalHTML(r, color, colorDark, colorDeepest, title, accessPasswo
   var o = '<div id="pw-content" class="ctr"><div class="paper">';
   if (t.showHero) {
     o += '<div class="min-top">' + caloLogoSvg(colorDark, 18);
-    o += '<div class="min-stamp">' + (prevMonth || reportDate || 'Internal') + '</div></div>';
-    o += '<div class="eyebrow">' + (reportSubtitle || 'Report') + '</div>';
-    o += '<h1 class="min-title">' + reportTitle + '</h1>';
+    o += '<div class="min-stamp">' + escapeHtml(prevMonth || reportDate || 'Internal') + '</div></div>';
+    o += '<div class="eyebrow">' + escapeHtml(reportSubtitle || 'Report') + '</div>';
+    o += '<h1 class="min-title">' + escapeHtml(reportTitle) + '</h1>';
   }
   if (t.showKpis && kpis && kpis.length) {
     var ks = kpis.slice(0, 4);
     o += '<div class="kpi-rule">';
     ks.forEach(function(k) {
-      o += '<div><div class="kpi-label">' + (k.label || '') + '</div>';
+      o += '<div><div class="kpi-label">' + escapeHtml(k.label || '') + '</div>';
       if (k.value) {
-        o += '<div class="kpi-value num">' + k.value;
-        if (k.unit) o += '<span class="kpi-unit">' + k.unit + '</span>';
+        o += '<div class="kpi-value num">' + escapeHtml(k.value);
+        if (k.unit) o += '<span class="kpi-unit">' + escapeHtml(k.unit) + '</span>';
         o += '</div>';
       }
       o += '</div>';
@@ -582,12 +609,12 @@ function buildMinimalHTML(r, color, colorDark, colorDeepest, title, accessPasswo
   }
   if (t.showSummary && summary) {
     o += '<div class="min-sec"><div class="min-sec-label">§ 01 — Summary</div>';
-    o += '<p class="min-body">' + summary + '</p></div>';
+    o += '<p class="min-body">' + escapeHtml(summary) + '</p></div>';
   }
   if (t.showSections) {
     sections.forEach(function(sec, idx) {
       var num = String(idx + (t.showSummary && summary ? 2 : 1)).padStart(2, '0');
-      o += '<div class="min-sec"><div class="min-sec-label">§ ' + num + ' — ' + (sec.title || 'Section') + '</div>';
+      o += '<div class="min-sec"><div class="min-sec-label">§ ' + num + ' — ' + escapeHtml(sec.title || 'Section') + '</div>';
       (sec.blocks || []).forEach(function(b) { o += renderBlock(b, color, colorDark); });
       o += '</div>';
     });
@@ -597,11 +624,11 @@ function buildMinimalHTML(r, color, colorDark, colorDeepest, title, accessPasswo
     var insNum = String(secCount + (t.showSummary && summary ? 2 : 1)).padStart(2, '0');
     o += '<div class="min-sec"><div class="min-sec-label">§ ' + insNum + ' — Takeaways</div>';
     o += '<ul style="margin:0;padding-left:20px;font-size:15px;line-height:1.65;color:#2F332C;font-weight:300">';
-    insights.forEach(function(i) { o += '<li style="margin-bottom:8px">' + i + '</li>'; });
+    insights.forEach(function(i) { o += '<li style="margin-bottom:8px">' + escapeHtml(i) + '</li>'; });
     o += '</ul></div>';
   }
   if (t.showFooter) {
-    o += '<div class="min-foot"><span>Calo Reports · Prepared' + (reportDate ? ' ' + reportDate : '') + '</span>';
+    o += '<div class="min-foot"><span>Calo Reports · Prepared' + (reportDate ? ' ' + escapeHtml(reportDate) : '') + '</span>';
     o += '<span>Confidential · Internal use only</span></div>';
   }
   o += '</div></div>';
@@ -655,10 +682,10 @@ function buildBriefHTML(r, color, colorDark, colorDeepest, title, accessPassword
   // Hero
   if (t.showHero) {
     o += '<div class="brief-hero"><div class="brief-hero-top">' + caloLogoSvg('#ffffff', 22);
-    o += '<span style="font-size:11px;font-weight:900;letter-spacing:.16em;opacity:.8;text-transform:uppercase">Brief · ' + (reportDate || 'Internal') + '</span></div>';
-    if (reportSubtitle || prevMonth) o += '<div class="brief-hero-sub">' + (reportSubtitle || prevMonth) + '</div>';
-    o += '<h1>' + reportTitle + '</h1>';
-    if (companyName) o += '<div style="font-size:13px;font-weight:700;opacity:.8;margin-top:10px">' + companyName + '</div>';
+    o += '<span style="font-size:11px;font-weight:900;letter-spacing:.16em;opacity:.8;text-transform:uppercase">Brief · ' + escapeHtml(reportDate || 'Internal') + '</span></div>';
+    if (reportSubtitle || prevMonth) o += '<div class="brief-hero-sub">' + escapeHtml(reportSubtitle || prevMonth) + '</div>';
+    o += '<h1>' + escapeHtml(reportTitle) + '</h1>';
+    if (companyName) o += '<div style="font-size:13px;font-weight:700;opacity:.8;margin-top:10px">' + escapeHtml(companyName) + '</div>';
     o += '</div>';
   }
   // KPIs (up to 4)
@@ -666,13 +693,13 @@ function buildBriefHTML(r, color, colorDark, colorDeepest, title, accessPassword
     var ks = kpis.slice(0, 4);
     o += '<div class="brief-kpis">';
     ks.forEach(function(k) {
-      o += '<div><div class="brief-kpi-label">' + (k.label || '') + '</div>';
+      o += '<div><div class="brief-kpi-label">' + escapeHtml(k.label || '') + '</div>';
       if (k.value) {
-        o += '<div class="brief-kpi-value num">' + k.value;
-        if (k.unit) o += '<span class="brief-kpi-unit">' + k.unit + '</span>';
+        o += '<div class="brief-kpi-value num">' + escapeHtml(k.value);
+        if (k.unit) o += '<span class="brief-kpi-unit">' + escapeHtml(k.unit) + '</span>';
         o += '</div>';
       }
-      if (k.change) o += '<div class="brief-kpi-change">' + k.change + '</div>';
+      if (k.change) o += '<div class="brief-kpi-change">' + escapeHtml(k.change) + '</div>';
       o += '</div>';
     });
     o += '</div>';
@@ -680,18 +707,18 @@ function buildBriefHTML(r, color, colorDark, colorDeepest, title, accessPassword
   // Summary
   if (t.showSummary && summary) {
     o += '<div class="brief-summary"><div class="lbl">Executive summary</div>';
-    o += '<p>' + summary + '</p></div>';
+    o += '<p>' + escapeHtml(summary) + '</p></div>';
   }
   // Insights (numbered)
   if (t.showInsights && insights && insights.length) {
     o += '<div class="brief-insights"><div class="lbl">Key takeaways</div><ol>';
-    insights.slice(0, 5).forEach(function(i) { o += '<li>' + i + '</li>'; });
+    insights.slice(0, 5).forEach(function(i) { o += '<li>' + escapeHtml(i) + '</li>'; });
     o += '</ol></div>';
   }
   // Footer
   if (t.showFooter) {
     o += '<div class="brief-foot"><div class="brief-foot-brand">' + caloLogoSvg('#A8ABA1', 16);
-    o += '<span>Calo Reports · One-page brief' + (reportDate ? ' · ' + reportDate : '') + '</span></div>';
+    o += '<span>Calo Reports · One-page brief' + (reportDate ? ' · ' + escapeHtml(reportDate) : '') + '</span></div>';
     o += '<div class="brief-foot-tag">Confidential · Internal use only</div></div>';
   }
   o += '</div></div>';

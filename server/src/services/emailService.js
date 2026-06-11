@@ -4,6 +4,14 @@ const RESEND_API_KEY = process.env.RESEND_API_KEY;
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'm.alghoniman@calo.app';
 const APP_URL = process.env.RENDER_EXTERNAL_URL || process.env.FRONTEND_URL || 'https://calo-reports-hub.onrender.com';
 
+// Escape public-form input before interpolating into the admin notification
+// email — a registrant could otherwise inject markup/links the admin acts on.
+function escapeHtml(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+  });
+}
+
 export async function notifyAdminNewRegistration({ name, email, department }) {
   if (!RESEND_API_KEY) {
     console.warn('[Email] RESEND_API_KEY not set — skipping notification');
@@ -18,9 +26,9 @@ export async function notifyAdminNewRegistration({ name, email, department }) {
       <div style="border:1px solid #e5e7eb;border-top:none;padding:24px;border-radius:0 0 12px 12px;">
         <p style="margin:0 0 16px;color:#374151;">A new user has registered and is waiting for your approval:</p>
         <table style="width:100%;border-collapse:collapse;">
-          <tr><td style="padding:8px 0;color:#6b7280;width:100px;">Name</td><td style="padding:8px 0;font-weight:600;color:#111827;">${name}</td></tr>
-          <tr><td style="padding:8px 0;color:#6b7280;">Email</td><td style="padding:8px 0;font-weight:600;color:#111827;">${email}</td></tr>
-          <tr><td style="padding:8px 0;color:#6b7280;">Department</td><td style="padding:8px 0;font-weight:600;color:#111827;">${department || 'Not specified'}</td></tr>
+          <tr><td style="padding:8px 0;color:#6b7280;width:100px;">Name</td><td style="padding:8px 0;font-weight:600;color:#111827;">${escapeHtml(name)}</td></tr>
+          <tr><td style="padding:8px 0;color:#6b7280;">Email</td><td style="padding:8px 0;font-weight:600;color:#111827;">${escapeHtml(email)}</td></tr>
+          <tr><td style="padding:8px 0;color:#6b7280;">Department</td><td style="padding:8px 0;font-weight:600;color:#111827;">${escapeHtml(department || 'Not specified')}</td></tr>
         </table>
         <div style="margin-top:24px;text-align:center;">
           <a href="${APP_URL}/settings" style="display:inline-block;background:#02B376;color:#fff;padding:12px 32px;border-radius:8px;text-decoration:none;font-weight:600;font-size:14px;">Review & Approve</a>

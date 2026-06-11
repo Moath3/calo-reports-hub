@@ -28,3 +28,9 @@ services:
         value: gemini
       - key: NETLIFY_ACCESS_TOKEN
         sync: false
+      # Bootstrap admin — set in the dashboard, never committed. Leave unset to
+      # skip seeding (existing admin row is untouched).
+      - key: SEED_ADMIN_EMAIL
+        sync: false
+      - key: SEED_ADMIN_PASSWORD
+        sync: false

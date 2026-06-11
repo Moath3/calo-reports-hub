@@ -367,17 +367,35 @@ export function seedDefaultTemplates() {
 
 export async function seedAdminUser() {
   const db = getDb();
-  const existing = db.prepare("SELECT id FROM users WHERE email = ?").get('m.alghoniman@calo.app');
-  if (existing) {
-    // Ensure always admin and active
-    db.prepare("UPDATE users SET role = 'admin', is_active = 1 WHERE email = ?").run('m.alghoniman@calo.app');
+  // Credentials come from env — never hardcoded (the old literal password is
+  // permanently exposed in git history). Unset = skip entirely, so a normal
+  // boot leaves the existing admin row in the live DB exactly as it is.
+  const email = process.env.SEED_ADMIN_EMAIL;
+  const password = process.env.SEED_ADMIN_PASSWORD;
+  if (!email || !password) {
+    console.log('  Admin seed skipped (SEED_ADMIN_EMAIL / SEED_ADMIN_PASSWORD not set)');
     return;
   }
+
+  const existing = db.prepare("SELECT id FROM users WHERE email = ?").get(email);
+  if (existing) {
+    // Do NOT silently overwrite an admin's chosen password or flags on every
+    // boot. Only rotate when the operator explicitly opts in (one-time) — e.g.
+    // to retire the leaked password. Unset SEED_ADMIN_FORCE_PASSWORD afterward.
+    if (process.env.SEED_ADMIN_FORCE_PASSWORD === 'true') {
+      const salt = await bcrypt.genSalt(12);
+      const hash = await bcrypt.hash(password, salt);
+      db.prepare("UPDATE users SET password_hash = ?, role = 'admin', is_active = 1 WHERE email = ?").run(hash, email);
+      console.log('  Admin password rotated from SEED_ADMIN_PASSWORD:', email);
+    }
+    return;
+  }
+
   const salt = await bcrypt.genSalt(12);
-  const hash = await bcrypt.hash('Calo@Rpt2026!Xk9', salt);
+  const hash = await bcrypt.hash(password, salt);
   const id = uuid();
   db.prepare(
     "INSERT INTO users (id, email, name, password_hash, role, department, is_active) VALUES (?,?,?,?,?,?,1)"
-  ).run(id, 'm.alghoniman@calo.app', 'Moath Alghoniman', hash, 'admin', 'Management');
-  console.log('  Admin user seeded: m.alghoniman@calo.app');
+  ).run(id, email, process.env.SEED_ADMIN_NAME || 'Admin', hash, 'admin', 'Management');
+  console.log('  Admin user seeded from env:', email);
 }

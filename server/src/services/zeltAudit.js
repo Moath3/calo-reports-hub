@@ -9,35 +9,72 @@ import { fetchAllUsersForAudit, clearCaches } from './zeltCompute.js';
 
 // ---- Guide-derived approved lists (data-hygiene-guide.md §3, §7, §11) ----
 
-// Legal entities per guide (CR names). Anything else is wrong-named.
+// Approved PAYROLL entities — Zelt's userContract.entity is the payroll/org
+// entity (Basecamp X, Mountain Peak X, the KSA HR cos, Retail, UK). The legal
+// CR name lives in a separate custom "Legal Entity" field (not scored here).
+// This is the decided data model: Entity = payroll, Legal Entity = CR.
 const APPROVED_ENTITIES = new Set([
-  // Bahrain
-  'Falcon', 'Calo Online Services', 'Vresto', 'Vresto 2', 'Vresto 3',
-  // KSA
-  'Calo Regional HQ', 'Luqmat', 'Fakeehi', 'Nasco', 'Jussur', 'Fakihi',
-  // UAE
-  'Gaya M', 'Gaya Catering 2', 'Gaya',
-  // Kuwait
-  'Calo Catering Services',
-  // Qatar
-  'Calo catering and hospitality services',
-  // Oman
-  'Al Ghad Al Mumtaz Company SPC',
+  // Basecamp (head-office payroll)
+  'Basecamp Bahrain', 'Basecamp Dubai', 'Basecamp KSA', 'Basecamp Kuwait', 'Basecamp Qatar', 'Basecamp Remote',
+  // Mountain Peak (local production payroll)
+  'Mountain Peak Bahrain', 'Mountain Peak Dubai', 'Mountain Peak KSA', 'Mountain Peak Kuwait',
+  'Mountain Peak Qatar', 'Mountain Peak Oman', 'Mountain Peak UK',
+  // KSA HR / outsourcing entities
+  'Fakihi', 'Ewan', 'Nasco', 'Jussur',
+  // Retail
+  'Retail Bahrain', 'Retail Dubai',
   // UK
-  'Calo Catering Services LTD', 'Calo Catering Services Ltd',
-  // Remote
-  'Remotepass',
+  'Calo Catering Services Ltd (UK - Head Office)', 'Calo Catering Services Ltd (UK - Production)',
 ].map(s => s.toLowerCase()));
 
-// Departments per guide §7 (18 approved).
+// Approved departments — the canonical data-hygiene set (P&C Bible), including
+// the production departments (Kitchen, Dispatch, Logistics, etc.) that the old
+// office-only list wrongly flagged. Job-family/business-line are separate tags;
+// a dept being "Production" doesn't make it unapproved.
 const APPROVED_DEPARTMENTS = new Set([
-  'P&C', 'CX', 'Legal', 'Strategic Finance', 'Finance Operations',
-  'Marketing & Growth', 'AI', 'Product', 'Engineering', 'Food',
-  'CEO Office', 'Quality', 'Expansion', 'Supply Chain', 'Retail',
-  'Calo Market', 'Calo 2.0', 'Calo Black',
-  // Common variants seen in zelt data
-  'People and Culture', 'Customer Experience', 'Marketing',
+  // Production
+  'Kitchen', 'Dispatch', 'Logistics', 'Maintenance', 'Stewarding', 'Quality', 'Supply Chain', 'Central Operations',
+  // Retail
+  'Retail', 'Retail Non Production',
+  // Commercial / growth
+  'Marketing & Growth', 'Marketing', 'Growth', 'Business Development', 'Expansion', 'Calo Market', 'Calo Black', 'Calo Athletes', 'Calo 2.0',
+  // Tech / product
+  'Product', 'Engineering', 'AI', 'Automation',
+  // Corporate / support
+  'People and Culture', 'Customer Experience', 'Finance Operations', 'Strategic Finance',
+  'CEO Office', 'Leadership', 'Legal', 'Food Team', 'Operations', 'PRO',
+  // Common short variants seen in zelt data
+  'P&C', 'CX', 'Food',
 ].map(s => s.toLowerCase()));
+
+// Entity → {org, country, expected currency}. Drives org/country classification
+// and the currency check from the ACTUAL payroll-entity names (regex fallback
+// below handles anything not listed). Fakihi/Ewan/Nasco/Jussur are KSA HR
+// entities (expected SAR — they're currently mistagged GBP, which the currency
+// check now correctly flags).
+const ENTITY_MAP = {
+  'basecamp bahrain':   { org: 'Basecamp', country: 'Bahrain', currency: 'BHD' },
+  'basecamp dubai':     { org: 'Basecamp', country: 'UAE',     currency: 'AED' },
+  'basecamp ksa':       { org: 'Basecamp', country: 'KSA',     currency: 'SAR' },
+  'basecamp kuwait':    { org: 'Basecamp', country: 'Kuwait',  currency: 'KWD' },
+  'basecamp qatar':     { org: 'Basecamp', country: 'Qatar',   currency: 'QAR' },
+  'basecamp remote':    { org: 'Basecamp', country: 'Remote',  currency: null  },
+  'mountain peak bahrain': { org: 'MP BH', country: 'Bahrain', currency: 'BHD' },
+  'mountain peak dubai':   { org: 'MP UAE', country: 'UAE',    currency: 'AED' },
+  'mountain peak ksa':     { org: 'MP KSA', country: 'KSA',    currency: 'SAR' },
+  'mountain peak kuwait':  { org: 'MP KW', country: 'Kuwait',  currency: 'KWD' },
+  'mountain peak qatar':   { org: 'MP QA', country: 'Qatar',   currency: 'QAR' },
+  'mountain peak oman':    { org: 'MP OM', country: 'Oman',    currency: 'OMR' },
+  'mountain peak uk':      { org: 'MP UK', country: 'UK',      currency: 'GBP' },
+  'fakihi': { org: 'MP KSA', country: 'KSA', currency: 'SAR' },
+  'ewan':   { org: 'MP KSA', country: 'KSA', currency: 'SAR' },
+  'nasco':  { org: 'MP KSA', country: 'KSA', currency: 'SAR' },
+  'jussur': { org: 'MP KSA', country: 'KSA', currency: 'SAR' },
+  'retail bahrain': { org: 'MP BH', country: 'Bahrain', currency: 'BHD' },
+  'retail dubai':   { org: 'MP UAE', country: 'UAE',    currency: 'AED' },
+  'calo catering services ltd (uk - head office)': { org: 'MP UK', country: 'UK', currency: 'GBP' },
+  'calo catering services ltd (uk - production)':  { org: 'MP UK', country: 'UK', currency: 'GBP' },
+};
 
 // Country codes by entity prefix — used to flag currency mismatches AND
 // derive country from entity/site (zelt has no standalone country field).
@@ -67,6 +104,8 @@ const ORG_PATTERNS = [
 
 function classifyCountry(u) {
   const ent = readEntity(u) || '';
+  const mapped = ENTITY_MAP[ent.toLowerCase()];
+  if (mapped) return mapped.country;
   const site = u?.role?.site?.name || '';
   for (const { country, pattern } of COUNTRY_PATTERNS) {
     if (pattern.test(ent) || pattern.test(site)) return country;
@@ -76,6 +115,8 @@ function classifyCountry(u) {
 
 function classifyOrg(u) {
   const ent = readEntity(u) || '';
+  const mapped = ENTITY_MAP[ent.toLowerCase()];
+  if (mapped) return mapped.org;
   for (const { org, pattern } of ORG_PATTERNS) {
     if (pattern.test(ent)) return org;
   }
@@ -269,6 +310,8 @@ export async function runAudit({ forceRefresh = false } = {}) {
   }
   out.checks.currencyMismatch = [...entitiesSeen.values()]
     .filter(e => {
+      const mapped = ENTITY_MAP[e.legalName.toLowerCase()];
+      if (mapped) return mapped.currency && e.currency && e.currency !== mapped.currency;
       for (const c of COUNTRY_PATTERNS) {
         if (c.pattern.test(e.legalName) && c.expectedCurrency) {
           return e.currency && e.currency !== c.expectedCurrency;
@@ -276,11 +319,17 @@ export async function runAudit({ forceRefresh = false } = {}) {
       }
       return false;
     })
-    .map(e => ({
-      legalName: e.legalName,
-      currentCurrency: e.currency,
-      suggestion: `Currency on ${e.legalName} doesn't match the country prefix. Check with Finance.`,
-    }));
+    .map(e => {
+      const mapped = ENTITY_MAP[e.legalName.toLowerCase()];
+      const expected = mapped ? mapped.currency : null;
+      return {
+        legalName: e.legalName,
+        currentCurrency: e.currency,
+        suggestion: expected
+          ? `${e.legalName} is a ${mapped.country} entity — expected ${expected}, found ${e.currency}. Fix with Finance.`
+          : `Currency on ${e.legalName} doesn't match the country prefix. Check with Finance.`,
+      };
+    });
 
   // 14b. Brand-division names that should be replaced by legal CR names.
   // The guide expects entity = legal CR (Falcon, Vresto, Luqmat, etc.) NOT

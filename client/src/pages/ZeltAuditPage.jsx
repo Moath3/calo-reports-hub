@@ -23,7 +23,10 @@ const SEVERITY = {
   // KSA Luqmat + 3rd Party masterfiles are uploaded.
   activeButTerminated: 'info',
   duplicateEmployeeIds: 'high',
-  brandDivisionAsEntity: 'high',
+  // Entity = payroll entity (Basecamp/MP) is the DECIDED model; the legal CR
+  // lives in a separate field. Brand-division names are expected here, so this
+  // is now informational, not a penalized violation.
+  brandDivisionAsEntity: 'info',
   legacySiteAssigned: 'high',
   currencyMismatch: 'high',
   placeholderEmails: 'high',

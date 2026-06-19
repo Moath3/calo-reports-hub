@@ -5,6 +5,9 @@ import CaloLogo from './CaloLogo';
 import { Icon } from './ui';
 import { Menu, X, LogOut, Settings as SettingsIcon } from 'lucide-react';
 
+const SIDEBAR_WIDTH = 240;
+const SIDEBAR_WIDTH_COLLAPSED = 76;
+
 const mainNav = [
   { to: '/',              icon: 'Home',            label: 'Home' },
   { to: '/new',           icon: 'Plus',            label: 'New Report', accent: true },
@@ -20,18 +23,18 @@ const footerNav = [
 ];
 
 function NavItem({ to, icon, label, active, accent, collapsed, onClick }) {
-  const [h, setH] = useState(false);
+  const [hovered, setHovered] = useState(false);
   let bg = 'transparent', fg = 'var(--ink-700)';
   if (accent && !active) { bg = 'var(--calo-500)'; fg = '#fff'; }
   if (active) { bg = 'var(--ink-900)'; fg = '#fff'; }
-  else if (h && !accent) { bg = 'var(--ink-100)'; fg = 'var(--ink-900)'; }
+  else if (hovered && !accent) { bg = 'var(--ink-100)'; fg = 'var(--ink-900)'; }
   return (
     <NavLink
       to={to}
       end={to === '/'}
       onClick={onClick}
-      onMouseEnter={() => setH(true)}
-      onMouseLeave={() => setH(false)}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
       style={{
         display: 'flex', alignItems: 'center', gap: 12,
         padding: '10px 12px', borderRadius: 'var(--r-md)',
@@ -68,7 +71,7 @@ export default function Layout() {
     navigate('/login');
   };
 
-  const w = collapsed ? 76 : 240;
+  const sidebarWidth = collapsed ? SIDEBAR_WIDTH_COLLAPSED : SIDEBAR_WIDTH;
   const isActive = (to) => to === '/' ? location.pathname === '/' : location.pathname.startsWith(to);
 
   return (
@@ -97,7 +100,7 @@ export default function Layout() {
       <aside
         className={sideOpen ? 'sidebar-open' : ''}
         style={{
-          width: w,
+          width: sidebarWidth,
           flexShrink: 0,
           background: '#fff',
           borderRight: '1px solid var(--ink-200)',
@@ -115,7 +118,7 @@ export default function Layout() {
               left: 0 !important;
               bottom: 0 !important;
               transform: translateX(-100%);
-              width: 240px !important;
+              width: ${SIDEBAR_WIDTH}px !important;
               z-index: 40 !important;
             }
             aside.sidebar-open { transform: translateX(0); }

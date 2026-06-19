@@ -1,13 +1,18 @@
 import jwt from 'jsonwebtoken';
 import { getDb } from '../db/database.js';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-change-in-production';
+export const BCRYPT_COST = 12;
+export const DEV_JWT_SECRET = 'dev-secret-change-in-production';
+export const TOKEN_TTL = '7d';
+const BEARER_PREFIX = 'Bearer ';
+
+const JWT_SECRET = process.env.JWT_SECRET || DEV_JWT_SECRET;
 
 export function generateToken(user) {
   return jwt.sign(
     { id: user.id, email: user.email, role: user.role },
     JWT_SECRET,
-    { expiresIn: '7d' }
+    { expiresIn: TOKEN_TTL }
   );
 }
 
@@ -17,11 +22,11 @@ export function verifyToken(token) {
 
 export function requireAuth(req, res, next) {
   const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+  if (!authHeader || !authHeader.startsWith(BEARER_PREFIX)) {
     return res.status(401).json({ error: 'Authentication required' });
   }
 
-  const token = authHeader.slice(7);
+  const token = authHeader.slice(BEARER_PREFIX.length);
   try {
     const decoded = verifyToken(token);
     const db = getDb();

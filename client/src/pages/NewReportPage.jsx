@@ -3,7 +3,11 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useDropzone } from 'react-dropzone';
 import api from '../utils/api';
 import toast from 'react-hot-toast';
-import { Card, Pill, Btn, Icon, LabeledInput } from '../components/ui';
+import { Card, Pill, Btn, Icon, LabeledInput, CALO_BRAND_COLOR } from '../components/ui';
+
+const MAX_UPLOAD_MB = 25;
+const PROMPT_HISTORY_KEY = 'calo-chat-prompts';
+const DEFAULT_SHARE_KEY = 'calo-default-share';
 
 function StylePick({ label, sub, selected, onClick }) {
   const [hover, setHover] = useState(false);
@@ -135,21 +139,21 @@ export default function NewReportPage() {
   // LocalStorage-backed personal prompt history
   const [promptHistory, setPromptHistory] = useState(() => {
     try {
-      const raw = localStorage.getItem('calo-chat-prompts');
+      const raw = localStorage.getItem(PROMPT_HISTORY_KEY);
       return raw ? JSON.parse(raw) : [];
     } catch { return []; }
   });
 
   // LocalStorage-backed default share preference
   const [shareVisibility, setShareVisibility] = useState(() => {
-    try { return localStorage.getItem('calo-default-share') || 'private'; } catch { return 'private'; }
+    try { return localStorage.getItem(DEFAULT_SHARE_KEY) || 'private'; } catch { return 'private'; }
   });
   const [shareUsers, setShareUsers] = useState([]);           // all users (for Specific picker)
   const [shareSelected, setShareSelected] = useState([]);     // user IDs picked
   const [shareSearch, setShareSearch] = useState('');
 
   useEffect(() => {
-    try { localStorage.setItem('calo-default-share', shareVisibility); } catch {}
+    try { localStorage.setItem(DEFAULT_SHARE_KEY, shareVisibility); } catch {}
   }, [shareVisibility]);
 
   useEffect(() => {
@@ -168,22 +172,20 @@ export default function NewReportPage() {
   // Auto-scroll chat when messages grow
   useEffect(() => { chatMsgsEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [chatMessages, planning]);
 
+  // Persist a prompt-history array to localStorage and return it unchanged
+  const persistPromptHistory = useCallback((next) => {
+    try { localStorage.setItem(PROMPT_HISTORY_KEY, JSON.stringify(next)); } catch {}
+    return next;
+  }, []);
+
   // Remember a successful prompt in localStorage (last 10, deduplicated)
   const rememberPrompt = useCallback((text) => {
     const entry = { text, ts: Date.now() };
-    setPromptHistory(prev => {
-      const next = [entry, ...prev.filter(p => p.text !== text)].slice(0, 10);
-      try { localStorage.setItem('calo-chat-prompts', JSON.stringify(next)); } catch {}
-      return next;
-    });
-  }, []);
+    setPromptHistory(prev => persistPromptHistory([entry, ...prev.filter(p => p.text !== text)].slice(0, 10)));
+  }, [persistPromptHistory]);
 
   const removePromptFromHistory = (text) => {
-    setPromptHistory(prev => {
-      const next = prev.filter(p => p.text !== text);
-      try { localStorage.setItem('calo-chat-prompts', JSON.stringify(next)); } catch {}
-      return next;
-    });
+    setPromptHistory(prev => persistPromptHistory(prev.filter(p => p.text !== text)));
   };
 
   const toggleShareUser = (uid) => {
@@ -233,7 +235,7 @@ export default function NewReportPage() {
       'text/html': ['.html', '.htm'],
     },
     maxFiles: 1,
-    maxSize: 25 * 1024 * 1024,
+    maxSize: MAX_UPLOAD_MB * 1024 * 1024,
     disabled: loading,
   });
 
@@ -271,7 +273,7 @@ export default function NewReportPage() {
       const createRes = await api.createReport({
         title: title.trim(),
         description: description.trim(),
-        reportData: { generalInfo: { title: title.trim(), brandColor: '#02B376', variant }, sections: [] },
+        reportData: { generalInfo: { title: title.trim(), brandColor: CALO_BRAND_COLOR, variant }, sections: [] },
         sourceFilename: file?.name || '',
         sourceData: dataSummary,
         tags: [],
@@ -289,7 +291,7 @@ export default function NewReportPage() {
     try {
       const createRes = await api.createReport({
         title: t.trim(),
-        reportData: { generalInfo: { title: t.trim(), brandColor: '#02B376' }, sections: [] },
+        reportData: { generalInfo: { title: t.trim(), brandColor: CALO_BRAND_COLOR }, sections: [] },
         tags: [],
       });
       toast.success('Blank report created');
@@ -757,7 +759,7 @@ export default function NewReportPage() {
                 </div>
                 <div style={{ textAlign: 'left', flex: 1 }}>
                   <div style={{ fontSize: 15, fontWeight: 900, letterSpacing: '-0.01em' }}>Upload Excel, CSV, JSON or text</div>
-                  <div style={{ fontSize: 12, color: 'var(--ink-500)', marginTop: 2 }}>Drop here or click — up to 25 MB, data stays private</div>
+                  <div style={{ fontSize: 12, color: 'var(--ink-500)', marginTop: 2 }}>Drop here or click — up to {MAX_UPLOAD_MB} MB, data stays private</div>
                 </div>
                 <Icon name="ArrowRight" size={18} color="var(--ink-400)" />
               </>

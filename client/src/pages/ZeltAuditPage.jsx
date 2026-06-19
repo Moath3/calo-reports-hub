@@ -574,21 +574,6 @@ function buildHtmlReport(report) {
 </body></html>`;
 }
 
-function Comparison({ label, actual, expected, hint }) {
-  const ratio = actual / expected;
-  const bad = ratio > 2 || ratio < 0.5;
-  return (
-    <div>
-      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--ink-500)', letterSpacing: '.04em', textTransform: 'uppercase' }}>{label}</div>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginTop: 2 }}>
-        <span style={{ fontSize: 22, fontWeight: 900, color: bad ? '#c0392b' : 'var(--ink-900)', letterSpacing: '-0.02em' }}>{actual}</span>
-        <span style={{ fontSize: 13, color: 'var(--ink-500)' }}>vs <b>{expected}</b> expected</span>
-      </div>
-      <div style={{ fontSize: 11, color: 'var(--ink-500)', marginTop: 2 }}>{hint}</div>
-    </div>
-  );
-}
-
 function StatCard({ label, value, muted }) {
   return (
     <div style={{ background: '#fff', border: '1px solid var(--ink-200)', borderRadius: 'var(--r-md)', padding: 16 }}>
@@ -613,6 +598,4 @@ function sevColor(s) {
 
 const panel = { background: '#fff', borderRadius: 'var(--r-md)', border: '1px solid var(--ink-200)', padding: 24, boxShadow: 'var(--shadow-sm)' };
 const errBanner = { background: '#FDECEC', border: '1px solid #f5c6c6', color: '#9f2f2f', padding: 12, borderRadius: 8 };
-const input = { padding: '9px 12px', borderRadius: 'var(--r-sm)', border: '1px solid var(--ink-200)', fontSize: 14 };
-const primaryBtn = (disabled) => ({ background: disabled ? 'var(--ink-200)' : 'var(--calo-500)', color: '#fff', border: 'none', borderRadius: 'var(--r-sm)', padding: '9px 18px', fontSize: 13, fontWeight: 800, cursor: disabled ? 'wait' : 'pointer' });
 const ghostBtn = { display: 'inline-flex', alignItems: 'center', gap: 6, background: '#fff', color: 'var(--ink-700)', border: '1px solid var(--ink-200)', borderRadius: 'var(--r-sm)', padding: '8px 14px', fontSize: 13, fontWeight: 700, cursor: 'pointer' };

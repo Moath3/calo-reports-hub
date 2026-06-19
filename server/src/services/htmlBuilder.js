@@ -45,6 +45,12 @@ function caloLogoSvg(fill, height) {
 const DENSITY_SCALE = { compact: 0.82, comfortable: 1.0, spacious: 1.18 };
 const WIDTH_PX      = { narrow: 760, medium: 960, wide: 1120 };
 
+// Layout limits (counts, not pixels) — keep the data-flow logic readable.
+const DASHBOARD_KPI_SLOTS = 6;                  // dashboard KPI strip: slice + pad to this many
+const COMPACT_KPI_LIMIT = 4;                    // minimal/brief KPI rows shown
+const DENSE_NOTES_MAX_ITEMS = 4;                // densify: cap notes-block items at this many
+const DASHBOARD_FULL_WIDTH_BLOCK_THRESHOLD = 2; // dashboard section spans full width above this block count
+
 function resolveTweaks(options, variant) {
   // Variant-aware defaults — these match the user's intent:
   //   editorial = generous, all content
@@ -81,10 +87,10 @@ function filterSectionsDense(sections) {
     return blocks.some(b => dataBlocks.has(b.type));
   }).map(s => ({
     ...s,
-    // Also trim notes blocks that have more than 4 items to 4
+    // Also trim notes blocks that have more than DENSE_NOTES_MAX_ITEMS items
     blocks: (s.blocks || []).map(b => {
-      if (b.type === 'notes' && (b.items || []).length > 4) {
-        return { ...b, items: b.items.slice(0, 4) };
+      if (b.type === 'notes' && (b.items || []).length > DENSE_NOTES_MAX_ITEMS) {
+        return { ...b, items: b.items.slice(0, DENSE_NOTES_MAX_ITEMS) };
       }
       return b;
     }),
@@ -213,6 +219,9 @@ function renderBlock(b, color, colorDark) {
 // PBKDF2 work factor — shared by the server (pbkdf2Sync) and the in-page
 // WebCrypto decrypt below. SHA-256 into a 256-bit AES-GCM key.
 const PW_PBKDF2_ITERS = 150000;
+const SALT_BYTES = 16;    // PBKDF2 salt length
+const GCM_IV_BYTES = 12;  // AES-GCM nonce length
+const AES_KEY_BYTES = 32; // 256-bit AES key
 
 // Body of the chart-init + section-collapse script, WITHOUT a DOMContentLoaded
 // wrapper. For open reports htmlShell wraps it in DOMContentLoaded; for
@@ -230,9 +239,9 @@ function chartCollapseBody(hasCollapse) {
 // the content can't be read from source or revealed by toggling CSS. Returns
 // base64 parts the in-page WebCrypto routine reassembles.
 function encryptBody(html, accessPassword) {
-  const salt = randomBytes(16);
-  const iv = randomBytes(12);
-  const key = pbkdf2Sync(accessPassword, salt, PW_PBKDF2_ITERS, 32, 'sha256');
+  const salt = randomBytes(SALT_BYTES);
+  const iv = randomBytes(GCM_IV_BYTES);
+  const key = pbkdf2Sync(accessPassword, salt, PW_PBKDF2_ITERS, AES_KEY_BYTES, 'sha256');
   const cipher = createCipheriv('aes-256-gcm', key, iv);
   const ct = Buffer.concat([cipher.update(html, 'utf8'), cipher.final()]);
   const tag = cipher.getAuthTag();
@@ -541,8 +550,8 @@ function buildDashboardHTML(r, color, colorDark, colorDeepest, title, accessPass
   }
 
   if (t.showKpis && kpis && kpis.length) {
-    var ks = kpis.slice(0, 6);
-    while (ks.length < 6) ks.push({ label: '', value: '' });
+    var ks = kpis.slice(0, DASHBOARD_KPI_SLOTS);
+    while (ks.length < DASHBOARD_KPI_SLOTS) ks.push({ label: '', value: '' });
     o += '<div class="kpi-strip">';
     ks.forEach(function(k) {
       o += '<div class="kpi-col">';
@@ -567,7 +576,7 @@ function buildDashboardHTML(r, color, colorDark, colorDeepest, title, accessPass
   }
   if (t.showSections) {
     sections.forEach(function(sec, idx) {
-      var isFull = (sec.blocks || []).some(function(b) { return b.type === 'table' || b.type === 'chart' || b.type === 'comparison'; }) || (sec.blocks || []).length > 2;
+      var isFull = (sec.blocks || []).some(function(b) { return b.type === 'table' || b.type === 'chart' || b.type === 'comparison'; }) || (sec.blocks || []).length > DASHBOARD_FULL_WIDTH_BLOCK_THRESHOLD;
       var wrap = isFull ? 'dash-full' : '';
       var numStr = String(slot + idx + 1).padStart(2, '0');
       o += '<div class="' + wrap + '"><div class="section-label"><span class="section-num">' + numStr + '</span><span class="section-title">' + (sec.icon ? escapeHtml(sec.icon) + ' ' : '') + escapeHtml(sec.title || '') + '</span><span class="section-rule"></span></div>';
@@ -638,7 +647,7 @@ function buildMinimalHTML(r, color, colorDark, colorDeepest, title, accessPasswo
     o += '<h1 class="min-title">' + escapeHtml(reportTitle) + '</h1>';
   }
   if (t.showKpis && kpis && kpis.length) {
-    var ks = kpis.slice(0, 4);
+    var ks = kpis.slice(0, COMPACT_KPI_LIMIT);
     o += '<div class="kpi-rule">';
     ks.forEach(function(k) {
       o += '<div><div class="kpi-label">' + escapeHtml(k.label || '') + '</div>';
@@ -734,7 +743,7 @@ function buildBriefHTML(r, color, colorDark, colorDeepest, title, accessPassword
   }
   // KPIs (up to 4)
   if (t.showKpis && kpis && kpis.length) {
-    var ks = kpis.slice(0, 4);
+    var ks = kpis.slice(0, COMPACT_KPI_LIMIT);
     o += '<div class="brief-kpis">';
     ks.forEach(function(k) {
       o += '<div><div class="brief-kpi-label">' + escapeHtml(k.label || '') + '</div>';

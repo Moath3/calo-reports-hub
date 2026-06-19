@@ -12,6 +12,12 @@ const DB_BASENAME = 'calo-reports.db';
 const DB_PATH = join(DATA_DIR, DB_BASENAME);
 const BACKUP_KEEP = 7; // dated daily backups retained on the /data disk
 
+const SAVE_DEBOUNCE_MS = 1000;
+const PERIODIC_SAVE_MS = 30000;
+const DAILY_MS = 24 * 60 * 60 * 1000;
+
+const normalizeParams = (params) => params.length === 1 && Array.isArray(params[0]) ? params[0] : params;
+
 let wrapper = null;
 let saveTimer = null;
 let lastSaveAt = null;
@@ -28,7 +34,7 @@ class DbWrapper {
     return {
       get(...params) {
         const stmt = db.prepare(sql);
-        stmt.bind(params.length === 1 && Array.isArray(params[0]) ? params[0] : params);
+        stmt.bind(normalizeParams(params));
         const result = stmt.step() ? stmt.getAsObject() : undefined;
         stmt.free();
         return result;
@@ -36,7 +42,7 @@ class DbWrapper {
       all(...params) {
         const results = [];
         const stmt = db.prepare(sql);
-        stmt.bind(params.length === 1 && Array.isArray(params[0]) ? params[0] : params);
+        stmt.bind(normalizeParams(params));
         while (stmt.step()) {
           results.push(stmt.getAsObject());
         }
@@ -44,7 +50,7 @@ class DbWrapper {
         return results;
       },
       run(...params) {
-        db.run(sql, params.length === 1 && Array.isArray(params[0]) ? params[0] : params);
+        db.run(sql, normalizeParams(params));
         scheduleSave();
         return { changes: db.getRowsModified() };
       }
@@ -73,7 +79,7 @@ function scheduleSave() {
   saveTimer = setTimeout(() => {
     saveToDisk();
     saveTimer = null;
-  }, 1000);
+  }, SAVE_DEBOUNCE_MS);
 }
 
 function saveToDisk() {
@@ -199,10 +205,10 @@ export async function initDb() {
 
   // Take a dated backup at boot and daily thereafter (kept on the /data disk).
   backupDb();
-  setInterval(backupDb, 24 * 60 * 60 * 1000);
+  setInterval(backupDb, DAILY_MS);
 
   // Save periodically and on exit
-  setInterval(saveToDisk, 30000);
+  setInterval(saveToDisk, PERIODIC_SAVE_MS);
   process.on('exit', saveToDisk);
   process.on('SIGINT', () => { saveToDisk(); process.exit(); });
   process.on('SIGTERM', () => { saveToDisk(); process.exit(); });

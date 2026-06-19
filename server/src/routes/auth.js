@@ -2,37 +2,35 @@ import { Router } from 'express';
 import bcrypt from 'bcryptjs';
 import { v4 as uuid } from 'uuid';
 import { getDb } from '../db/database.js';
-import { generateToken, requireAuth, requireAdmin } from '../middleware/auth.js';
+import { generateToken, requireAuth, requireAdmin, BCRYPT_COST } from '../middleware/auth.js';
 import { notifyAdminNewRegistration } from '../services/emailService.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { badRequest, unauthorized, forbidden, notFound, conflict } from '../utils/httpError.js';
 
 const router = Router();
 
+const MIN_PASSWORD_LENGTH = 8;
+
 // POST /api/auth/register
 router.post('/register', asyncHandler(async (req, res) => {
   const { email, password, name, department, companyCode } = req.body;
 
-  // Validate company code
   const validCode = process.env.COMPANY_REG_CODE;
   if (!validCode || companyCode !== validCode) {
     throw forbidden('Invalid company registration code. Contact your administrator.');
   }
 
-  // Validate fields
   if (!email || !password || !name) throw badRequest('Email, password, and name are required');
-  if (password.length < 8) throw badRequest('Password must be at least 8 characters');
+  if (password.length < MIN_PASSWORD_LENGTH) throw badRequest(`Password must be at least ${MIN_PASSWORD_LENGTH} characters`);
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   if (!emailRegex.test(email)) throw badRequest('Invalid email format');
 
   const db = getDb();
 
-  // Check if email exists
   const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(email.toLowerCase());
   if (existing) throw conflict('Email already registered');
 
-  // Hash password
-  const salt = await bcrypt.genSalt(12);
+  const salt = await bcrypt.genSalt(BCRYPT_COST);
   const passwordHash = await bcrypt.hash(password, salt);
 
   // Determine role - first user is admin (and auto-approved)
@@ -133,14 +131,14 @@ router.put('/profile', requireAuth, asyncHandler(async (req, res) => {
 router.put('/password', requireAuth, asyncHandler(async (req, res) => {
   const { currentPassword, newPassword } = req.body;
   if (!currentPassword || !newPassword) throw badRequest('Current and new password required');
-  if (newPassword.length < 8) throw badRequest('New password must be at least 8 characters');
+  if (newPassword.length < MIN_PASSWORD_LENGTH) throw badRequest(`New password must be at least ${MIN_PASSWORD_LENGTH} characters`);
 
   const db = getDb();
   const user = db.prepare('SELECT password_hash FROM users WHERE id = ?').get(req.user.id);
   const valid = await bcrypt.compare(currentPassword, user.password_hash);
   if (!valid) throw unauthorized('Current password is incorrect');
 
-  const salt = await bcrypt.genSalt(12);
+  const salt = await bcrypt.genSalt(BCRYPT_COST);
   const hash = await bcrypt.hash(newPassword, salt);
   db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hash, req.user.id);
 

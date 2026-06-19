@@ -5,7 +5,7 @@ import api from '../utils/api';
 import toast from 'react-hot-toast';
 import {
   ArrowLeft, Globe, Edit, Loader2, Copy,
-  FileDown, ExternalLink, CheckCircle, CheckCircle2, Printer, ImageDown, Lock, Shield, Users, LockKeyhole, CircleDot, Share2, Search, UserCheck, X, Sliders
+  FileDown, ExternalLink, CheckCircle, CheckCircle2, Printer, ImageDown, Shield, Users, LockKeyhole, CircleDot, Share2, Search, UserCheck, X, Sliders
 } from 'lucide-react';
 
 // XSS guard for the client-side fallback renderer. Mirrors server htmlBuilder's
@@ -27,6 +27,17 @@ function safeUrl(u, opts) {
   return escapeHtml(raw);
 }
 
+const REPORT_BASE_WIDTH = 960;
+const EXPORT_SCALE = 2;
+const OBJECT_URL_REVOKE_MS = 5000;
+const TREND_COLORS = { up: '#16a34a', down: '#dc2626', stable: '#6b7280' };
+const BADGE_COLORS = {
+  green: { bg: '#E8F8F0', border: '#02B376', text: '#166534' },
+  amber: { bg: '#FEF3C7', border: '#F59E0B', text: '#92400E' },
+  red: { bg: '#FEE2E2', border: '#EF4444', text: '#991B1B' },
+  blue: { bg: '#DBEAFE', border: '#3B82F6', text: '#1E40AF' },
+};
+
 function renderReportHTML(data, { collapsible = false } = {}) {
   const gi = data?.generalInfo || {};
   const brand = gi.brandColor || '#02B376';
@@ -35,7 +46,7 @@ function renderReportHTML(data, { collapsible = false } = {}) {
 
   const kpiCards = (gi.kpiStrip || data?.kpis || []).map(k => {
     const trendIcon = k.trend === 'up' ? '&#9650;' : k.trend === 'down' ? '&#9660;' : '&#8226;';
-    const trendColor = k.trend === 'up' ? '#16a34a' : k.trend === 'down' ? '#dc2626' : '#6b7280';
+    const trendColor = TREND_COLORS[k.trend] || TREND_COLORS.stable;
     return `<div class="kpi-card">
       <div class="kpi-label">${escapeHtml(k.label || '')}</div>
       <div class="kpi-value">${escapeHtml(k.value || '')}</div>
@@ -47,8 +58,7 @@ function renderReportHTML(data, { collapsible = false } = {}) {
   const renderBlock = (b) => {
     switch (b.type) {
       case 'badge': {
-        const colors = { green: { bg: '#E8F8F0', border: '#02B376', text: '#166534' }, amber: { bg: '#FEF3C7', border: '#F59E0B', text: '#92400E' }, red: { bg: '#FEE2E2', border: '#EF4444', text: '#991B1B' }, blue: { bg: '#DBEAFE', border: '#3B82F6', text: '#1E40AF' } };
-        const c = colors[b.style] || colors.green;
+        const c = BADGE_COLORS[b.style] || BADGE_COLORS.green;
         return `<div style="background:${c.bg};border-left:4px solid ${c.border};border-radius:10px;padding:14px 18px;margin-bottom:14px">
           <div style="font-size:15px;font-weight:700;color:${c.text}">${escapeHtml(b.title || b.label || '')}</div>
           ${b.subtitle ? `<div style="font-size:13px;color:${c.text};opacity:.8;margin-top:2px">${escapeHtml(b.subtitle)}</div>` : ''}
@@ -65,7 +75,7 @@ function renderReportHTML(data, { collapsible = false } = {}) {
       case 'metrics':
         return `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(155px,1fr));gap:12px;margin-bottom:14px">
           ${(b.items || []).map(m => {
-            const tColor = m.trend === 'up' ? '#16a34a' : m.trend === 'down' ? '#dc2626' : '#6b7280';
+            const tColor = TREND_COLORS[m.trend] || TREND_COLORS.stable;
             return `<div style="background:white;border:1px solid #E2E8F0;border-radius:12px;padding:16px;box-shadow:0 1px 3px rgba(0,0,0,.04)">
             <div style="font-size:11px;color:#5F6B7A;text-transform:uppercase;letter-spacing:.3px">${escapeHtml(m.label || '')}</div>
             <div style="font-size:22px;font-weight:800;color:#1A1D23;margin-top:4px">${escapeHtml(m.value || '')}</div>
@@ -341,13 +351,13 @@ export default function ReportPreviewPage() {
       hiddenSections.forEach(s => s.classList.remove('hidden'));
 
       const canvas = await html2canvas(container, {
-        scale: 2,
+        scale: EXPORT_SCALE,
         useCORS: true,
         allowTaint: true,
         backgroundColor: '#F4F6F9',
         width: container.scrollWidth,
         height: container.scrollHeight,
-        windowWidth: 960,
+        windowWidth: REPORT_BASE_WIDTH,
         logging: false,
       });
 
@@ -384,7 +394,7 @@ export default function ReportPreviewPage() {
       const url = URL.createObjectURL(blob);
       const w = window.open(url, '_blank');
       if (w) {
-        w.onload = () => { w.print(); setTimeout(() => URL.revokeObjectURL(url), 5000); };
+        w.onload = () => { w.print(); setTimeout(() => URL.revokeObjectURL(url), OBJECT_URL_REVOKE_MS); };
       }
     }
   };
@@ -528,7 +538,7 @@ export default function ReportPreviewPage() {
 
   const widthOptions = [
     { id: 'narrow', label: 'Narrow', px: '760' },
-    { id: 'medium', label: 'Medium', px: '960' },
+    { id: 'medium', label: 'Medium', px: String(REPORT_BASE_WIDTH) },
     { id: 'wide',   label: 'Wide',   px: '1120' },
   ];
 

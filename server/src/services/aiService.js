@@ -1,10 +1,12 @@
 const TIMEOUT_MS = 120000; // 2 min — chat/refine
-const ANALYZE_TIMEOUT_MS = 480000; // 8 min — Opus 4.7 with adaptive thinking on full reports
+const ANALYZE_TIMEOUT_MS = 480000; // 8 min — adaptive thinking on full reports
+const CHAT_CONTEXT_CHAR_LIMIT = 8000; // current report state attached to the chat path
+const ANALYZE_MAX_TOKENS = 32000;     // output budget for the heavy /analyze path
+const DEFAULT_MAX_TOKENS = 16000;     // output budget for /chat and /refine
 
 // Model IDs. Override via env if needed.
-// Defaults bumped to the current generation: Sonnet 4.6 + Opus 4.7. Opus 4.7
-// is the strongest reasoning model and the right choice for the /analyze
-// path; Sonnet 4.6 stays as the fast iteration model for /chat and /refine.
+// Opus is the strongest reasoning model and the right choice for the /analyze
+// path; Sonnet stays as the fast iteration model for /chat and /refine.
 const SONNET_MODEL = process.env.CLAUDE_SONNET_MODEL || "claude-sonnet-4-6";
 const OPUS_MODEL   = process.env.CLAUDE_OPUS_MODEL   || "claude-opus-4-7";
 
@@ -67,7 +69,7 @@ async function callClaude({
   systemPrompt,
   dynamicContext,
   userMessage,
-  maxTokens = 16000,
+  maxTokens = DEFAULT_MAX_TOKENS,
   timeout = TIMEOUT_MS,
   thinking = false,
   effort = null,
@@ -158,7 +160,7 @@ export async function callAI(provider, systemPrompt, userMessage, options = {}) 
     systemPrompt,
     dynamicContext: options.dynamicContext,
     userMessage,
-    maxTokens: options.maxTokens || (isAnalyze ? 32000 : 16000),
+    maxTokens: options.maxTokens || (isAnalyze ? ANALYZE_MAX_TOKENS : DEFAULT_MAX_TOKENS),
     timeout: options.timeout || (isAnalyze ? ANALYZE_TIMEOUT_MS : TIMEOUT_MS),
     thinking: options.thinking ?? isAnalyze,
     effort: options.effort ?? (isAnalyze ? "high" : "low"),
@@ -273,7 +275,7 @@ RULES:
  */
 export function buildChatContextBlock(reportContext) {
   if (!reportContext) return "";
-  return "Current report data:\n" + JSON.stringify(reportContext, null, 2).slice(0, 8000);
+  return "Current report data:\n" + JSON.stringify(reportContext, null, 2).slice(0, CHAT_CONTEXT_CHAR_LIMIT);
 }
 
 export function buildRefineSystemPrompt(section, instruction) {

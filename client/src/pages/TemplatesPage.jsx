@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import api from '../utils/api';
 import toast from 'react-hot-toast';
 import { format } from 'date-fns';
-import { Card, Pill, Btn, Icon, PageHeader, LabeledInput } from '../components/ui';
+import { Card, Pill, Btn, Icon, PageHeader, LabeledInput, CALO_BRAND_COLOR } from '../components/ui';
 
 export default function TemplatesPage() {
   const navigate = useNavigate();
@@ -54,7 +54,7 @@ export default function TemplatesPage() {
         name: newForm.name.trim(),
         description: newForm.description.trim(),
         category: newForm.category,
-        templateData: { generalInfo: { title: '', brandColor: '#02B376' }, sections: [] },
+        templateData: { generalInfo: { title: '', brandColor: CALO_BRAND_COLOR }, sections: [] },
         isShared: true,
       });
       toast.success('Template created');

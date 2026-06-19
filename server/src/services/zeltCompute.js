@@ -21,6 +21,8 @@ import { getDb, persistNow } from '../db/database.js';
 const ENTITIES_TTL_MS = 6 * 60 * 60 * 1000; // 6h — entities barely change
 const BALANCES_TTL_MS = 5 * 60 * 1000;
 const PAGE_SIZE = 100;
+const MS_PER_DAY = 86_400_000; // 24h × 60m × 60s × 1000ms
+const ABSENCE_USER_CHUNK_SIZE = 50; // users per /partner/absences batch call
 
 const cache = {
   entities: { value: null, expiresAt: 0 },
@@ -50,8 +52,8 @@ export async function listEntities() {
       const items = readItems(data);
       if (items && items.length > 0) {
         const set = new Set();
-        for (const it of items) {
-          const e = it.legalName || it.name || it.entity?.legalName;
+        for (const entityItem of items) {
+          const e = entityItem.legalName || entityItem.name || entityItem.entity?.legalName;
           if (e && typeof e === 'string') set.add(e.trim());
         }
         if (set.size > 0) {
@@ -480,7 +482,7 @@ async function tryFetchBalances(userIds, asOfDate = null) {
           policyId: pid,
           Calendar: 'current',
           page,
-          pageSize: 100,
+          pageSize: PAGE_SIZE,
         };
         if (asOfDate) params.asOfDate = asOfDate;
         const data = await botGet('/apiv2/absences/company/balance', params);
@@ -501,7 +503,7 @@ async function tryFetchBalances(userIds, asOfDate = null) {
       const uid = item.userId;
       const policyData = item[pid];
       if (!policyData) continue;
-      const wd = policyData.currentAverageWorkDayLength || WORKDAY_MINUTES_FALLBACK;
+      const workdayMinutes = policyData.currentAverageWorkDayLength || WORKDAY_MINUTES_FALLBACK;
       // For PAST as-of-date queries: prefer Zelt's currentBalanceInDaysAsOfDate
       // — it's the exact balance on that day. Fall back to live formula otherwise.
       let accrued;
@@ -510,10 +512,10 @@ async function tryFetchBalances(userIds, asOfDate = null) {
       } else {
         // Live "Available now" = holidayAccruedToBookNow + upcoming bookings
         // (don't subtract future bookings — locked rule from leave-recon).
-        accrued = ((policyData.holidayAccruedToBookNow || 0) + (policyData.unitsTaken?.upcoming || 0)) / wd;
+        accrued = ((policyData.holidayAccruedToBookNow || 0) + (policyData.unitsTaken?.upcoming || 0)) / workdayMinutes;
       }
-      const upcoming = (policyData.unitsTaken?.upcoming || 0) / wd;
-      const total = (policyData.totalAllowanceForCycle || 0) / wd;
+      const upcoming = (policyData.unitsTaken?.upcoming || 0) / workdayMinutes;
+      const total = (policyData.totalAllowanceForCycle || 0) / workdayMinutes;
       const prev = balances.get(uid) || { available_now: 0, upcoming_booked: 0, total: 0, policyName: null };
       balances.set(uid, {
         available_now: prev.available_now + accrued,
@@ -584,9 +586,9 @@ async function fetchUserBasics(userIds) {
       const uid = queue.shift();
       try {
         const data = await zeltGet(resolvedBasicEndpoint(uid));
-        const eid = data.employeeId || data.basicInfo?.employeeId || data.userBasic?.employeeId;
-        if (eid) cached.set(uid, eid);
-      } catch { /* skip on error */ }
+        const employeeId = data.employeeId || data.basicInfo?.employeeId || data.userBasic?.employeeId;
+        if (employeeId) cached.set(uid, employeeId);
+      } catch { /* best-effort per-user lookup: one failure must not abort the batch */ }
     }
   }
   await Promise.all(Array.from({ length: CONCURRENCY }, worker));
@@ -604,7 +606,7 @@ async function fetchAbsencesByUser(userIds) {
   const year = new Date().getFullYear();
   // Run chunks IN PARALLEL — was serial, costing 5-10s per chunk × N chunks.
   const chunks = [];
-  for (let i = 0; i < userIds.length; i += 50) chunks.push(userIds.slice(i, i + 50));
+  for (let i = 0; i < userIds.length; i += ABSENCE_USER_CHUNK_SIZE) chunks.push(userIds.slice(i, i + ABSENCE_USER_CHUNK_SIZE));
 
   const results = await Promise.all(chunks.map(async (chunk) => {
     const all = [];
@@ -651,7 +653,7 @@ function absenceDays(ab) {
   if (!start || !end) return 0;
   // Calendar days inclusive — matches the locked rule from leave-recon
   const ms = end.getTime() - start.getTime();
-  return Math.max(0, Math.floor(ms / 86_400_000) + 1);
+  return Math.max(0, Math.floor(ms / MS_PER_DAY) + 1);
 }
 
 function isAnnualLeave(ab) {
@@ -692,9 +694,9 @@ function readName(u) {
   if (u?.displayName) return u.displayName;
   if (u?.fullName) return u.fullName;
   if (u?.name) return u.name;
-  const fn = u?.firstName || u?.basicInfo?.firstName || u?.userBasic?.firstName || '';
-  const ln = u?.lastName || u?.basicInfo?.lastName || u?.userBasic?.lastName || '';
-  const composed = `${fn} ${ln}`.trim();
+  const firstName = u?.firstName || u?.basicInfo?.firstName || u?.userBasic?.firstName || '';
+  const lastName = u?.lastName || u?.basicInfo?.lastName || u?.userBasic?.lastName || '';
+  const composed = `${firstName} ${lastName}`.trim();
   return composed || '(unnamed)';
 }
 

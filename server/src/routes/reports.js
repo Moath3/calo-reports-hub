@@ -8,6 +8,15 @@ import { badRequest, forbidden, notFound } from "../utils/httpError.js";
 
 const router = Router();
 
+// Multi-path read access: owner, admin, team-shared, or specific-shared.
+function canViewReport(report, user, sharedWith) {
+  const isOwner = report.user_id === user.id;
+  const isAdmin = user.role === "admin";
+  const isTeamShared = report.visibility === "shared";
+  const isSpecificShare = report.visibility === "specific" && sharedWith.includes(user.id);
+  return isOwner || isAdmin || isTeamShared || isSpecificShare;
+}
+
 // GET / - List reports (own or shared)
 router.get("/", requireAuth, asyncHandler((req, res) => {
   const db = getDb();
@@ -63,12 +72,9 @@ router.get("/shared/all", requireAuth, asyncHandler((req, res) => {
 // GET /:id — multi-path access (owner, admin, team-shared, specific-shared)
 router.get("/:id", requireAuth, loadReport({ full: true }), asyncHandler((req, res) => {
   const report = req.report;
-  const isOwner = report.user_id === req.user.id;
-  const isAdmin = req.user.role === "admin";
-  const isTeamShared = report.visibility === "shared";
   const sharedWith = JSON.parse(report.shared_with || "[]");
-  const isSpecificShare = report.visibility === "specific" && sharedWith.includes(req.user.id);
-  if (!isOwner && !isAdmin && !isTeamShared && !isSpecificShare) {
+  const isOwner = report.user_id === req.user.id;
+  if (!canViewReport(report, req.user, sharedWith)) {
     throw forbidden("Access denied");
   }
 

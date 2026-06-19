@@ -1,6 +1,15 @@
 import XLSX from 'xlsx';
 import { readFileSync } from 'fs';
 
+// Truncation / slicing limits (chars unless noted) for parsed-file payloads.
+const MAX_HTML_CHARS = 100000;    // raw HTML kept on parse
+const MAX_TEXT_CHARS = 50000;     // plain text / extracted HTML text kept on parse
+const JSON_PREVIEW_CHARS = 5000;  // pretty-printed JSON-object preview
+const SUMMARY_HTML_CHARS = 15000; // HTML content kept in the AI data summary
+const SUMMARY_TEXT_CHARS = 10000; // text content kept in the AI data summary
+const SAMPLE_VALUE_CAP = 10;      // distinct sample values kept per text column
+const STAT_DECIMALS = 2;          // decimal places for avg/sum column stats
+
 /**
  * Parse uploaded files into structured data
  * Supports: Excel (.xlsx, .xls), CSV, JSON, plain text
@@ -53,8 +62,8 @@ function parseExcel(filePath) {
           type: 'numeric',
           min: Math.min(...values),
           max: Math.max(...values),
-          avg: +(values.reduce((a, b) => a + b, 0) / values.length).toFixed(2),
-          sum: +values.reduce((a, b) => a + b, 0).toFixed(2),
+          avg: +(values.reduce((a, b) => a + b, 0) / values.length).toFixed(STAT_DECIMALS),
+          sum: +values.reduce((a, b) => a + b, 0).toFixed(STAT_DECIMALS),
           count: values.length
         };
       } else {
@@ -62,7 +71,7 @@ function parseExcel(filePath) {
         colStats[header] = {
           type: 'text',
           uniqueValues: unique.length,
-          sampleValues: unique.slice(0, 10)
+          sampleValues: unique.slice(0, SAMPLE_VALUE_CAP)
         };
       }
     }
@@ -95,8 +104,8 @@ function parseCSV(filePath) {
         type: 'numeric',
         min: Math.min(...values),
         max: Math.max(...values),
-        avg: +(values.reduce((a, b) => a + b, 0) / values.length).toFixed(2),
-        sum: +values.reduce((a, b) => a + b, 0).toFixed(2),
+        avg: +(values.reduce((a, b) => a + b, 0) / values.length).toFixed(STAT_DECIMALS),
+        sum: +values.reduce((a, b) => a + b, 0).toFixed(STAT_DECIMALS),
         count: values.length
       };
     } else {
@@ -104,7 +113,7 @@ function parseCSV(filePath) {
       colStats[header] = {
         type: 'text',
         uniqueValues: unique.length,
-        sampleValues: unique.slice(0, 10)
+        sampleValues: unique.slice(0, SAMPLE_VALUE_CAP)
       };
     }
   }
@@ -138,7 +147,7 @@ function parseJSON(filePath) {
     type: 'json-object',
     data,
     keys: Object.keys(data),
-    preview: JSON.stringify(data, null, 2).slice(0, 5000)
+    preview: JSON.stringify(data, null, 2).slice(0, JSON_PREVIEW_CHARS)
   };
 }
 
@@ -164,8 +173,8 @@ function parseHTML(filePath) {
 
   return {
     type: 'html',
-    content: content.slice(0, 100000),
-    textContent: textContent.slice(0, 50000),
+    content: content.slice(0, MAX_HTML_CHARS),
+    textContent: textContent.slice(0, MAX_TEXT_CHARS),
     title,
     length: content.length,
     lineCount: content.split('\n').length
@@ -176,7 +185,7 @@ function parseText(filePath) {
   const content = readFileSync(filePath, 'utf-8');
   return {
     type: 'text',
-    content: content.slice(0, 50000),
+    content: content.slice(0, MAX_TEXT_CHARS),
     length: content.length,
     lineCount: content.split('\n').length
   };
@@ -223,11 +232,11 @@ export function createDataSummary(parsedData, maxRows = 50) {
   } else if (parsedData.type === 'html') {
     summary.overview = { title: parsedData.title, length: parsedData.length, lineCount: parsedData.lineCount };
     summary.data = {
-      htmlContent: parsedData.content?.slice(0, 15000),
-      textContent: parsedData.textContent?.slice(0, 10000)
+      htmlContent: parsedData.content?.slice(0, SUMMARY_HTML_CHARS),
+      textContent: parsedData.textContent?.slice(0, SUMMARY_TEXT_CHARS)
     };
   } else {
-    summary.data = { content: parsedData.content?.slice(0, 10000) };
+    summary.data = { content: parsedData.content?.slice(0, SUMMARY_TEXT_CHARS) };
   }
 
   return summary;

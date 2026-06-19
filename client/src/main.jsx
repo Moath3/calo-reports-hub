@@ -4,6 +4,7 @@ import { BrowserRouter } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 import { AuthProvider } from './contexts/AuthContext';
 import App from './App';
+import { CALO_BRAND_COLOR } from './components/ui';
 import './index.css';
 
 ReactDOM.createRoot(document.getElementById('root')).render(
@@ -16,7 +17,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(
           toastOptions={{
             duration: 4000,
             style: { borderRadius: '10px', background: '#1f2937', color: '#fff', fontSize: '14px' },
-            success: { iconTheme: { primary: '#02B376', secondary: '#fff' } },
+            success: { iconTheme: { primary: CALO_BRAND_COLOR, secondary: '#fff' } },
             error: { iconTheme: { primary: '#ef4444', secondary: '#fff' }, duration: 5000 },
           }}
         />

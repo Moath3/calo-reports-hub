@@ -1,4 +1,6 @@
-export default function CaloLogo({ size = 28, color = '#02B376', className = '', style = {} }) {
+import { CALO_BRAND_COLOR } from './ui';
+
+export default function CaloLogo({ size = 28, color = CALO_BRAND_COLOR, className = '', style = {} }) {
   const h = typeof size === 'number' ? size : 28;
   const w = h * (746 / 320);
   return (

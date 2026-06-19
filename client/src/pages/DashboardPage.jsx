@@ -86,12 +86,12 @@ export default function DashboardPage() {
   const recent = stats?.recentReports || [];
 
   const kpiCards = [
-    { l: 'In progress', v: String(drafts),                 t: drafts > 0 ? `${drafts} pending` : 'All clear', to: '/reports?status=draft' },
-    { l: 'All reports', v: String(tot),                    t: tot > 0 ? 'Your workspace' : 'Start here',       to: '/reports' },
-    { l: 'Published',   v: String(pub),                    t: pub > 0 ? 'Live' : '—',                          to: '/reports?status=published' },
-    { l: 'Templates',   v: String(tmpl),                   t: 'Reusable',                                      to: '/templates' },
-    { l: 'AI calls',    v: String(aiTot),                  t: aiTot > 0 ? 'This workspace' : '—' },
-    { l: 'Users',       v: String(stats?.activeUsers ?? 1), t: user?.role === 'admin' ? 'Active' : 'You' },
+    { label: 'In progress', value: String(drafts),                 trend: drafts > 0 ? `${drafts} pending` : 'All clear', to: '/reports?status=draft' },
+    { label: 'All reports', value: String(tot),                    trend: tot > 0 ? 'Your workspace' : 'Start here',       to: '/reports' },
+    { label: 'Published',   value: String(pub),                    trend: pub > 0 ? 'Live' : '—',                          to: '/reports?status=published' },
+    { label: 'Templates',   value: String(tmpl),                   trend: 'Reusable',                                      to: '/templates' },
+    { label: 'AI calls',    value: String(aiTot),                  trend: aiTot > 0 ? 'This workspace' : '—' },
+    { label: 'Users',       value: String(stats?.activeUsers ?? 1), trend: user?.role === 'admin' ? 'Active' : 'You' },
   ];
 
   return (
@@ -187,7 +187,7 @@ export default function DashboardPage() {
         style={{ display: 'grid', gridTemplateColumns: 'repeat(6, minmax(0, 1fr))', gap: 12, marginBottom: 24 }}
       >
         {kpiCards.map((k, i) => (
-          <MiniStatCard key={i} label={k.l} value={k.v} trend={k.t} onClick={k.to ? () => navigate(k.to) : undefined} />
+          <MiniStatCard key={i} label={k.label} value={k.value} trend={k.trend} onClick={k.to ? () => navigate(k.to) : undefined} />
         ))}
       </div>
 

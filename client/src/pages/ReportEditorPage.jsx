@@ -9,6 +9,12 @@ import {
   Link2, Upload, ArrowUp, ArrowDown
 } from 'lucide-react';
 
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+const AUTOSAVE_DEBOUNCE_MS = 2000;
+const SAVED_BADGE_MS = 2000;
+const CHAT_HISTORY_LIMIT = 6;
+const BULK_HISTORY_LIMIT = 4;
+
 const BLOCK_TYPES = [
   { type: 'badge', label: 'Badge Header', icon: Type },
   { type: 'notes', label: 'Notes / Text', icon: MessageSquare },
@@ -344,7 +350,7 @@ function BlockEditor({ block, onChange, onRemove, onMoveUp, onMoveDown, isFirst,
                   onChange={e => {
                     const file = e.target.files?.[0];
                     if (!file) return;
-                    if (file.size > 5 * 1024 * 1024) { toast.error('Image must be under 5MB'); return; }
+                    if (file.size > MAX_IMAGE_BYTES) { toast.error(`Image must be under ${MAX_IMAGE_BYTES / 1024 / 1024}MB`); return; }
                     const reader = new FileReader();
                     reader.onload = () => set('url', reader.result);
                     reader.readAsDataURL(file);
@@ -458,11 +464,11 @@ export default function ReportEditorPage() {
         await api.updateReport(id, { title: report.title, description: report.description, reportData: report.report_data });
         lastSavedRef.current = currentData;
         setAutoSaveStatus('saved');
-        setTimeout(() => setAutoSaveStatus(prev => prev === 'saved' ? '' : prev), 2000);
+        setTimeout(() => setAutoSaveStatus(prev => prev === 'saved' ? '' : prev), SAVED_BADGE_MS);
       } catch {
         setAutoSaveStatus('');
       }
-    }, 2000);
+    }, AUTOSAVE_DEBOUNCE_MS);
 
     return () => { if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current); };
   }, [report?.title, report?.description, report?.report_data, id, loading]);
@@ -574,7 +580,7 @@ export default function ReportEditorPage() {
     setAiChat(prev => [...prev, { role: 'user', content: msg }]);
     setAiLoading(true);
     try {
-      const res = await api.chatAI(msg, reportData, aiProvider, aiChat.slice(-6));
+      const res = await api.chatAI(msg, reportData, aiProvider, aiChat.slice(-CHAT_HISTORY_LIMIT));
       handleAIResponse(res);
     } catch (err) {
       setAiChat(prev => [...prev, { role: 'assistant', content: 'Error: ' + (err.message || 'AI request failed') }]);
@@ -584,7 +590,7 @@ export default function ReportEditorPage() {
   const sendQuickAction = (text) => {
     setAiChat(prev => [...prev, { role: 'user', content: text }]);
     setAiLoading(true);
-    api.chatAI(text, reportData, aiProvider, aiChat.slice(-6))
+    api.chatAI(text, reportData, aiProvider, aiChat.slice(-CHAT_HISTORY_LIMIT))
       .then(res => handleAIResponse(res))
       .catch(err => setAiChat(prev => [...prev, { role: 'assistant', content: 'Error: ' + err.message }]))
       .finally(() => setAiLoading(false));
@@ -600,7 +606,7 @@ export default function ReportEditorPage() {
       const summary = uploadRes.parsedData || uploadRes.rawData || uploadRes.summary;
       const dataStr = typeof summary === 'string' ? summary : JSON.stringify(summary, null, 2);
       const msg = `I've uploaded a file called "${file.name}". Here is the parsed data:\n\n${dataStr.slice(0, 8000)}\n\nPlease analyze this data and fill the report sections with relevant content.`;
-      const res = await api.chatAI(msg, reportData, aiProvider, aiChat.slice(-4));
+      const res = await api.chatAI(msg, reportData, aiProvider, aiChat.slice(-BULK_HISTORY_LIMIT));
       handleAIResponse(res);
     } catch (err) {
       setAiChat(prev => [...prev, { role: 'assistant', content: 'Error uploading file: ' + (err.message || 'Failed') }]);
@@ -619,7 +625,7 @@ export default function ReportEditorPage() {
     setAiLoading(true);
     try {
       const msg = `Here is raw data to incorporate into the report:\n\n${text.slice(0, 10000)}\n\nAnalyze this and update the report sections with this data. Fill in real values.`;
-      const res = await api.chatAI(msg, reportData, aiProvider, aiChat.slice(-4));
+      const res = await api.chatAI(msg, reportData, aiProvider, aiChat.slice(-BULK_HISTORY_LIMIT));
       handleAIResponse(res);
     } catch (err) {
       setAiChat(prev => [...prev, { role: 'assistant', content: 'Error: ' + (err.message || 'AI request failed') }]);

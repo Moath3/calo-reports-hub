@@ -2,6 +2,9 @@
 import React, { useState } from 'react';
 import * as L from 'lucide-react';
 
+// Calo brand green — single source of truth for JS string usage
+export const CALO_BRAND_COLOR = '#02B376';
+
 // Icon — resolves lucide-react names safely
 export function Icon({ name, size = 16, color = 'currentColor', stroke = 2, className = '', style = {} }) {
   const C = L[name] || L.Circle;
@@ -75,22 +78,22 @@ export function Btn({
 
 // Card — paper + shadow, optional hover
 export function Card({ children, padding = 20, style = {}, hover = false, onClick, className = '' }) {
-  const [h, setH] = useState(false);
+  const [hovered, setHovered] = useState(false);
   return (
     <div
       onClick={onClick}
-      onMouseEnter={() => setH(true)}
-      onMouseLeave={() => setH(false)}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
       className={className}
       style={{
         background: '#fff',
         borderRadius: 'var(--r-lg)',
         border: '1px solid var(--ink-200)',
         padding,
-        boxShadow: hover && h ? 'var(--shadow-lg)' : 'var(--shadow-sm)',
+        boxShadow: hover && hovered ? 'var(--shadow-lg)' : 'var(--shadow-sm)',
         transition: 'all .2s ease',
         cursor: onClick ? 'pointer' : 'default',
-        transform: hover && h ? 'translateY(-2px)' : 'none',
+        transform: hover && hovered ? 'translateY(-2px)' : 'none',
         ...style,
       }}
     >

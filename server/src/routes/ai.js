@@ -11,13 +11,17 @@ import {
 
 const router = Router();
 
+const DEFAULT_PROVIDER_LABEL = 'claude-auto';
+const CHAT_HISTORY_TURNS = 6;
+const PLAN_HISTORY_TURNS = 8;
+
 function logUsage(userId, provider, result, requestType, duration) {
   try {
     const db = getDb();
     db.prepare("INSERT INTO ai_usage (user_id, provider, tokens_in, tokens_out, request_type, duration_ms) VALUES (?,?,?,?,?,?)")
       .run(
         userId,
-        provider || "claude-auto",
+        provider || DEFAULT_PROVIDER_LABEL,
         result?.tokensIn || 0,
         result?.tokensOut || 0,
         requestType,
@@ -60,7 +64,7 @@ router.post("/analyze", requireAuth, asyncHandler(async (req, res) => {
   }
 
   logUsage(req.user.id, provider, result, "analyze", duration);
-  res.json({ report, reportData: report, provider: provider || "claude-auto", model: result.model, duration });
+  res.json({ report, reportData: report, provider: provider || DEFAULT_PROVIDER_LABEL, model: result.model, duration });
 }));
 
 // POST /chat — fast iteration: Sonnet by default
@@ -72,7 +76,7 @@ router.post("/chat", requireAuth, asyncHandler(async (req, res) => {
   const dynamicContext = buildChatContextBlock(reportContext);
   let userMessage = message;
   if (history && history.length > 0) {
-    const contextMsgs = history.slice(-6).map(m => m.role + ": " + m.content).join("\n");
+    const contextMsgs = history.slice(-CHAT_HISTORY_TURNS).map(m => m.role + ": " + m.content).join("\n");
     userMessage = "Previous conversation:\n" + contextMsgs + "\n\nUser: " + message;
   }
 
@@ -97,7 +101,7 @@ router.post("/chat", requireAuth, asyncHandler(async (req, res) => {
     response: responseMessage,
     message: responseMessage,
     updates,
-    provider: provider || "claude-auto",
+    provider: provider || DEFAULT_PROVIDER_LABEL,
     model: result.model,
   });
 }));
@@ -124,7 +128,7 @@ router.post("/refine", requireAuth, asyncHandler(async (req, res) => {
   }
 
   logUsage(req.user.id, provider, result, "refine", duration);
-  res.json({ updatedSection, section: updatedSection, provider: provider || "claude-auto", model: result.model });
+  res.json({ updatedSection, section: updatedSection, provider: provider || DEFAULT_PROVIDER_LABEL, model: result.model });
 }));
 
 // POST /plan — multi-turn clarification chat BEFORE generation
@@ -136,7 +140,7 @@ router.post("/plan", requireAuth, asyncHandler(async (req, res) => {
   }
 
   const systemPrompt = buildPlanSystemPrompt();
-  const convo = history.slice(-8).map(m => `${m.role === 'ai' ? 'Assistant' : 'User'}: ${m.content}`).join("\n\n");
+  const convo = history.slice(-PLAN_HISTORY_TURNS).map(m => `${m.role === 'ai' ? 'Assistant' : 'User'}: ${m.content}`).join("\n\n");
   const userMessage = "Conversation so far:\n\n" + convo + "\n\nReply with your JSON response.";
 
   const startTime = Date.now();

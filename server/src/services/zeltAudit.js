@@ -7,6 +7,12 @@
  */
 import { fetchAllUsersForAudit, clearCaches } from './zeltCompute.js';
 
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+const FUTURE_JOINER_DAYS = 90; // flag joiners whose start date is more than this far out
+const STALE_CREATED_DAYS = 90; // flag "Created" users this many days past their start date
+const STALE_CREATED_SAMPLE_CAP = 200; // there are hundreds — surface a sample
+const RARE_TITLE_SAMPLE_CAP = 100; // cap rare-title sample size
+
 // ---- Guide-derived approved lists (data-hygiene-guide.md §3, §7, §11) ----
 
 // Approved PAYROLL entities — Zelt's userContract.entity is the payroll/org
@@ -222,7 +228,7 @@ export async function runAudit({ forceRefresh = false } = {}) {
     .filter(u => {
       if (!u.startDate) return false;
       const sd = new Date(u.startDate);
-      return (sd - today) / (1000 * 60 * 60 * 24) > 90;
+      return (sd - today) / MS_PER_DAY > FUTURE_JOINER_DAYS;
     })
     .map(u => ({ userId: u.userId, employeeId: readEmployeeId(u), name: u.displayName, startDate: u.startDate }));
 
@@ -232,10 +238,10 @@ export async function runAudit({ forceRefresh = false } = {}) {
       if (u.accountStatus !== 'Created') return false;
       if (!u.startDate) return false;
       const sd = new Date(u.startDate);
-      return (today - sd) / (1000 * 60 * 60 * 24) > 90;
+      return (today - sd) / MS_PER_DAY > STALE_CREATED_DAYS;
     })
     .map(u => ({ userId: u.userId, employeeId: readEmployeeId(u), name: u.displayName, startDate: u.startDate }))
-    .slice(0, 200); // cap — there are hundreds, surface a sample
+    .slice(0, STALE_CREATED_SAMPLE_CAP); // cap — there are hundreds, surface a sample
 
   // 9. Test users on Active status
   out.checks.testUsers = users
@@ -357,7 +363,7 @@ export async function runAudit({ forceRefresh = false } = {}) {
       title,
       suggestion: `Only one employee has this title. Verify it's in the mastersheet or merge to canonical title.`,
     }))
-    .slice(0, 100);
+    .slice(0, RARE_TITLE_SAMPLE_CAP);
 
   // 16. Case/whitespace duplicate job titles ("LINE COOK" vs "Line Cook")
   const titleNormMap = new Map();

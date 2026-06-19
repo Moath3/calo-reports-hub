@@ -1,6 +1,7 @@
 import { v4 as uuid } from 'uuid';
 import bcrypt from 'bcryptjs';
 import { getDb } from './database.js';
+import { BCRYPT_COST } from '../middleware/auth.js';
 
 const HR_TEMPLATE = {
   generalInfo: {
@@ -383,7 +384,7 @@ export async function seedAdminUser() {
     // boot. Only rotate when the operator explicitly opts in (one-time) — e.g.
     // to retire the leaked password. Unset SEED_ADMIN_FORCE_PASSWORD afterward.
     if (process.env.SEED_ADMIN_FORCE_PASSWORD === 'true') {
-      const salt = await bcrypt.genSalt(12);
+      const salt = await bcrypt.genSalt(BCRYPT_COST);
       const hash = await bcrypt.hash(password, salt);
       db.prepare("UPDATE users SET password_hash = ?, role = 'admin', is_active = 1 WHERE email = ?").run(hash, email);
       console.log('  Admin password rotated from SEED_ADMIN_PASSWORD:', email);
@@ -391,7 +392,7 @@ export async function seedAdminUser() {
     return;
   }
 
-  const salt = await bcrypt.genSalt(12);
+  const salt = await bcrypt.genSalt(BCRYPT_COST);
   const hash = await bcrypt.hash(password, salt);
   const id = uuid();
   db.prepare(

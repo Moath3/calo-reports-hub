@@ -43,6 +43,8 @@ if (IS_PROD) {
   }
 }
 
+const HSTS_MAX_AGE_SECONDS = 31536000; // 1 year
+
 // Trust proxy (required for Render, Railway, Heroku etc. behind reverse proxy)
 app.set('trust proxy', 1);
 
@@ -62,7 +64,7 @@ app.use(helmet({
       upgradeInsecureRequests: []
     }
   },
-  hsts: { maxAge: 31536000, includeSubDomains: true },
+  hsts: { maxAge: HSTS_MAX_AGE_SECONDS, includeSubDomains: true },
   referrerPolicy: { policy: 'strict-origin-when-cross-origin' }
 }));
 
@@ -78,6 +80,11 @@ app.use(cors({
 
 // Rate limiting
 const MIN = 60 * 1000;
+const RATE_LIMIT_WINDOW_MS = 15 * MIN; // 15-minute window
+const GENERAL_MAX = 200;
+const AUTH_MAX = 20;
+const AI_MAX = 10;
+const EXPORT_MAX = 5;
 const makeLimiter = (windowMs, max, message) => rateLimit({
   windowMs,
   max,
@@ -86,10 +93,10 @@ const makeLimiter = (windowMs, max, message) => rateLimit({
   legacyHeaders: false
 });
 
-app.use('/api/',        makeLimiter(15 * MIN, 200, 'Too many requests, please try again later.'));
-app.use('/api/auth/',   makeLimiter(15 * MIN,  20, 'Too many login attempts, please try again later.'));
-app.use('/api/ai/',     makeLimiter(     MIN,  10, 'AI rate limit reached. Please wait a moment.'));
-app.use('/api/export/', makeLimiter(     MIN,   5, 'Export rate limit reached. Please wait a moment.'));
+app.use('/api/',        makeLimiter(RATE_LIMIT_WINDOW_MS, GENERAL_MAX, 'Too many requests, please try again later.'));
+app.use('/api/auth/',   makeLimiter(RATE_LIMIT_WINDOW_MS, AUTH_MAX, 'Too many login attempts, please try again later.'));
+app.use('/api/ai/',     makeLimiter(     MIN, AI_MAX, 'AI rate limit reached. Please wait a moment.'));
+app.use('/api/export/', makeLimiter(     MIN, EXPORT_MAX, 'Export rate limit reached. Please wait a moment.'));
 
 // Body parsing
 app.use(express.json({ limit: '50mb' }));
@@ -152,12 +159,13 @@ app.use((err, req, res, next) => {
 // Graceful shutdown — await any in-flight Zelt refresh first so a deploy
 // mid-refresh doesn't strand a rotated refresh token. 5s cap so we never
 // hang the process indefinitely on a stuck network call.
+const SHUTDOWN_DRAIN_MS = 5000;
 const shutdown = async (signal) => {
   console.log(`\n${signal} received, shutting down...`);
   try {
     await Promise.race([
       drainZeltRefresh(),
-      new Promise(r => setTimeout(r, 5000)),
+      new Promise(r => setTimeout(r, SHUTDOWN_DRAIN_MS)),
     ]);
   } catch (e) {
     console.warn('[shutdown] zelt drain error:', e.message);

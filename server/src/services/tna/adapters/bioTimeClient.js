@@ -51,3 +51,18 @@ export async function fetchAllPages(baseUrl, path, params, token, fetchFn = fetc
   }
   return out;
 }
+
+export async function fetchTransactions({ baseUrl }, { startTime, endTime, token }, fetchFn = fetch) {
+  const raw = await fetchAllPages(baseUrl, '/iclock/api/transactions/',
+    { start_time: startTime, end_time: endTime }, token, fetchFn);
+  return raw.map(mapTransaction).filter((t) => t.state !== null);
+}
+
+export async function fetchEmployees({ baseUrl }, token, fetchFn = fetch) {
+  const raw = await fetchAllPages(baseUrl, '/personnel/api/employees/', {}, token, fetchFn);
+  return raw.map((e) => ({
+    empCode: String(e.emp_code),
+    name: [e.first_name, e.last_name].filter(Boolean).join(' ').trim(),
+    entity: e.department?.dept_name || null,
+  }));
+}

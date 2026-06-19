@@ -25,3 +25,30 @@ export function pairPunches(punches) {
   if (openIn) incomplete = true;
   return { workedMinutes: Math.round(workedMinutes), incomplete };
 }
+
+// Classify one employee-day. schedule: { status:'work'|'off'|'leave', scheduledMinutes? }
+// The roster is the source of truth for off-days; work on a confirmed day off is
+// flagged for review and never counted as overtime.
+export function classifyDay({ workedMinutes, incomplete }, schedule, config) {
+  if (incomplete) {
+    return { type: 'incomplete', regular: 0, overtime: 0, flag: 'incomplete_punches' };
+  }
+  if (schedule.status === 'off' || schedule.status === 'leave') {
+    if (workedMinutes > 0) {
+      return {
+        type: 'review', regular: 0, overtime: 0,
+        flag: schedule.status === 'leave' ? 'leave_conflict' : 'worked_on_dayoff',
+      };
+    }
+    return { type: schedule.status, regular: 0, overtime: 0 };
+  }
+  // scheduled work day
+  if (workedMinutes === 0) {
+    return { type: 'absent', regular: 0, overtime: 0, flag: 'absent' };
+  }
+  const std = config.standardDailyMinutes;
+  if (workedMinutes > std) {
+    return { type: 'present', regular: std, overtime: workedMinutes - std };
+  }
+  return { type: 'present', regular: workedMinutes, overtime: 0, undertime: std - workedMinutes };
+}

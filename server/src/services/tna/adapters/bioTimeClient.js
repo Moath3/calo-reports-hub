@@ -19,3 +19,15 @@ export function mapTransaction(raw) {
     state: mapPunchState(raw.punch_state),
   };
 }
+
+export async function authenticate({ baseUrl, username, password }, fetchFn = fetch) {
+  const res = await fetchFn(`${baseUrl}/jwt-api-token-auth/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password }),
+  });
+  if (!res.ok) throw new Error(`BioTime auth failed: ${res.status} ${(await res.text()).slice(0, 200)}`);
+  const { token } = await res.json();
+  if (!token) throw new Error('BioTime auth returned no token');
+  return token;
+}

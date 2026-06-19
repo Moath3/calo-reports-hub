@@ -14,3 +14,26 @@ test('maps a raw BioTime transaction to the engine shape', () => {
   const t = mapTransaction({ emp_code: '101', punch_time: '2026-03-01 06:00:00', punch_state: '0' });
   assert.deepEqual(t, { empCode: '101', punchTime: '2026-03-01 06:00:00', state: 'in' });
 });
+
+import { authenticate } from './bioTimeClient.js';
+
+function fakeFetch(routes) {
+  return async (url, opts) => {
+    const r = routes.find(x => url.includes(x.match));
+    if (!r) throw new Error('no route for ' + url);
+    return { ok: r.status ? r.status < 400 : true, status: r.status || 200, json: async () => r.body, text: async () => JSON.stringify(r.body) };
+  };
+}
+
+test('authenticate posts creds and returns the token', async () => {
+  let sentBody = null;
+  const ff = async (url, opts) => { sentBody = JSON.parse(opts.body); return { ok: true, status: 200, json: async () => ({ token: 'abc.def.ghi' }) }; };
+  const token = await authenticate({ baseUrl: 'http://x', username: 'u', password: 'p' }, ff);
+  assert.equal(token, 'abc.def.ghi');
+  assert.deepEqual(sentBody, { username: 'u', password: 'p' });
+});
+
+test('authenticate throws on non-200', async () => {
+  const ff = async () => ({ ok: false, status: 401, json: async () => ({}), text: async () => 'bad' });
+  await assert.rejects(() => authenticate({ baseUrl: 'http://x', username: 'u', password: 'p' }, ff), /auth failed: 401/);
+});

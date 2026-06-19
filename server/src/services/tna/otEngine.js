@@ -52,3 +52,22 @@ export function classifyDay({ workedMinutes, incomplete }, schedule, config) {
   }
   return { type: 'present', regular: workedMinutes, overtime: 0, undertime: std - workedMinutes };
 }
+
+// Aggregate an employee's days into period totals + a per-day flag list.
+// days: [{ date, punches[], schedule }]
+export function computeEmployeePeriod(days, config) {
+  let regularMinutes = 0, overtimeMinutes = 0, undertimeMinutes = 0;
+  let absentDays = 0, incompleteDays = 0;
+  const flags = [];
+  for (const day of days) {
+    const paired = pairPunches(day.punches || []);
+    const c = classifyDay(paired, day.schedule, config);
+    regularMinutes += c.regular || 0;
+    overtimeMinutes += c.overtime || 0;
+    undertimeMinutes += c.undertime || 0;
+    if (c.type === 'absent') absentDays += 1;
+    if (c.type === 'incomplete') incompleteDays += 1;
+    if (c.flag) flags.push({ date: day.date, flag: c.flag });
+  }
+  return { regularMinutes, overtimeMinutes, undertimeMinutes, absentDays, incompleteDays, flags };
+}

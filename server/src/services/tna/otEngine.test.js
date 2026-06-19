@@ -77,3 +77,20 @@ test('flags incomplete on two ins in a row', () => {
   ]);
   assert.equal(r.incomplete, true);
 });
+
+import { computeEmployeePeriod } from './otEngine.js';
+
+test('aggregates a period into totals', () => {
+  const days = [
+    { date: '2026-03-01', punches: [
+      { punchTime: '2026-03-01 06:00:00', state: 'in' },
+      { punchTime: '2026-03-01 16:30:00', state: 'out' }], schedule: work },   // 630 -> 540 reg + 90 OT
+    { date: '2026-03-02', punches: [], schedule: work },                        // absent
+    { date: '2026-03-03', punches: [], schedule: { status: 'off' } },           // off
+  ];
+  const r = computeEmployeePeriod(days, CFG);
+  assert.equal(r.regularMinutes, 540);
+  assert.equal(r.overtimeMinutes, 90);
+  assert.equal(r.absentDays, 1);
+  assert.equal(r.flags.length, 1); // the absence
+});

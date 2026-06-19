@@ -66,3 +66,14 @@ export async function fetchEmployees({ baseUrl }, token, fetchFn = fetch) {
     entity: e.department?.dept_name || null,
   }));
 }
+
+// Authenticate once, then pull the punch window + employee list in the shape
+// runTnaPeriod() consumes ({ punches, bioEmployees }).
+export async function loadBioTimeSources(config, { startTime, endTime }, fetchFn = fetch) {
+  const token = await authenticate(config, fetchFn);
+  const [punches, bioEmployees] = await Promise.all([
+    fetchTransactions(config, { startTime, endTime, token }, fetchFn),
+    fetchEmployees(config, token, fetchFn),
+  ]);
+  return { punches, bioEmployees };
+}

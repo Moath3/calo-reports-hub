@@ -73,3 +73,20 @@ test('fetchEmployees maps to {empCode,name,entity}', async () => {
   const out = await fetchEmployees({ baseUrl: 'http://x' }, 't', ff);
   assert.deepEqual(out[0], { empCode: '101', name: 'Moath Alghoniman', entity: 'CALO BAHRAIN - Kitchen' });
 });
+
+import { loadBioTimeSources } from './bioTimeClient.js';
+
+test('loadBioTimeSources auths once then returns punches + employees', async () => {
+  const ff = async (url, opts) => {
+    if (url.includes('jwt-api-token-auth')) return { ok: true, status: 200, json: async () => ({ token: 't' }) };
+    if (url.includes('transactions')) return { ok: true, status: 200, json: async () => ({ next: null, data: [{ emp_code: '101', punch_time: '2026-03-01 06:00:00', punch_state: '0' }] }) };
+    if (url.includes('employees')) return { ok: true, status: 200, json: async () => ({ next: null, data: [{ emp_code: '101', first_name: 'Moath', last_name: 'A', department: { dept_name: 'CALO UAE' } }] }) };
+    throw new Error('unexpected ' + url);
+  };
+  const out = await loadBioTimeSources(
+    { baseUrl: 'http://x', username: 'u', password: 'p' },
+    { startTime: '2026-03-01 00:00:00', endTime: '2026-03-31 23:59:59' }, ff);
+  assert.equal(out.punches.length, 1);
+  assert.equal(out.bioEmployees.length, 1);
+  assert.equal(out.bioEmployees[0].entity, 'CALO UAE');
+});

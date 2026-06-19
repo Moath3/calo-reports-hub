@@ -31,3 +31,23 @@ export async function authenticate({ baseUrl, username, password }, fetchFn = fe
   if (!token) throw new Error('BioTime auth returned no token');
   return token;
 }
+
+const DEFAULT_PAGE_SIZE = 500;
+
+// Generic paged GET. Sends Authorization: JWT <token>; follows `next` (or stops
+// when a page returns no rows). Returns the concatenated `data` arrays.
+export async function fetchAllPages(baseUrl, path, params, token, fetchFn = fetch) {
+  const out = [];
+  let page = 1;
+  for (;;) {
+    const qs = new URLSearchParams({ ...params, page: String(page), page_size: String(params.page_size || DEFAULT_PAGE_SIZE) });
+    const res = await fetchFn(`${baseUrl}${path}?${qs}`, { headers: { Authorization: `JWT ${token}` } });
+    if (!res.ok) throw new Error(`BioTime ${path} failed: ${res.status}`);
+    const body = await res.json();
+    const data = body.data || [];
+    out.push(...data);
+    if (!body.next || data.length === 0) break;
+    page += 1;
+  }
+  return out;
+}

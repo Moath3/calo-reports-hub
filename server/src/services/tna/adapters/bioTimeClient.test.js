@@ -37,3 +37,18 @@ test('authenticate throws on non-200', async () => {
   const ff = async () => ({ ok: false, status: 401, json: async () => ({}), text: async () => 'bad' });
   await assert.rejects(() => authenticate({ baseUrl: 'http://x', username: 'u', password: 'p' }, ff), /auth failed: 401/);
 });
+
+import { fetchAllPages } from './bioTimeClient.js';
+
+test('fetchAllPages concatenates pages until next is null', async () => {
+  const pages = {
+    1: { data: [{ id: 1 }, { id: 2 }], next: 'p2' },
+    2: { data: [{ id: 3 }], next: null },
+  };
+  const ff = async (url) => {
+    const m = url.match(/page=(\d+)/);
+    return { ok: true, status: 200, json: async () => pages[m[1]] };
+  };
+  const all = await fetchAllPages('http://x', '/p/', {}, 'tok', ff);
+  assert.deepEqual(all.map(r => r.id), [1, 2, 3]);
+});

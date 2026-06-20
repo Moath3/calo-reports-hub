@@ -1,9 +1,10 @@
 export function normalizeId(id) {
   if (id == null) return '';
   const s = String(id).trim().toUpperCase().replace(/\s+/g, '');
-  // strip zeros that lead the numeric run, so ids compare across systems
-  // ('A07' -> 'A7', '00123' -> '123', '101' -> '101')
-  return s.replace(/(^|\D)0+(\d)/g, '$1$2');
+  // strip leading zeros ONLY for purely numeric ids ('00123' -> '123'), so
+  // zero-padding still compares across systems while alphanumeric ids keep
+  // their stem and distinct ids never collide ('A07' != 'A7', 'FTE0001' != 'FTE1').
+  return /^\d+$/.test(s) ? s.replace(/^0+(\d)/, '$1') : s;
 }
 
 export function normalizeName(name) {

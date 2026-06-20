@@ -26,3 +26,13 @@ test('resolveCountry returns null when no country is recognized', () => {
   assert.equal(resolveCountry(null), null);
   assert.equal(resolveCountry('MARS Egypt'), null);
 });
+test('resolveCountry covers all UAE emirates and abbreviations', () => {
+  for (const x of ['Al Ain', 'Al Ain Hub', 'Ras Al Khaimah', 'RAK Kitchen', 'Fujairah', 'Umm Al Quwain', 'CALO AUH', 'Sharjah', 'Ajman']) {
+    assert.equal(resolveCountry(x), 'UAE', x);
+  }
+});
+test('resolveCountry never silently picks UAE (10h) for a mixed-country string', () => {
+  assert.equal(resolveCountry('Dubai HQ - KSA Operations'), 'KSA');     // explicit KSA code wins
+  assert.equal(resolveCountry('GCC Services (Dubai) - Bahrain'), 'BHR'); // explicit Bahrain wins
+  assert.equal(resolveCountry('Dubai / Riyadh'), 'KSA');                 // no strong code -> prefer 9h
+});

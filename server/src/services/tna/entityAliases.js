@@ -18,17 +18,32 @@ export function sameEntity(a, b) {
   return canonicalEntity(a) === canonicalEntity(b);
 }
 
-// Map any entity / department / location / country string to a GCC country code.
-// Used to select the per-country OT threshold (UAE 10h vs KSA/KWT/BHR 9h).
-// First match wins; returns null when nothing is recognized (caller decides).
-const COUNTRY_PATTERNS = [
-  ['UAE', /\buae\b|u\.a\.e|united\s*arab|emirat|dubai|abu\s*dhabi|sharjah|ajman/i],
-  ['KSA', /\bksa\b|saudi|riyadh|jeddah|jaddah|dammam|khobar|makkah|mecca|madinah|medina|luqmat|\bmp\s*ksa\b|basecamp\s*ksa/i],
+// Map any entity / department / location / country string to a GCC country code,
+// to select the per-country OT threshold (UAE 10h vs KSA/KWT/BHR 9h).
+//
+// STRONG signals are explicit country codes, full country names and canonical
+// brand aliases; BROAD adds cities/emirates/regions on top. On a clean
+// single-country string this is just a match. When a string names more than one
+// country (a contaminated cell), we never silently pick UAE (the only 10h rule):
+// a unique strong signal wins, else we fall back to a 9h country so the safe
+// payroll default is to count MORE overtime, not less.
+const STRONG_PATTERNS = [
+  ['UAE', /\buae\b|u\.a\.e|united\s*arab/i],
+  ['KSA', /\bksa\b|saudi|luqmat|\bmp\s*ksa\b|basecamp\s*ksa/i],
   ['KWT', /\bkwt\b|kuwait/i],
-  ['BHR', /\bbhr\b|bahrain|manama|\bbh\b/i],
+  ['BHR', /\bbhr\b|bahrain/i],
+];
+const COUNTRY_PATTERNS = [
+  ['UAE', /\buae\b|u\.a\.e|united\s*arab|emirat|dubai|abu\s*dhabi|\bauh\b|sharjah|ajman|ras\s*al\s*khaimah|\brak\b|fujairah|umm\s*al\s*quwain|\buaq\b|al\s*ain/i],
+  ['KSA', /\bksa\b|saudi|luqmat|\bmp\s*ksa\b|basecamp\s*ksa|riyadh|jeddah|jaddah|dammam|khobar|makkah|mecca|madinah|medina|tabuk|buraidah|qassim|yanbu|jubail|hofuf|abha/i],
+  ['KWT', /\bkwt\b|kuwait/i],
+  ['BHR', /\bbhr\b|bahrain|manama|\briffa\b|muharraq/i],
 ];
 export function resolveCountry(text) {
   const s = String(text == null ? '' : text);
-  for (const [code, re] of COUNTRY_PATTERNS) if (re.test(s)) return code;
-  return null;
+  const matched = [...new Set(COUNTRY_PATTERNS.filter(([, re]) => re.test(s)).map(([c]) => c))];
+  if (matched.length <= 1) return matched[0] || null;
+  const strong = [...new Set(STRONG_PATTERNS.filter(([, re]) => re.test(s)).map(([c]) => c))];
+  if (strong.length === 1) return strong[0];
+  return matched.find((c) => c !== 'UAE') || matched[0]; // ambiguous: prefer a 9h country
 }

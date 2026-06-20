@@ -81,6 +81,8 @@ export function loadMaster({ path, label, sheet }, attIdSet) {
 }
 
 // Position keywords that mark a matched employee as out-of-scope (not blue-collar).
-export const EXCLUDE_POSITION = /manager|supervisor|head\s*chef|sous\s*chef|\badmin\b|steward|director|coordinator|\blead\b|officer|chef\s*de\s*partie/i;
+// Word-boundary anchored so production titles aren't caught by substrings
+// (e.g. "Stewarding Assistant" is NOT \bsteward\b; "Accommodation Steward" is).
+export const EXCLUDE_POSITION = /\bmanager\b|\bsupervisor\b|head\s*chef|sous\s*chef|\badmin\b|\bsteward\b|\bdirector\b|\bcoordinator\b|\blead\b|\bofficer\b|chef\s*de\s*partie/i;
 
 export const csvCell = (v) => { const s = String(v ?? ''); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };

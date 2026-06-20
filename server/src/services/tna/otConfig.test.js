@@ -30,3 +30,9 @@ test('a bare country code resolves too', () => {
   assert.equal(getOtConfig('UAE').standardDailyMinutes, 600);
   assert.equal(getOtConfig('KSA').standardDailyMinutes, 540);
 });
+
+test('UAE emirates beyond Dubai/Abu Dhabi also get the 10h threshold', () => {
+  for (const x of ['Al Ain Hub', 'RAK Kitchen', 'Fujairah', 'CALO AUH']) {
+    assert.equal(getOtConfig(x).standardDailyMinutes, 600, x);
+  }
+});

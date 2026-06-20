@@ -15,7 +15,7 @@
 import { writeFileSync } from 'fs';
 import { resolveIdentities } from '../identity/resolver.js';
 import { normalizeId } from '../identity/normalize.js';
-import { parseMastersSpec, loadAttendance, loadMaster, EXCLUDE_POSITION, csvCell } from './lib.mjs';
+import { parseMastersSpec, loadAttendance, loadMaster, EXCLUDE_POSITION, csvCell } from '../fileLib.js';
 
 const ATT = process.env.TNA_ATTENDANCE;
 const MASTERS_SPEC = process.env.TNA_MASTERS;

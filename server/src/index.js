@@ -19,6 +19,7 @@ import templateRoutes from './routes/templates.js';
 import exportRoutes from './routes/export.js';
 import dashboardRoutes from './routes/dashboard.js';
 import zeltRoutes from './routes/zelt.js';
+import tnaRoutes from './routes/timeAttendance.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -112,6 +113,7 @@ const apiRoutes = [
   ['/api/export',    exportRoutes],
   ['/api/dashboard', dashboardRoutes],
   ['/api/zelt',      zeltRoutes],
+  ['/api/time-attendance', tnaRoutes],
 ];
 for (const [path, router] of apiRoutes) app.use(path, router);
 

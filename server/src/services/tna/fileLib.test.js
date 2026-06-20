@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { toYMD, parseMinutes, parseMastersSpec } from './lib.mjs';
+import { toYMD, parseMinutes, parseMastersSpec } from './fileLib.js';
 
 test('toYMD converts Excel serial numbers to YYYY-MM-DD', () => {
   assert.equal(toYMD(25569), '1970-01-01'); // Excel serial for the Unix epoch

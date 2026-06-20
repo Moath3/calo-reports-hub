@@ -1,9 +1,9 @@
-// Shared helpers for the T&A file tools (identityMapping, parityCheck, runPeriod).
-// Keeps one copy of the master-loader, the Excel-serial date parser, and the
-// HH:MM parser so the three tools can't drift apart.
+// Shared file helpers for the T&A engine — used by the Hub run service and the
+// CLI tools. One copy of the master-loader, the Excel-serial date parser, and
+// the HH:MM parser so the consumers can't drift apart.
 import * as XLSX from 'xlsx';
 import { readFileSync } from 'fs';
-import { normalizeId } from '../identity/normalize.js';
+import { normalizeId } from './identity/normalize.js';
 
 export const norm = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
 export const pick = (headers, pats) => { for (const p of pats) { const h = headers.find((x) => p.test(norm(x))); if (h) return h; } return null; };

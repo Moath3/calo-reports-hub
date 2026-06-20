@@ -12,6 +12,7 @@ import SettingsPage from "./pages/SettingsPage";
 import GuidePage from "./pages/GuidePage";
 import ZeltLeavePage from "./pages/ZeltLeavePage";
 import ZeltAuditPage from "./pages/ZeltAuditPage";
+import TimeAttendancePage from "./pages/TimeAttendancePage";
 
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth();
@@ -64,6 +65,7 @@ export default function App() {
         <Route path="settings" element={<SettingsPage />} />
         <Route path="guide" element={<GuidePage />} />
         <Route path="leave-balances" element={<ZeltLeavePage />} />
+        <Route path="time-attendance" element={<TimeAttendancePage />} />
         <Route path="data-hygiene" element={<AdminRoute><ZeltAuditPage /></AdminRoute>} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />

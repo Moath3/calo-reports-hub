@@ -25,6 +25,7 @@ const r = runPeriod({ attendancePath: ATT, masters, month: MONTH });
 console.log(`Attendance: ${r.attendance.employees} employees${MONTH ? ` in ${MONTH}` : ''} (id="${r.attendance.cols.id}" dept="${r.attendance.cols.dept}" time="${r.attendance.cols.time}" date="${r.attendance.cols.date}")`);
 for (const m of r.masters) console.log(`[${m.label}] sheet="${m.sheetName}" rows=${m.rows} -> idCol="${m.idCol}" (overlap ${m.overlap})`);
 if (MASTERS_SPEC) console.log(`Matched to masters (by ID): ${r.scope.matched}/${r.attendance.employees}`);
+if (r.flags.mastersMatchedNone) console.log('!! master(s) provided but matched 0 employees — check the file or pin the right sheet (#SheetName)');
 
 console.log('\n=== OVERTIME RULE: UAE after 10h | KSA / Kuwait / Bahrain after 9h ===');
 if (MASTERS_SPEC) {

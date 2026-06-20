@@ -98,6 +98,7 @@ app.use('/api/',        makeLimiter(RATE_LIMIT_WINDOW_MS, GENERAL_MAX, 'Too many
 app.use('/api/auth/',   makeLimiter(RATE_LIMIT_WINDOW_MS, AUTH_MAX, 'Too many login attempts, please try again later.'));
 app.use('/api/ai/',     makeLimiter(     MIN, AI_MAX, 'AI rate limit reached. Please wait a moment.'));
 app.use('/api/export/', makeLimiter(     MIN, EXPORT_MAX, 'Export rate limit reached. Please wait a moment.'));
+app.use('/api/time-attendance/', makeLimiter(MIN, 10, 'Time & attendance rate limit reached. Please wait a moment.'));
 
 // Body parsing
 app.use(express.json({ limit: '50mb' }));

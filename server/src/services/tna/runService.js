@@ -34,6 +34,11 @@ function nameAgrees(attName, masterName) {
 export function runPeriod({ attendancePath, masters = [], month = null }) {
   // ── Pass 1: per-employee day minutes from the attendance ──────────
   const { rows, cols } = loadAttendance(attendancePath);
+  if (!cols.id) {
+    const e = new Error('Could not detect an Employee ID column in the attendance file — check for a banner/title row above the header, or that the file has an "Employee ID" / "Emp No" column.');
+    e.userError = true;
+    throw e;
+  }
   const emp = new Map(); // id -> { empCode, name, dept, present, mins[] }
   for (const r of rows) {
     if (month && !toYMD(r[cols.date]).startsWith(month)) continue;
@@ -63,9 +68,13 @@ export function runPeriod({ attendancePath, masters = [], month = null }) {
     for (const rec of combined) { const k = normalizeId(rec.empId); if (!k) continue; (groups.get(k) || groups.set(k, []).get(k)).push(rec); }
     const byId = new Map();
     for (const [k, recs] of groups) {
-      const names = new Set(recs.map((r) => normalizeName(r.name)).filter(Boolean));
       const ents = new Set(recs.map((r) => canonicalEntity(r.entity)).filter(Boolean));
-      if (names.size > 1 && ents.size > 1) { ambiguousIds += 1; continue; } // conflicting people -> don't auto-pick
+      // Conflict = different ENTITIES, or names that genuinely disagree (not just
+      // spelling variants of one person). Either way, two different people share
+      // this ID -> don't auto-pick one; leave it unmatched and flag for review.
+      const names = recs.map((r) => r.name).filter(Boolean);
+      const namesConflict = names.some((n, i) => names.slice(i + 1).some((m) => !nameAgrees(n, m)));
+      if (ents.size > 1 || namesConflict) { ambiguousIds += 1; continue; }
       byId.set(k, recs.find((r) => r.position) || recs[0]);
     }
     for (const e of emp.values()) {
@@ -114,7 +123,9 @@ export function runPeriod({ attendancePath, masters = [], month = null }) {
   const totals = {
     employees: inScopeRows.length,
     otDays: inScopeRows.reduce((a, e) => a + e.otDays, 0),
-    otHours: +inScopeRows.reduce((a, e) => a + e.otHours, 0).toFixed(1),
+    // Sum the already-rounded per-country values so the displayed parts always
+    // reconcile to the displayed total (no off-by-0.1 from independent rounding).
+    otHours: +byCountry.reduce((a, g) => a + g.otHours, 0).toFixed(1),
   };
 
   return {
@@ -127,7 +138,13 @@ export function runPeriod({ attendancePath, masters = [], month = null }) {
       noPosition: outRows.filter((e) => e.noPosition).length,
       unmatched: hasMasters ? outRows.filter((e) => !e.matched).length : 0,
     },
-    flags: { ambiguousIds, nameMismatches, unknownCountry: inScopeRows.filter((e) => e.country === 'UNKNOWN').length },
+    flags: {
+      ambiguousIds, nameMismatches,
+      unknownCountry: inScopeRows.filter((e) => e.country === 'UNKNOWN').length,
+      // master(s) supplied but nothing joined -> everyone is unmatched and the
+      // totals read as a misleading zero; surface it loudly instead.
+      mastersMatchedNone: hasMasters && scopeBy.size === 0,
+    },
     byCountry,
     totals,
     rows: outRows,

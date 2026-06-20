@@ -45,21 +45,23 @@ router.post("/run", requireAuth, (req, res, next) => {
 }, asyncHandler(async (req, res) => {
   const attendance = req.files?.attendance?.[0];
   const masterFiles = req.files?.masters || [];
-  if (!attendance) throw badRequest("No attendance file uploaded (field 'attendance')");
-
-  let sheets = [];
-  if (req.body.masterSheets) {
-    try { sheets = JSON.parse(req.body.masterSheets); } catch { sheets = []; }
-  }
-  const month = (req.body.month || "").trim() || null;
-  const masters = masterFiles.map((f, i) => ({
-    label: basename(f.originalname, extname(f.originalname)),
-    path: f.path,
-    sheet: (Array.isArray(sheets) && sheets[i]) ? String(sheets[i]).trim() || null : null,
-  }));
-
-  const paths = [attendance.path, ...masterFiles.map((f) => f.path)];
+  // Build the cleanup list from everything multer wrote to disk, BEFORE any
+  // validation throw, so a missing-attendance request can't orphan master files.
+  const paths = [...(attendance ? [attendance.path] : []), ...masterFiles.map((f) => f.path)];
   try {
+    if (!attendance) throw badRequest("No attendance file uploaded (field 'attendance')");
+
+    let sheets = [];
+    if (req.body.masterSheets) {
+      try { sheets = JSON.parse(req.body.masterSheets); } catch { sheets = []; }
+    }
+    const month = (req.body.month || "").trim() || null;
+    const masters = masterFiles.map((f, i) => ({
+      label: basename(f.originalname, extname(f.originalname)),
+      path: f.path,
+      sheet: (Array.isArray(sheets) && sheets[i]) ? String(sheets[i]).trim() || null : null,
+    }));
+
     const result = runPeriod({ attendancePath: attendance.path, masters, month });
     const xlsxBase64 = buildWorkbook(result).toString("base64");
     const stamp = month || "period";
@@ -70,7 +72,9 @@ router.post("/run", requireAuth, (req, res, next) => {
       xlsxFilename: `calo-time-attendance-${stamp}.xlsx`,
     });
   } catch (err) {
-    throw new HttpError(400, "Failed to run report: " + err.message);
+    if (err instanceof HttpError) throw err;        // explicit 400s pass through
+    if (err.userError) throw new HttpError(400, err.message); // expected input problems
+    throw new HttpError(500, "Failed to run report: " + err.message); // real failures -> logged + sanitized in prod
   } finally {
     for (const p of paths) { try { if (p && existsSync(p)) unlinkSync(p); } catch {} }
   }

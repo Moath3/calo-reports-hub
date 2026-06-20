@@ -284,6 +284,7 @@ function Td({ children, align = 'left', mono, bold }) {
 
 function buildFlagLines(data) {
   const f = data.flags || {}, s = data.scope || {}, out = [];
+  if (f.mastersMatchedNone) out.push(`Master file(s) were uploaded but matched 0 employees — check the file or pin the right sheet. Everyone shows as unmatched and the totals are zero.`);
   if (f.unknownCountry) out.push(`${f.unknownCountry} in-scope employees have an UNKNOWN country (scored at the 9h default) — fix their Department/entity; their OT may be wrong.`);
   if (s.noPosition) out.push(`${s.noPosition} matched employees have a blank position and were NOT counted — fix the master or include them manually.`);
   if (f.ambiguousIds) out.push(`${f.ambiguousIds} IDs map to conflicting people across the masters (left unmatched) — check for reused/duplicate IDs.`);

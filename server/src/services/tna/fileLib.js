@@ -39,10 +39,18 @@ export function parseMastersSpec(spec) {
 }
 
 // Distinct badging employees from an attendance export, plus the detected columns.
+// Probes the first few rows for the real header so a banner/title row above it
+// (common in exported reports) can't silently shift every column to null.
 export function loadAttendance(path) {
   const wb = wbOf(path);
-  const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '' });
-  const h = Object.keys(rows[0] || {});
+  const sheet = wb.Sheets[wb.SheetNames[0]];
+  let rows = [], h = [];
+  for (const hr of [0, 1, 2]) {
+    rows = XLSX.utils.sheet_to_json(sheet, hr ? { defval: '', range: hr } : { defval: '' });
+    h = Object.keys(rows[0] || {});
+    if (h.some((x) => /employee\s*id|ac.?-?no|emp.*no|^id$/i.test(norm(x))) &&
+        h.some((x) => /date|total\s*time|work.*time|hours/i.test(norm(x)))) break;
+  }
   const cols = {
     id: pick(h, [/employee\s*id/i, /ac.?-?no/i, /emp.*no/i, /^id$/i]),
     name: pick(h, [/^name$/i, /first.*name/i, /name/i]),

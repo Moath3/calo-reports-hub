@@ -65,3 +65,30 @@ test('calendar: infers work days, finds absences, flags overnight shifts', () =>
     assert.equal(r.daily.totalOvernight, 1);
   } finally { rmSync(p, { force: true }); }
 });
+
+test('overnight is NOT flagged when check-in equals check-out', () => {
+  const p = tmpCsv([
+    'Employee ID,First Name,Department,Date,First Check In,Last Check Out,Total Time',
+    'A,Ann,CALO UAE,2026-06-01,08:00,08:00,0:00',
+  ].join('\n') + '\n');
+  try {
+    const r = runPeriod({ attendancePath: p });
+    assert.equal(r.rows[0].overnightDays, 0);
+    assert.equal(r.daily.totalOvernight, 0);
+  } finally { rmSync(p, { force: true }); }
+});
+
+test('duplicate / split-shift rows for one employee-day merge into a single day', () => {
+  const p = tmpCsv([
+    'Employee ID,First Name,Department,Date,First Check In,Last Check Out,Total Time',
+    'A,Ann,CALO UAE,2026-06-01,08:00,12:00,4:00',
+    'A,Ann,CALO UAE,2026-06-01,13:00,20:00,7:00',
+  ].join('\n') + '\n');
+  try {
+    const r = runPeriod({ attendancePath: p });
+    assert.equal(r.rows[0].daysWorked, 1);     // one calendar day, not two
+    assert.equal(r.rows[0].present, 1);
+    assert.equal(r.rows[0].days[0].hours, 11); // 4h + 7h merged
+    assert.equal(r.rows[0].otDays, 1);         // 11h > 10h (UAE) counted once
+  } finally { rmSync(p, { force: true }); }
+});

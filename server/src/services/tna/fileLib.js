@@ -18,11 +18,33 @@ export const parseMinutes = (t) => {
   return (Number.isNaN(h) || Number.isNaN(m)) ? null : h * 60 + m;
 };
 
-// SheetJS parses CSV date cells as Excel serial numbers -> normalize to YYYY-MM-DD.
+// Normalize a date cell to YYYY-MM-DD. SheetJS gives Excel serials or Date for
+// recognized dates, but leaves day-first text (dd/mm/yyyy, the GCC default) as a
+// string — so parse the common string formats too. Unparseable -> '' so callers
+// can skip/flag rather than silently mis-filter.
+const MONTHS = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
 export const toYMD = (v) => {
   if (typeof v === 'number') return new Date(Math.round((v - 25569) * 86400000)).toISOString().slice(0, 10);
-  if (v instanceof Date) return v.toISOString().slice(0, 10);
-  return String(v).slice(0, 10);
+  if (v instanceof Date) return Number.isNaN(v.getTime()) ? '' : v.toISOString().slice(0, 10);
+  const s = String(v ?? '').trim();
+  if (!s) return '';
+  let m = s.match(/^(\d{4})-(\d{2})-(\d{2})/); // ISO yyyy-mm-dd (optionally with time)
+  if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+  m = s.match(/^(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{2,4})$/); // numeric d/m/y (or m/d/y)
+  if (m) {
+    const a = +m[1], b = +m[2], y = m[3].length === 2 ? 2000 + +m[3] : +m[3];
+    let day, mon;
+    if (a > 12 && b <= 12) { day = a; mon = b; }       // first must be the day
+    else if (b > 12 && a <= 12) { day = b; mon = a; }  // second must be the day
+    else { day = a; mon = b; }                          // ambiguous -> day-first (GCC default)
+    if (mon >= 1 && mon <= 12 && day >= 1 && day <= 31) return `${y}-${String(mon).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  }
+  m = s.match(/^(\d{1,2})[/.\- ]([A-Za-z]{3,})[/.\- ](\d{2,4})$/); // dd-Mon-yyyy
+  if (m) {
+    const mon = MONTHS[m[2].slice(0, 3).toLowerCase()], y = m[3].length === 2 ? 2000 + +m[3] : +m[3];
+    if (mon) return `${y}-${String(mon).padStart(2, '0')}-${String(+m[1]).padStart(2, '0')}`;
+  }
+  return '';
 };
 
 // "Label=path#Sheet;path;..." -> [{label, path, sheet}]  (label and #Sheet optional)

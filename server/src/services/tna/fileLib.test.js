@@ -6,9 +6,16 @@ test('toYMD converts Excel serial numbers to YYYY-MM-DD', () => {
   assert.equal(toYMD(25569), '1970-01-01'); // Excel serial for the Unix epoch
   assert.equal(toYMD(25934), '1971-01-01'); // +365 days (1970 not a leap year)
 });
-test('toYMD handles Date objects and string passthrough', () => {
+test('toYMD handles Date objects and ISO strings', () => {
   assert.equal(toYMD(new Date('2026-05-16T05:00:00Z')), '2026-05-16');
   assert.equal(toYMD('2026-05-16 08:00:00'), '2026-05-16');
+});
+test('toYMD parses day-first and text-month date strings (GCC formats)', () => {
+  assert.equal(toYMD('19/06/2026'), '2026-06-19'); // dd/mm/yyyy (day-first)
+  assert.equal(toYMD('25/12/2026'), '2026-12-25'); // day > 12 forces day-first
+  assert.equal(toYMD('05-06-2026'), '2026-06-05'); // ambiguous -> day-first
+  assert.equal(toYMD('19-Jun-2026'), '2026-06-19'); // dd-Mon-yyyy
+  assert.equal(toYMD('not a date'), '');           // unparseable -> empty
 });
 
 test('parseMinutes reads HH:MM worked time to minutes', () => {

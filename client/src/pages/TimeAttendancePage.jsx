@@ -67,18 +67,47 @@ export default function TimeAttendancePage() {
 
   const handleSort = (key) => setSort((s) => s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'asc' });
 
-  const downloadExcel = () => {
-    if (!data?.xlsxBase64) return;
-    const bytes = atob(data.xlsxBase64);
-    const arr = new Uint8Array(bytes.length);
-    for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i);
-    triggerDownload(new Blob([arr], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), data.xlsxFilename || 'time-attendance.xlsx');
+  // Downloads honor the "In-scope only" toggle (but not the search box) so the
+  // exported file matches the scope you've chosen. The Summary always reports the
+  // in-scope per-country OT — that's the deliverable regardless of detail filter.
+  const exportRows = useMemo(
+    () => (data?.rows || []).filter((r) => !inScopeOnly || r.inScope),
+    [data, inScopeOnly]
+  );
+  const detailRows = (rows) => rows.map((r) => ({
+    'Emp Code': r.empCode, Name: r.name, Country: r.country, Department: r.dept,
+    'Present-days': r.present, 'OT-days': r.otDays, 'OT-hours': r.otHours, 'OT-days @ 9h': r.otDays9,
+    Source: r.source, Position: r.position, 'In scope': r.inScope ? 'yes' : 'no', 'Name mismatch': r.nameMismatch ? 'yes' : '',
+  }));
+
+  const downloadExcel = async () => {
+    if (!data) return;
+    const XLSX = await import('xlsx');
+    const s = data.scope, f = data.flags;
+    const summary = [
+      ['CALO Time & Attendance — Overtime'],
+      ['Overtime rule', 'UAE after 10h · KSA / Kuwait / Bahrain after 9h'],
+      ['Detail rows', inScopeOnly ? 'in-scope only' : 'all employees'],
+      [],
+      ['Scope', `in-scope: ${s.inScope}`, `excluded (mgr/admin): ${s.excluded}`, `no position: ${s.noPosition}`, `unmatched: ${s.unmatched}`],
+      ['Flags', `unknown country: ${f.unknownCountry}`, `name mismatches: ${f.nameMismatches}`, `ambiguous IDs: ${f.ambiguousIds}`],
+      [],
+      ['Country', 'OT rule', 'Employees', 'Present-days', 'OT-days', 'OT-hours', 'OT-days @ flat 9h'],
+      ...data.byCountry.map((g) => [g.country, `> ${g.rule}`, g.emps, g.present, g.otDays, g.otHours, g.otDays9]),
+      [],
+      ['TOTAL', '', data.totals.employees, '', data.totals.otDays, data.totals.otHours, ''],
+    ];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(summary), 'Summary');
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(detailRows(exportRows)), 'Detail');
+    const buf = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
+    triggerDownload(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), `calo-time-attendance-${month || 'period'}.xlsx`);
   };
   const downloadCsv = () => {
-    if (!data?.rows) return;
+    if (!data) return;
     const cols = ['empCode', 'name', 'country', 'dept', 'present', 'otDays', 'otHours', 'otDays9', 'source', 'position', 'inScope', 'nameMismatch'];
-    const csv = [cols.join(','), ...data.rows.map((r) => cols.map((c) => csvCell(r[c])).join(','))].join('\n') + '\n';
-    triggerDownload(new Blob([csv], { type: 'text/csv;charset=utf-8;' }), `time-attendance-${month || 'period'}.csv`);
+    const csv = [cols.join(','), ...exportRows.map((r) => cols.map((c) => csvCell(r[c])).join(','))].join('\n') + '\n';
+    triggerDownload(new Blob([csv], { type: 'text/csv;charset=utf-8;' }), `calo-time-attendance-${month || 'period'}.csv`);
   };
 
   const flagLines = data ? buildFlagLines(data) : [];
@@ -143,7 +172,10 @@ export default function TimeAttendancePage() {
                   {' · '}<b>{data.scope.inScope}</b> in scope · {data.scope.excluded} excluded (mgr/admin) · {data.scope.noPosition} no-position · {data.scope.unmatched} unmatched
                 </>}
               </div>
-              <div style={{ display: 'flex', gap: 8 }}>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <span style={{ fontSize: 11, color: 'var(--ink-500)' }} title="Exports follow the In-scope only toggle below the table.">
+                  exports: {inScopeOnly ? 'in-scope only' : 'all employees'}
+                </span>
                 <button onClick={downloadExcel} style={ghostBtn}><Icon name="Download" size={16} /> Excel</button>
                 <button onClick={downloadCsv} style={ghostBtn}><Icon name="Download" size={16} /> CSV</button>
               </div>

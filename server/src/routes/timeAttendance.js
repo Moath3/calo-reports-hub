@@ -4,7 +4,7 @@ import { v4 as uuid } from "uuid";
 import { fileURLToPath } from "url";
 import { dirname, join, extname, basename } from "path";
 import { unlinkSync, existsSync, mkdirSync } from "fs";
-import { runPeriod, buildWorkbook } from "../services/tna/runService.js";
+import { runPeriod } from "../services/tna/runService.js";
 import { requireAuth } from "../middleware/auth.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { badRequest, HttpError } from "../utils/httpError.js";
@@ -63,14 +63,9 @@ router.post("/run", requireAuth, (req, res, next) => {
     }));
 
     const result = runPeriod({ attendancePath: attendance.path, masters, month });
-    const xlsxBase64 = buildWorkbook(result).toString("base64");
-    const stamp = month || "period";
-    res.json({
-      ...result,
-      attendanceName: attendance.originalname,
-      xlsxBase64,
-      xlsxFilename: `calo-time-attendance-${stamp}.xlsx`,
-    });
+    // The Excel/CSV are built client-side from this result so they honor the
+    // user's in-scope toggle; no need to ship a pre-built workbook here.
+    res.json({ ...result, attendanceName: attendance.originalname });
   } catch (err) {
     if (err instanceof HttpError) throw err;        // explicit 400s pass through
     if (err.userError) throw new HttpError(400, err.message); // expected input problems

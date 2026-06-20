@@ -57,6 +57,8 @@ export function loadAttendance(path) {
     dept: pick(h, [/department/i, /dept/i]),
     date: pick(h, [/^date$/i, /date/i]),
     time: pick(h, [/total\s*time/i, /work.*time/i, /hours/i]),
+    checkIn: pick(h, [/first.*check.?in/i, /check.?in/i, /first.*in/i, /clock.?in/i, /time.?in/i]),
+    checkOut: pick(h, [/last.*check.?out/i, /check.?out/i, /last.*out/i, /clock.?out/i, /time.?out/i]),
   };
   return { rows, cols };
 }

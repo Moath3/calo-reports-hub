@@ -23,6 +23,18 @@ function nameAgrees(attName, masterName) {
   return diceCoefficient(a.slice().sort().join(' '), [...b].sort().join(' ')) >= 0.5;
 }
 
+// A date counts as a work day only if at least this share of the active team
+// badged in that day — so weekends/holidays drop out without a roster.
+const WORKDAY_THRESHOLD = 0.5;
+const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const weekdayOf = (ymd) => WEEKDAYS[new Date(ymd + 'T00:00:00Z').getUTCDay()];
+// Inclusive list of YYYY-MM-DD between start and end (UTC, no tz drift).
+function eachDate(start, end) {
+  const out = [], e = new Date(end + 'T00:00:00Z');
+  for (let d = new Date(start + 'T00:00:00Z'); d <= e; d.setUTCDate(d.getUTCDate() + 1)) out.push(d.toISOString().slice(0, 10));
+  return out;
+}
+
 /**
  * Run a T&A period.
  * @param {object} opts
@@ -39,18 +51,27 @@ export function runPeriod({ attendancePath, masters = [], month = null }) {
     e.userError = true;
     throw e;
   }
-  const emp = new Map(); // id -> { empCode, name, dept, present, mins[] }
+  const emp = new Map(); // id -> { empCode, name, dept, present, mins[], days: Map<date,...> }
   for (const r of rows) {
-    if (month && !toYMD(r[cols.date]).startsWith(month)) continue;
+    const ymd = toYMD(r[cols.date]);
+    if (month && !ymd.startsWith(month)) continue;
     const id = String(r[cols.id] ?? '').trim();
     if (!id) continue;
     const dept = cols.dept ? String(r[cols.dept] ?? '').trim() : '';
-    if (!emp.has(id)) emp.set(id, { empCode: id, name: cols.name ? String(r[cols.name] ?? '').trim() : '', dept, present: 0, mins: [] });
+    if (!emp.has(id)) emp.set(id, { empCode: id, name: cols.name ? String(r[cols.name] ?? '').trim() : '', dept, present: 0, mins: [], days: new Map() });
     const e = emp.get(id);
     e.present += 1;
     if (!e.dept && dept) e.dept = dept;
     const min = parseMinutes(r[cols.time]);
     if (min != null) e.mins.push(min);
+    // Per-day calendar record. A shift whose check-out clock time is at/before
+    // its check-in crossed midnight (overnight); Total Time already accounts for
+    // it, and we attribute the day to the check-in date (the export's Date).
+    const checkIn = cols.checkIn ? String(r[cols.checkIn] ?? '').trim() : '';
+    const checkOut = cols.checkOut ? String(r[cols.checkOut] ?? '').trim() : '';
+    const ci = parseMinutes(checkIn), co = parseMinutes(checkOut);
+    const overnight = ci != null && co != null && co <= ci;
+    if (ymd) e.days.set(ymd, { date: ymd, minutes: min, checkIn, checkOut, overnight });
   }
 
   // ── Masters (optional): collision-safe direct ID join ─────────────
@@ -104,10 +125,20 @@ export function runPeriod({ attendancePath, masters = [], month = null }) {
     const isExcluded = !!position && EXCLUDE_POSITION.test(position);
     const noPosition = matched && !position;
     const inScope = !hasMasters || (matched && !!position && !isExcluded);
+    const cfgMin = cfg.standardDailyMinutes;
+    const days = [...e.days.values()].sort((a, b) => (a.date < b.date ? -1 : 1)).map((d) => ({
+      date: d.date, weekday: weekdayOf(d.date),
+      hours: d.minutes != null ? +(d.minutes / 60).toFixed(2) : null,
+      checkIn: d.checkIn || '', checkOut: d.checkOut || '', overnight: d.overnight,
+      ot: d.minutes != null && d.minutes > cfgMin,
+    }));
     outRows.push({
       empCode: e.empCode, name: e.name, country: country || 'UNKNOWN', dept: e.dept,
       present: e.present, otDays, otHours: +(otMin / 60).toFixed(2), otDays9,
       source: sc.source || '', position, matched, noPosition, isExcluded, inScope, nameMismatch: !!sc.nameMismatch,
+      daysWorked: e.days.size, overnightDays: days.filter((d) => d.overnight).length,
+      firstSeen: days.length ? days[0].date : null, lastSeen: days.length ? days[days.length - 1].date : null,
+      days, absences: [], absentDays: 0,
     });
   }
 
@@ -128,6 +159,40 @@ export function runPeriod({ attendancePath, masters = [], month = null }) {
     otHours: +byCountry.reduce((a, g) => a + g.otHours, 0).toFixed(1),
   };
 
+  // ── Calendar: infer work days from team attendance, then find absences ──
+  // A date is a work day if >= WORKDAY_THRESHOLD of the active in-scope team
+  // badged in that day (active = employees whose first..last seen span covers it).
+  // Absence = a work day inside an employee's own span where they didn't badge.
+  let daily = { periodStart: null, periodEnd: null, workDays: [], offDays: [], totalAbsences: 0, totalOvernight: 0, inferred: true };
+  const dated = inScopeRows.filter((e) => e.firstSeen);
+  if (dated.length) {
+    const periodStart = dated.reduce((m, e) => (e.firstSeen < m ? e.firstSeen : m), dated[0].firstSeen);
+    const periodEnd = dated.reduce((m, e) => (e.lastSeen > m ? e.lastSeen : m), dated[0].lastSeen);
+    const present = Object.create(null), active = Object.create(null);
+    const spans = dated.map((e) => ({ e, set: new Set(e.days.map((d) => d.date)), span: eachDate(e.firstSeen, e.lastSeen) }));
+    for (const { set, span } of spans) {
+      for (const d of span) { active[d] = (active[d] || 0) + 1; if (set.has(d)) present[d] = (present[d] || 0) + 1; }
+    }
+    const workDaysSet = new Set();
+    for (const d of eachDate(periodStart, periodEnd)) {
+      const a = active[d] || 0, p = present[d] || 0;
+      if (a > 0 && p / a >= WORKDAY_THRESHOLD) workDaysSet.add(d);
+    }
+    for (const { e, set, span } of spans) {
+      e.absences = span.filter((d) => workDaysSet.has(d) && !set.has(d)).map((d) => ({ date: d, weekday: weekdayOf(d) }));
+      e.absentDays = e.absences.length;
+    }
+    const allRange = eachDate(periodStart, periodEnd);
+    daily = {
+      periodStart, periodEnd,
+      workDays: allRange.filter((d) => workDaysSet.has(d)),
+      offDays: allRange.filter((d) => !workDaysSet.has(d)),
+      totalAbsences: dated.reduce((a, e) => a + e.absentDays, 0),
+      totalOvernight: inScopeRows.reduce((a, e) => a + (e.overnightDays || 0), 0),
+      inferred: true,
+    };
+  }
+
   return {
     attendance: { employees: emp.size, cols },
     masters: mastersMeta,
@@ -147,6 +212,7 @@ export function runPeriod({ attendancePath, masters = [], month = null }) {
     },
     byCountry,
     totals,
+    daily,
     rows: outRows,
   };
 }

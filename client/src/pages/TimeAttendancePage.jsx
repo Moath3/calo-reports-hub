@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, Fragment } from 'react';
 import api from '../utils/api';
 import { Icon } from '../components/ui';
 
@@ -20,6 +20,8 @@ export default function TimeAttendancePage() {
   const [search, setSearch] = useState('');
   const [sort, setSort] = useState({ key: 'otDays', dir: 'desc' });
   const [inScopeOnly, setInScopeOnly] = useState(true);
+  const [expanded, setExpanded] = useState(() => new Set());
+  const toggleExpand = (code) => setExpanded((s) => { const n = new Set(s); n.has(code) ? n.delete(code) : n.add(code); return n; });
 
   const addMasters = (fileList) => {
     const incoming = Array.from(fileList || []).map((file) => ({ file, sheet: '' }));
@@ -132,6 +134,38 @@ export default function TimeAttendancePage() {
       if (!r.inScope) row.getCell(9).font = F(10, { color: { argb: MUTE } });
     });
 
+    // ── Daily (per present-day log) ──────────────────────────────
+    const daily = wb.addWorksheet('Daily', { views: [{ state: 'frozen', ySplit: 1, showGridLines: false }] });
+    daily.columns = [
+      { header: 'Emp Code', width: 14 }, { header: 'Name', width: 24 }, { header: 'Country', width: 9 }, { header: 'Department', width: 22 },
+      { header: 'Date', width: 12 }, { header: 'Weekday', width: 10 }, { header: 'Hours', width: 9 }, { header: 'Check In', width: 10 }, { header: 'Check Out', width: 10 }, { header: 'Overnight', width: 10 },
+    ];
+    daily.getRow(1).eachCell(head);
+    daily.autoFilter = 'A1:J1';
+    let di = 0;
+    exportRows.forEach((r) => (r.days || []).forEach((d) => {
+      const row = daily.addRow([r.empCode, r.name || '', r.country, r.dept || '', d.date, d.weekday, d.hours, d.checkIn || '', d.checkOut || '', d.overnight ? 'yes' : '']);
+      row.eachCell((c, i) => { c.border = box; c.font = F(10); c.alignment = { horizontal: i === 7 ? 'right' : 'left', vertical: 'middle' }; if (di % 2) c.fill = fill(ZEBRA); });
+      if (d.overnight) row.getCell(10).font = F(10, { bold: true, color: { argb: GREEN } });
+      di++;
+    }));
+
+    // ── Absences (inferred — review) ─────────────────────────────
+    const abs = wb.addWorksheet('Absences', { views: [{ state: 'frozen', ySplit: 1, showGridLines: false }] });
+    abs.columns = [
+      { header: 'Emp Code', width: 14 }, { header: 'Name', width: 24 }, { header: 'Country', width: 9 }, { header: 'Department', width: 22 },
+      { header: 'Absent Date', width: 12 }, { header: 'Weekday', width: 10 }, { header: 'Note', width: 22 },
+    ];
+    abs.getRow(1).eachCell(head);
+    abs.autoFilter = 'A1:G1';
+    let ai = 0;
+    exportRows.forEach((r) => (r.absences || []).forEach((a) => {
+      const row = abs.addRow([r.empCode, r.name || '', r.country, r.dept || '', a.date, a.weekday, 'inferred — review']);
+      row.eachCell((c) => { c.border = box; c.font = F(10); c.alignment = { vertical: 'middle' }; if (ai % 2) c.fill = fill(ZEBRA); });
+      row.getCell(7).font = F(10, { color: { argb: AMBER } });
+      ai++;
+    }));
+
     const buf = await wb.xlsx.writeBuffer();
     triggerDownload(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), `calo-time-attendance-${month || 'period'}.xlsx`);
   };
@@ -166,6 +200,8 @@ export default function TimeAttendancePage() {
             <div><b>Excluded (manager/admin)</b> — matched, but the title is a manager/supervisor/admin type, so left out of the OT totals.</div>
             <div><b>No position</b> — matched to a master but the position cell is blank, so not counted. Fix the master or include them manually.</div>
             <div><b>Unmatched</b> — not found in any uploaded master (e.g. a new joiner, or the wrong/old master). Refresh the master to include them.</div>
+            <div><b>Days / Nights</b> — click any row to open a per-person calendar: each day worked with its hours and check-in/out. <b>Nights</b> = shifts that crossed midnight (check-out earlier than check-in); the hours already span midnight and count on the check-in date.</div>
+            <div><b>Absent (inferred)</b> — there’s no roster, so a date counts as a work day only if most of the team badged in that day, and absence = a work day inside the person’s own span (first→last seen) where they didn’t badge. <b>For 7-day sites with rotating days off, this includes rest days</b> — treat it as a review list, not final.</div>
             <div><b>Flags</b> — <i>unknown country</i> (scored at the 9h default — fix the Department/entity), <i>name mismatch</i> (attendance name disagrees with the master — possible ID mix-up, shown ⚠ in the table), <i>ambiguous IDs</i> (one ID maps to two different people).</div>
             <div><b>Downloads</b> — Excel &amp; CSV follow the “In-scope only” toggle above the table.</div>
           </div>
@@ -257,6 +293,26 @@ export default function TimeAttendancePage() {
             ))}
           </div>
 
+          {/* Calendar summary */}
+          {data.daily?.periodStart && (
+            <div style={panel}>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 24, alignItems: 'baseline' }}>
+                <div style={{ fontSize: 13, color: 'var(--ink-700)' }}>
+                  <span style={{ fontWeight: 800 }}>Calendar</span> · {fmtDay(data.daily.periodStart)} → {fmtDay(data.daily.periodEnd)}
+                </div>
+                <Stat label="work-days" value={data.daily.workDays.length} note="inferred" />
+                <Stat label="off-days" value={data.daily.offDays.length} note="inferred" />
+                <Stat label="absences" value={data.daily.totalAbsences} />
+                <Stat label="overnight shifts" value={data.daily.totalOvernight} />
+              </div>
+              {data.daily.offDays.length === 0 && (
+                <div style={{ marginTop: 10, fontSize: 12, color: '#6B5008', background: '#FFF8E5', border: '1px solid #F1D785', borderRadius: 6, padding: '8px 12px' }}>
+                  No company-wide off-days detected — this looks like a <b>7-day operation</b>. The “absences” below will include individual rest days; review against the roster before acting on them.
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Per-employee table */}
           <div style={panel}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, flexWrap: 'wrap', gap: 12 }}>
@@ -275,31 +331,45 @@ export default function TimeAttendancePage() {
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
                 <thead>
                   <tr>
+                    <th style={{ width: 30, background: 'var(--ink-50)', borderBottom: '1px solid var(--ink-200)' }} />
                     <Th onClick={() => handleSort('empCode')} active={sort.key === 'empCode'} dir={sort.dir}>Emp Code</Th>
                     <Th onClick={() => handleSort('name')} active={sort.key === 'name'} dir={sort.dir}>Name</Th>
                     <Th onClick={() => handleSort('country')} active={sort.key === 'country'} dir={sort.dir}>Country</Th>
                     <Th onClick={() => handleSort('dept')} active={sort.key === 'dept'} dir={sort.dir}>Department</Th>
                     <Th onClick={() => handleSort('position')} active={sort.key === 'position'} dir={sort.dir}>Position</Th>
-                    <Th onClick={() => handleSort('present')} active={sort.key === 'present'} dir={sort.dir} align="right">Present</Th>
+                    <Th onClick={() => handleSort('daysWorked')} active={sort.key === 'daysWorked'} dir={sort.dir} align="right">Days</Th>
+                    <Th onClick={() => handleSort('absentDays')} active={sort.key === 'absentDays'} dir={sort.dir} align="right">Absent</Th>
+                    <Th onClick={() => handleSort('overnightDays')} active={sort.key === 'overnightDays'} dir={sort.dir} align="right">Nights</Th>
                     <Th onClick={() => handleSort('otDays')} active={sort.key === 'otDays'} dir={sort.dir} align="right">OT-days</Th>
                     <Th onClick={() => handleSort('otHours')} active={sort.key === 'otHours'} dir={sort.dir} align="right">OT-hours</Th>
                   </tr>
                 </thead>
                 <tbody>
                   {filtered.length === 0 ? (
-                    <tr><td colSpan={8} style={{ padding: '24px 16px', textAlign: 'center', color: 'var(--ink-500)' }}>No employees match.</td></tr>
-                  ) : filtered.map((r, i) => (
-                    <tr key={r.empCode || i} style={{ background: i % 2 === 0 ? '#fff' : 'var(--ink-50)' }}>
-                      <Td mono>{r.empCode}</Td>
-                      <Td bold>{r.name || '—'}{r.nameMismatch && <span title="Name disagrees with master — possible ID collision" style={{ marginLeft: 6, color: '#9A6F0E' }}>⚠</span>}</Td>
-                      <Td>{r.country}</Td>
-                      <Td>{r.dept || '—'}</Td>
-                      <Td>{r.position || (r.matched ? <span style={{ color: 'var(--ink-500)' }}>(blank)</span> : '—')}</Td>
-                      <Td align="right">{r.present}</Td>
-                      <Td align="right" bold>{r.otDays}</Td>
-                      <Td align="right">{r.otHours.toFixed(1)}</Td>
-                    </tr>
-                  ))}
+                    <tr><td colSpan={11} style={{ padding: '24px 16px', textAlign: 'center', color: 'var(--ink-500)' }}>No employees match.</td></tr>
+                  ) : filtered.map((r, i) => {
+                    const open = expanded.has(r.empCode);
+                    return (
+                      <Fragment key={r.empCode || i}>
+                        <tr onClick={() => toggleExpand(r.empCode)} style={{ background: i % 2 === 0 ? '#fff' : 'var(--ink-50)', cursor: 'pointer' }}>
+                          <Td><span style={{ color: 'var(--ink-500)', display: 'inline-block', transform: open ? 'rotate(90deg)' : 'none', transition: 'transform .15s' }}>▸</span></Td>
+                          <Td mono>{r.empCode}</Td>
+                          <Td bold>{r.name || '—'}{r.nameMismatch && <span title="Name disagrees with master — possible ID collision" style={{ marginLeft: 6, color: '#9A6F0E' }}>⚠</span>}</Td>
+                          <Td>{r.country}</Td>
+                          <Td>{r.dept || '—'}</Td>
+                          <Td>{r.position || (r.matched ? <span style={{ color: 'var(--ink-500)' }}>(blank)</span> : '—')}</Td>
+                          <Td align="right">{r.daysWorked}</Td>
+                          <Td align="right">{r.absentDays ? <span style={{ color: '#9A6F0E', fontWeight: 700 }}>{r.absentDays}</span> : '0'}</Td>
+                          <Td align="right">{r.overnightDays || 0}</Td>
+                          <Td align="right" bold>{r.otDays}</Td>
+                          <Td align="right">{r.otHours.toFixed(1)}</Td>
+                        </tr>
+                        {open && (
+                          <tr><td colSpan={11} style={{ padding: 0, borderBottom: '1px solid var(--ink-200)' }}><EmployeeCalendar row={r} /></td></tr>
+                        )}
+                      </Fragment>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -358,6 +428,52 @@ function Td({ children, align = 'left', mono, bold }) {
   return <td style={{ padding: '11px 14px', borderBottom: '1px solid var(--ink-100)', textAlign: align, fontFamily: mono ? 'ui-monospace, SFMono-Regular, monospace' : 'inherit', fontWeight: bold ? 700 : 400, color: 'var(--ink-900)' }}>{children}</td>;
 }
 
+function Stat({ label, value, note }) {
+  return (
+    <div>
+      <span style={{ fontSize: 20, fontWeight: 900, color: 'var(--ink-900)' }}>{value}</span>
+      <span style={{ fontSize: 12, color: 'var(--ink-500)', marginLeft: 6 }}>{label}{note ? ` (${note})` : ''}</span>
+    </div>
+  );
+}
+
+const legendHd = { fontSize: 11, fontWeight: 800, color: 'var(--ink-500)', letterSpacing: '.06em', textTransform: 'uppercase' };
+const dayChip = (bg) => ({ display: 'inline-flex', flexDirection: 'column', gap: 1, padding: '6px 10px', borderRadius: 8, background: bg, fontSize: 12, minWidth: 76, lineHeight: 1.35 });
+
+function EmployeeCalendar({ row }) {
+  const present = row.days || [], absences = row.absences || [];
+  return (
+    <div style={{ padding: '14px 18px', display: 'grid', gap: 14, background: 'var(--ink-50)' }}>
+      <div>
+        <div style={legendHd}>Days worked — {present.length}{row.overnightDays ? ` · ${row.overnightDays} overnight 🌙` : ''}</div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
+          {present.length === 0 ? <span style={{ fontSize: 12, color: 'var(--ink-500)' }}>No attendance recorded.</span> :
+            present.map((d) => (
+              <div key={d.date} style={dayChip(d.ot ? 'var(--calo-50, #d9f0e5)' : '#fff')} title={`${d.checkIn || '?'}–${d.checkOut || '?'}${d.overnight ? ' (overnight)' : ''}`}>
+                <span style={{ fontWeight: 700, color: 'var(--ink-900)' }}>{fmtDay(d.date)} {d.overnight ? '🌙' : ''}</span>
+                <span style={{ color: 'var(--ink-700)' }}>{d.hours != null ? `${d.hours.toFixed(2)}h` : '—'}{d.ot ? <span style={{ color: 'var(--calo-700, #1e8359)', fontWeight: 700 }}> ·OT</span> : ''}</span>
+                {(d.checkIn || d.checkOut) ? <span style={{ color: 'var(--ink-500)', fontSize: 11 }}>{d.checkIn || '?'}–{d.checkOut || '?'}</span> : null}
+              </div>
+            ))}
+        </div>
+      </div>
+      {absences.length > 0 && (
+        <div>
+          <div style={legendHd}>Absent — {absences.length} <span style={{ textTransform: 'none', fontWeight: 600, color: '#9A6F0E' }}>(inferred — review)</span></div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
+            {absences.map((a) => (
+              <span key={a.date} style={dayChip('#FFF8E5')}>
+                <span style={{ fontWeight: 700, color: '#6B5008' }}>{fmtDay(a.date)}</span>
+                <span style={{ color: '#6B5008' }}>{a.weekday}</span>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ---- helpers ------------------------------------------------------
 
 function buildFlagLines(data) {
@@ -380,6 +496,10 @@ function csvCell(v) {
   if (v == null) return '';
   const s = String(v);
   return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+function fmtDay(ymd) {
+  if (!ymd) return '—';
+  return new Date(ymd + 'T00:00:00Z').toLocaleDateString(undefined, { day: 'numeric', month: 'short', timeZone: 'UTC' });
 }
 
 // ---- inline styles ------------------------------------------------

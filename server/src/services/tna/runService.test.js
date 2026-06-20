@@ -37,3 +37,31 @@ test('runPeriod throws a userError when no Employee ID column exists', () => {
     assert.throws(() => runPeriod({ attendancePath: p }), (e) => e.userError === true && /Employee ID/.test(e.message));
   } finally { rmSync(p, { force: true }); }
 });
+
+test('calendar: infers work days, finds absences, flags overnight shifts', () => {
+  // A works all 3 days; B is absent on the 2nd (a team work day); C works an
+  // overnight on the 1st (in 22:00 -> out 06:00 next day).
+  const p = tmpCsv([
+    'Employee ID,First Name,Department,Date,First Check In,Last Check Out,Total Time',
+    'A,Ann,CALO UAE,2026-06-01,08:00,17:00,9:00',
+    'A,Ann,CALO UAE,2026-06-02,08:00,17:00,9:00',
+    'A,Ann,CALO UAE,2026-06-03,08:00,17:00,9:00',
+    'B,Bob,CALO UAE,2026-06-01,08:00,17:00,9:00',
+    'B,Bob,CALO UAE,2026-06-03,08:00,17:00,9:00',
+    'C,Cy,CALO UAE,2026-06-01,22:00,06:00,8:00',
+    'C,Cy,CALO UAE,2026-06-02,08:00,17:00,9:00',
+    'C,Cy,CALO UAE,2026-06-03,08:00,17:00,9:00',
+  ].join('\n') + '\n');
+  try {
+    const r = runPeriod({ attendancePath: p });
+    assert.equal(r.daily.workDays.length, 3);
+    assert.equal(r.daily.offDays.length, 0);
+    const B = r.rows.find((x) => x.empCode === 'B');
+    assert.equal(B.daysWorked, 2);
+    assert.equal(B.absentDays, 1);
+    assert.equal(B.absences[0].date, '2026-06-02');
+    assert.equal(r.rows.find((x) => x.empCode === 'C').overnightDays, 1);
+    assert.equal(r.daily.totalAbsences, 1);
+    assert.equal(r.daily.totalOvernight, 1);
+  } finally { rmSync(p, { force: true }); }
+});

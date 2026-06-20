@@ -41,9 +41,10 @@ for (const g of r.byCountry) {
   console.log(`  ${g.country} (OT > ${g.rule}): ${g.emps} emp · ${g.present} present-days · ${g.otDays} OT-days · ${g.otHours.toFixed(1)} OT-hours` + (g.country === 'UAE' ? `   [at flat 9h it would be ${g.otDays9} OT-days]` : ''));
 }
 console.log(`\nTOTAL in-scope: ${r.totals.otDays} OT-days · ${r.totals.otHours.toFixed(1)} OT-hours`);
+if (r.daily.periodStart) console.log(`Calendar ${r.daily.periodStart}..${r.daily.periodEnd}: ${r.daily.workDays.length} work-days / ${r.daily.offDays.length} off-days (inferred) · ${r.daily.totalAbsences} absences · ${r.daily.totalOvernight} overnight shifts`);
 
-const header = 'empCode,name,country,dept,present,otDays,otHours,otDays_at_9h,source,position,inScope,nameMismatch';
-const lines = [header, ...r.rows.map((e) => [e.empCode, e.name, e.country, e.dept, e.present, e.otDays, e.otHours, e.otDays9, e.source, e.position, e.inScope, e.nameMismatch].map(csvCell).join(','))];
+const header = 'empCode,name,country,dept,daysWorked,absentDays,overnightDays,present,otDays,otHours,otDays_at_9h,source,position,inScope,nameMismatch';
+const lines = [header, ...r.rows.map((e) => [e.empCode, e.name, e.country, e.dept, e.daysWorked, e.absentDays, e.overnightDays, e.present, e.otDays, e.otHours, e.otDays9, e.source, e.position, e.inScope, e.nameMismatch].map(csvCell).join(','))];
 writeFileSync(DETAIL_CSV, lines.join('\n'));
 console.log(`\nDetail -> ${DETAIL_CSV} (local only).`);
 if (process.env.TNA_XLSX) { writeFileSync(process.env.TNA_XLSX, buildWorkbook(r)); console.log(`Excel  -> ${process.env.TNA_XLSX}`); }

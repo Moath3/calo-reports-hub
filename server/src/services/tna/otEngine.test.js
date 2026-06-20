@@ -2,9 +2,24 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { pairPunches } from './otEngine.js';
 import { classifyDay } from './otEngine.js';
-import { DEFAULT_OT_CONFIG as CFG } from './otConfig.js';
+import { DEFAULT_OT_CONFIG as CFG, getOtConfig } from './otConfig.js';
 
 const work = { status: 'work', scheduledMinutes: 540 };
+
+test('UAE 10h threshold: 9.5h is regular, 10.5h has 30m OT', () => {
+  const uae = getOtConfig('CALO UAE'); // 600 min
+  assert.equal(classifyDay({ workedMinutes: 570, incomplete: false }, work, uae).overtime, 0);
+  const r = classifyDay({ workedMinutes: 630, incomplete: false }, work, uae);
+  assert.equal(r.regular, 600);
+  assert.equal(r.overtime, 30);
+});
+
+test('KSA 9h threshold: same 9.5h day is already 30m OT', () => {
+  const ksa = getOtConfig('CALO RIYADH'); // 540 min
+  const r = classifyDay({ workedMinutes: 570, incomplete: false }, work, ksa);
+  assert.equal(r.regular, 540);
+  assert.equal(r.overtime, 30);
+});
 
 test('worked beyond 9h splits into regular 540 + overtime', () => {
   const r = classifyDay({ workedMinutes: 630, incomplete: false }, work, CFG);

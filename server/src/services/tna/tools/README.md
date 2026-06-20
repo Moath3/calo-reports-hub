@@ -48,6 +48,28 @@ node server/src/services/tna/tools/parityCheck.mjs
 
 Validated on May 2026: 537/537 employees exact, 6,386 OT-days, 512 with OT.
 
+## runPeriod.mjs — the actual OT run (per-country thresholds)
+
+Computes per-employee overtime using the **per-country** rule — **UAE counts OT
+after 10h; KSA, Kuwait and Bahrain after 9h** — joins to HR masters by ID (no
+name-gating; attendance often has first-name only), and scopes to blue-collar
+production. Prints a per-country summary; per-employee detail -> local CSV.
+
+```powershell
+$env:TNA_ATTENDANCE = 'C:\path\Over time Punch IN & OUT Report ... .csv'
+$env:TNA_MASTERS    = 'GCC=C:\path\Calo Master Employee Tracker GCC.xlsx'   # optional: enables scope + names
+# optional: $env:TNA_MONTH = '2026-05'   (YYYY-MM filter; omit for a custom pay period)
+node server/src/services/tna/tools/runPeriod.mjs
+```
+
+Country is resolved from the attendance `Department` (e.g. "CALO UAE"), falling
+back to the master's entity/location; unknown-country employees use the 9h
+default and are flagged. The summary also shows what a flat-9h rule *would* have
+counted, so the per-country saving is visible.
+
+Validated on the UAE May 16–Jun 15 period: 145/145 joined, 100 blue-collar in
+scope, 1,249 OT-days at 10h (vs 1,657 if 9h were wrongly applied).
+
 ## mappingReport.mjs (in ../identity/)
 
 Same idea as `identityMapping.mjs` but pulls employees **live from BioTime**

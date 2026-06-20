@@ -74,33 +74,65 @@ export default function TimeAttendancePage() {
     () => (data?.rows || []).filter((r) => !inScopeOnly || r.inScope),
     [data, inScopeOnly]
   );
-  const detailRows = (rows) => rows.map((r) => ({
-    'Emp Code': r.empCode, Name: r.name, Country: r.country, Department: r.dept,
-    'Present-days': r.present, 'OT-days': r.otDays, 'OT-hours': r.otHours, 'OT-days @ 9h': r.otDays9,
-    Source: r.source, Position: r.position, 'In scope': r.inScope ? 'yes' : 'no', 'Name mismatch': r.nameMismatch ? 'yes' : '',
-  }));
-
   const downloadExcel = async () => {
     if (!data) return;
-    const XLSX = await import('xlsx');
-    const s = data.scope, f = data.flags;
-    const summary = [
-      ['CALO Time & Attendance — Overtime'],
-      ['Overtime rule', 'UAE after 10h · KSA / Kuwait / Bahrain after 9h'],
-      ['Detail rows', inScopeOnly ? 'in-scope only' : 'all employees'],
-      [],
-      ['Scope', `in-scope: ${s.inScope}`, `excluded (mgr/admin): ${s.excluded}`, `no position: ${s.noPosition}`, `unmatched: ${s.unmatched}`],
-      ['Flags', `unknown country: ${f.unknownCountry}`, `name mismatches: ${f.nameMismatches}`, `ambiguous IDs: ${f.ambiguousIds}`],
-      [],
-      ['Country', 'OT rule', 'Employees', 'Present-days', 'OT-days', 'OT-hours', 'OT-days @ flat 9h'],
-      ...data.byCountry.map((g) => [g.country, `> ${g.rule}`, g.emps, g.present, g.otDays, g.otHours, g.otDays9]),
-      [],
-      ['TOTAL', '', data.totals.employees, '', data.totals.otDays, data.totals.otHours, ''],
+    const mod = await import('exceljs');
+    const ExcelJS = mod.default ?? mod;
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'CALO Reports Hub';
+
+    // CALO palette (ARGB)
+    const GREEN = 'FF02B376', LIGHT = 'FFE7F7F0', ZEBRA = 'FFF4FBF8', INK = 'FF1A2B23', MUTE = 'FF6B7B74', WHITE = 'FFFFFFFF', AMBER = 'FF9A6F0E';
+    const F = (size, opts = {}) => ({ name: 'Calibri', size, color: { argb: INK }, ...opts });
+    const thin = { style: 'thin', color: { argb: 'FFD9E2DD' } };
+    const box = { top: thin, bottom: thin, left: thin, right: thin };
+    const fill = (argb) => ({ type: 'pattern', pattern: 'solid', fgColor: { argb } });
+    const head = (c) => { c.fill = fill(GREEN); c.font = F(11, { bold: true, color: { argb: WHITE } }); c.alignment = { horizontal: 'center', vertical: 'middle' }; c.border = box; };
+
+    // ── Summary ──────────────────────────────────────────────────
+    const sum = wb.addWorksheet('Summary', { views: [{ showGridLines: false }] });
+    sum.columns = [{ width: 26 }, { width: 16 }, { width: 13 }, { width: 14 }, { width: 12 }, { width: 12 }, { width: 16 }];
+    const banner = (row, text, font, h) => { sum.mergeCells(`A${row}:G${row}`); const c = sum.getCell(`A${row}`); c.value = text; c.font = font; c.alignment = { vertical: 'middle' }; if (h) sum.getRow(row).height = h; };
+    banner(1, 'calo', F(30, { bold: true, color: { argb: GREEN } }), 40);
+    banner(2, 'Time & Attendance — Overtime', F(16, { bold: true }));
+    banner(3, 'Overtime rule:   UAE after 10h    ·    KSA / Kuwait / Bahrain after 9h', F(10, { color: { argb: MUTE } }));
+    banner(4, `Period: ${month || 'full file'}      ·      Detail rows: ${inScopeOnly ? 'in-scope only' : 'all employees'}      ·      Generated ${new Date().toLocaleDateString()}`, F(10, { color: { argb: MUTE } }));
+    sum.addRow([]);
+
+    const s = data.scope;
+    const sl = sum.addRow(['In scope', 'Excluded (mgr/admin)', 'No position', 'Unmatched']);
+    sl.eachCell((c, i) => { if (i <= 4) { c.fill = fill(LIGHT); c.font = F(9, { bold: true, color: { argb: MUTE } }); c.alignment = { horizontal: 'center' }; c.border = box; } });
+    const sv = sum.addRow([s.inScope, s.excluded, s.noPosition, s.unmatched]);
+    sv.eachCell((c, i) => { if (i <= 4) { c.font = F(15, { bold: true, color: { argb: i === 1 ? GREEN : INK } }); c.alignment = { horizontal: 'center' }; c.border = box; } });
+    sum.addRow([]);
+
+    const hdr = sum.addRow(['Country', 'OT rule', 'Employees', 'Present-days', 'OT-days', 'OT-hours', 'OT-days @ 9h']);
+    hdr.eachCell(head);
+    data.byCountry.forEach((g, idx) => {
+      const row = sum.addRow([g.country, `> ${g.rule}`, g.emps, g.present, g.otDays, g.otHours, g.otDays9]);
+      row.eachCell((c, i) => { c.border = box; c.font = F(11); c.alignment = { horizontal: i <= 2 ? 'left' : 'right' }; if (idx % 2) c.fill = fill(ZEBRA); });
+      row.getCell(5).font = F(11, { bold: true, color: { argb: GREEN } });
+    });
+    const tot = sum.addRow(['TOTAL', '', data.totals.employees, '', data.totals.otDays, data.totals.otHours, '']);
+    tot.eachCell((c, i) => { c.fill = fill(LIGHT); c.font = F(11, { bold: true }); c.border = { ...box, top: { style: 'medium', color: { argb: GREEN } } }; if (i >= 3) c.alignment = { horizontal: 'right' }; });
+
+    // ── Detail ───────────────────────────────────────────────────
+    const det = wb.addWorksheet('Detail', { views: [{ state: 'frozen', ySplit: 1, showGridLines: false }] });
+    det.columns = [
+      { header: 'Emp Code', width: 14 }, { header: 'Name', width: 26 }, { header: 'Country', width: 10 },
+      { header: 'Department', width: 24 }, { header: 'Position', width: 22 }, { header: 'Present', width: 9 },
+      { header: 'OT-days', width: 9 }, { header: 'OT-hours', width: 10 }, { header: 'In scope', width: 9 }, { header: 'Flag', width: 18 },
     ];
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(summary), 'Summary');
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(detailRows(exportRows)), 'Detail');
-    const buf = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
+    det.getRow(1).eachCell(head);
+    det.autoFilter = 'A1:J1';
+    exportRows.forEach((r, idx) => {
+      const row = det.addRow([r.empCode, r.name || '', r.country, r.dept || '', r.position || (r.matched ? '(blank)' : ''), r.present, r.otDays, r.otHours, r.inScope ? 'yes' : 'no', r.nameMismatch ? '⚠ name mismatch' : '']);
+      row.eachCell((c, i) => { c.border = box; c.font = F(10); c.alignment = { horizontal: (i >= 6 && i <= 8) ? 'right' : 'left', vertical: 'middle' }; if (idx % 2) c.fill = fill(ZEBRA); });
+      if (r.nameMismatch) row.getCell(10).font = F(10, { bold: true, color: { argb: AMBER } });
+      if (!r.inScope) row.getCell(9).font = F(10, { color: { argb: MUTE } });
+    });
+
+    const buf = await wb.xlsx.writeBuffer();
     triggerDownload(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), `calo-time-attendance-${month || 'period'}.xlsx`);
   };
   const downloadCsv = () => {
@@ -120,10 +152,24 @@ export default function TimeAttendancePage() {
 
       {/* Upload + options */}
       <div style={panel}>
-        <div style={{ fontSize: 13, color: 'var(--ink-700)', marginBottom: 16, lineHeight: 1.5 }}>
+        <div style={{ fontSize: 13, color: 'var(--ink-700)', marginBottom: 12, lineHeight: 1.5 }}>
           Overtime rule: <b>UAE after 10h</b> · <b>KSA / Kuwait / Bahrain after 9h</b>. Upload the attendance
           export, plus the HR master file(s) so the report can name employees and scope to blue-collar production.
         </div>
+        <details style={{ marginBottom: 16, border: '1px solid var(--ink-200)', borderRadius: 'var(--r-sm)', padding: '10px 14px', background: 'var(--ink-50)' }}>
+          <summary style={{ cursor: 'pointer', fontSize: 13, fontWeight: 800, color: 'var(--calo-700, #1e8359)' }}>
+            What do “in scope” and the other terms mean?
+          </summary>
+          <div style={{ fontSize: 13, color: 'var(--ink-700)', lineHeight: 1.6, marginTop: 10, display: 'grid', gap: 7 }}>
+            <div><b>Overtime rule</b> — OT is counted after <b>10h/day in the UAE</b> and after <b>9h/day in KSA, Kuwait &amp; Bahrain</b>. Each employee’s country is read from their Department (or master entity).</div>
+            <div><b>In scope</b> — blue-collar production staff who are counted for overtime: matched to a master, with a position that isn’t a manager/admin/supervisor. <b>Only these feed the per-country cards and the totals.</b></div>
+            <div><b>Excluded (manager/admin)</b> — matched, but the title is a manager/supervisor/admin type, so left out of the OT totals.</div>
+            <div><b>No position</b> — matched to a master but the position cell is blank, so not counted. Fix the master or include them manually.</div>
+            <div><b>Unmatched</b> — not found in any uploaded master (e.g. a new joiner, or the wrong/old master). Refresh the master to include them.</div>
+            <div><b>Flags</b> — <i>unknown country</i> (scored at the 9h default — fix the Department/entity), <i>name mismatch</i> (attendance name disagrees with the master — possible ID mix-up, shown ⚠ in the table), <i>ambiguous IDs</i> (one ID maps to two different people).</div>
+            <div><b>Downloads</b> — Excel &amp; CSV follow the “In-scope only” toggle above the table.</div>
+          </div>
+        </details>
         <div style={{ display: 'grid', gap: 16 }}>
           <Field label="Attendance export (required) — .csv / .xlsx">
             <input type="file" accept=".csv,.xlsx,.xls" onChange={(e) => setAttendance(e.target.files?.[0] || null)} style={fileInput} />

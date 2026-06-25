@@ -33,14 +33,20 @@ function writeTable(ws, top, cols, rows) {
   return top + 1 + rows.length + 1;
 }
 
-// A full-sheet table (frozen header + autofilter + column widths).
+// A full-sheet table (frozen header + autofilter + column widths). On big sheets
+// (thousands of rows — e.g. KSA Daily Log / Incomplete Punches) per-cell styling
+// would create 100k+ style objects and freeze the browser during writeBuffer, so
+// we skip per-cell borders/zebra there and keep only the styled header.
+const STYLE_ROW_LIMIT = 1500;
 function tableSheet(wb, name, cols, rows) {
   const ws = wb.addWorksheet(name, { views: [{ state: 'frozen', ySplit: 1, showGridLines: false }] });
   ws.columns = cols.map((c) => ({ width: c.width || 14 }));
   cols.forEach((c, i) => { const cell = ws.getRow(1).getCell(i + 1); cell.value = c.header; headCell(cell); });
   ws.autoFilter = `A1:${colLetter(cols.length)}1`;
+  const light = rows.length > STYLE_ROW_LIMIT;
   rows.forEach((cells, ri) => {
     const row = ws.addRow(cells);
+    if (light) return; // keep large sheets responsive — header stays styled
     row.eachCell((cell, i) => {
       cell.border = box; cell.font = F(10);
       cell.alignment = { horizontal: cols[i - 1]?.align || 'left', vertical: 'middle' };

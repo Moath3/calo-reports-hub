@@ -1,6 +1,7 @@
 import { useState, useMemo, useCallback, Fragment } from 'react';
 import api from '../utils/api';
 import { Icon } from '../components/ui';
+import { buildBrandedWorkbook } from '../utils/tnaWorkbook';
 
 /**
  * TimeAttendancePage — upload an attendance export (+ optional HR master files),
@@ -80,92 +81,7 @@ export default function TimeAttendancePage() {
     if (!data) return;
     const mod = await import('exceljs');
     const ExcelJS = mod.default ?? mod;
-    const wb = new ExcelJS.Workbook();
-    wb.creator = 'CALO Reports Hub';
-
-    // CALO palette (ARGB)
-    const GREEN = 'FF02B376', LIGHT = 'FFE7F7F0', ZEBRA = 'FFF4FBF8', INK = 'FF1A2B23', MUTE = 'FF6B7B74', WHITE = 'FFFFFFFF', AMBER = 'FF9A6F0E';
-    const F = (size, opts = {}) => ({ name: 'Calibri', size, color: { argb: INK }, ...opts });
-    const thin = { style: 'thin', color: { argb: 'FFD9E2DD' } };
-    const box = { top: thin, bottom: thin, left: thin, right: thin };
-    const fill = (argb) => ({ type: 'pattern', pattern: 'solid', fgColor: { argb } });
-    const head = (c) => { c.fill = fill(GREEN); c.font = F(11, { bold: true, color: { argb: WHITE } }); c.alignment = { horizontal: 'center', vertical: 'middle' }; c.border = box; };
-
-    // ── Summary ──────────────────────────────────────────────────
-    const sum = wb.addWorksheet('Summary', { views: [{ showGridLines: false }] });
-    sum.columns = [{ width: 26 }, { width: 16 }, { width: 13 }, { width: 14 }, { width: 12 }, { width: 12 }, { width: 16 }];
-    const banner = (row, text, font, h) => { sum.mergeCells(`A${row}:G${row}`); const c = sum.getCell(`A${row}`); c.value = text; c.font = font; c.alignment = { vertical: 'middle' }; if (h) sum.getRow(row).height = h; };
-    banner(1, 'calo', F(30, { bold: true, color: { argb: GREEN } }), 40);
-    banner(2, 'Time & Attendance — Overtime', F(16, { bold: true }));
-    banner(3, 'Overtime rule:   UAE after 10h    ·    KSA / Kuwait / Bahrain after 9h', F(10, { color: { argb: MUTE } }));
-    banner(4, `Period: ${month || 'full file'}      ·      Detail rows: ${inScopeOnly ? 'in-scope only' : 'all employees'}      ·      Generated ${new Date().toLocaleDateString()}`, F(10, { color: { argb: MUTE } }));
-    sum.addRow([]);
-
-    const s = data.scope;
-    const sl = sum.addRow(['In scope', 'Excluded (mgr/admin)', 'No position', 'Unmatched']);
-    sl.eachCell((c, i) => { if (i <= 4) { c.fill = fill(LIGHT); c.font = F(9, { bold: true, color: { argb: MUTE } }); c.alignment = { horizontal: 'center' }; c.border = box; } });
-    const sv = sum.addRow([s.inScope, s.excluded, s.noPosition, s.unmatched]);
-    sv.eachCell((c, i) => { if (i <= 4) { c.font = F(15, { bold: true, color: { argb: i === 1 ? GREEN : INK } }); c.alignment = { horizontal: 'center' }; c.border = box; } });
-    sum.addRow([]);
-
-    const hdr = sum.addRow(['Country', 'OT rule', 'Employees', 'Present-days', 'OT-days', 'OT-hours', 'OT-days @ 9h']);
-    hdr.eachCell(head);
-    data.byCountry.forEach((g, idx) => {
-      const row = sum.addRow([g.country, `> ${g.rule}`, g.emps, g.present, g.otDays, g.otHours, g.otDays9]);
-      row.eachCell((c, i) => { c.border = box; c.font = F(11); c.alignment = { horizontal: i <= 2 ? 'left' : 'right' }; if (idx % 2) c.fill = fill(ZEBRA); });
-      row.getCell(5).font = F(11, { bold: true, color: { argb: GREEN } });
-    });
-    const tot = sum.addRow(['TOTAL', '', data.totals.employees, '', data.totals.otDays, data.totals.otHours, '']);
-    tot.eachCell((c, i) => { c.fill = fill(LIGHT); c.font = F(11, { bold: true }); c.border = { ...box, top: { style: 'medium', color: { argb: GREEN } } }; if (i >= 3) c.alignment = { horizontal: 'right' }; });
-
-    // ── Detail ───────────────────────────────────────────────────
-    const det = wb.addWorksheet('Detail', { views: [{ state: 'frozen', ySplit: 1, showGridLines: false }] });
-    det.columns = [
-      { header: 'Emp Code', width: 14 }, { header: 'Name', width: 26 }, { header: 'Country', width: 10 },
-      { header: 'Department', width: 24 }, { header: 'Position', width: 22 }, { header: 'Present', width: 9 },
-      { header: 'OT-days', width: 9 }, { header: 'OT-hours', width: 10 }, { header: 'In scope', width: 9 }, { header: 'Flag', width: 18 },
-    ];
-    det.getRow(1).eachCell(head);
-    det.autoFilter = 'A1:J1';
-    exportRows.forEach((r, idx) => {
-      const row = det.addRow([r.empCode, r.name || '', r.country, r.dept || '', r.position || (r.matched ? '(blank)' : ''), r.present, r.otDays, r.otHours, r.inScope ? 'yes' : 'no', r.nameMismatch ? '⚠ name mismatch' : '']);
-      row.eachCell((c, i) => { c.border = box; c.font = F(10); c.alignment = { horizontal: (i >= 6 && i <= 8) ? 'right' : 'left', vertical: 'middle' }; if (idx % 2) c.fill = fill(ZEBRA); });
-      if (r.nameMismatch) row.getCell(10).font = F(10, { bold: true, color: { argb: AMBER } });
-      if (!r.inScope) row.getCell(9).font = F(10, { color: { argb: MUTE } });
-    });
-
-    // ── Daily (per present-day log) ──────────────────────────────
-    const daily = wb.addWorksheet('Daily', { views: [{ state: 'frozen', ySplit: 1, showGridLines: false }] });
-    daily.columns = [
-      { header: 'Emp Code', width: 14 }, { header: 'Name', width: 24 }, { header: 'Country', width: 9 }, { header: 'Department', width: 22 },
-      { header: 'Date', width: 12 }, { header: 'Weekday', width: 10 }, { header: 'Hours', width: 9 }, { header: 'Check In', width: 10 }, { header: 'Check Out', width: 10 }, { header: 'Overnight', width: 10 },
-    ];
-    daily.getRow(1).eachCell(head);
-    daily.autoFilter = 'A1:J1';
-    let di = 0;
-    exportRows.forEach((r) => (r.days || []).forEach((d) => {
-      const row = daily.addRow([r.empCode, r.name || '', r.country, r.dept || '', d.date, d.weekday, d.hours, d.checkIn || '', d.checkOut || '', d.overnight ? 'yes' : '']);
-      row.eachCell((c, i) => { c.border = box; c.font = F(10); c.alignment = { horizontal: i === 7 ? 'right' : 'left', vertical: 'middle' }; if (di % 2) c.fill = fill(ZEBRA); });
-      if (d.overnight) row.getCell(10).font = F(10, { bold: true, color: { argb: GREEN } });
-      di++;
-    }));
-
-    // ── Absences (inferred — review) ─────────────────────────────
-    const abs = wb.addWorksheet('Absences', { views: [{ state: 'frozen', ySplit: 1, showGridLines: false }] });
-    abs.columns = [
-      { header: 'Emp Code', width: 14 }, { header: 'Name', width: 24 }, { header: 'Country', width: 9 }, { header: 'Department', width: 22 },
-      { header: 'Absent Date', width: 12 }, { header: 'Weekday', width: 10 }, { header: 'Note', width: 22 },
-    ];
-    abs.getRow(1).eachCell(head);
-    abs.autoFilter = 'A1:G1';
-    let ai = 0;
-    exportRows.forEach((r) => (r.absences || []).forEach((a) => {
-      const row = abs.addRow([r.empCode, r.name || '', r.country, r.dept || '', a.date, a.weekday, 'inferred — review']);
-      row.eachCell((c) => { c.border = box; c.font = F(10); c.alignment = { vertical: 'middle' }; if (ai % 2) c.fill = fill(ZEBRA); });
-      row.getCell(7).font = F(10, { color: { argb: AMBER } });
-      ai++;
-    }));
-
+    const wb = buildBrandedWorkbook(ExcelJS, data, { inScopeOnly, month });
     const buf = await wb.xlsx.writeBuffer();
     triggerDownload(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), `calo-time-attendance-${month || 'period'}.xlsx`);
   };
@@ -269,6 +185,26 @@ export default function TimeAttendancePage() {
               <p style={{ margin: 0, fontSize: 13, color: '#6B5008', lineHeight: 1.5 }}>⚠ {f}</p>
             </div>
           ))}
+
+          {/* Executive summary (AI) */}
+          {data.narrative && (data.narrative.execSummary || (data.narrative.insights || []).length > 0) && (
+            <div style={panel}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                <div style={{ fontSize: 11, fontWeight: 900, letterSpacing: '.08em', color: 'var(--ink-500)' }}>EXECUTIVE SUMMARY</div>
+                <span style={{ fontSize: 10, fontWeight: 800, padding: '2px 8px', borderRadius: 999, background: data.narrative.ai ? 'var(--calo-50, #d9f0e5)' : 'var(--ink-100)', color: data.narrative.ai ? 'var(--calo-700, #1e8359)' : 'var(--ink-500)' }}>
+                  {data.narrative.ai ? 'AI' : 'auto'}
+                </span>
+              </div>
+              {data.narrative.execSummary && <p style={{ margin: 0, fontSize: 14, color: 'var(--ink-900)', lineHeight: 1.6 }}>{data.narrative.execSummary}</p>}
+              {(data.narrative.insights || []).length > 0 && (
+                <ul style={{ margin: '12px 0 0 0', paddingLeft: 18, display: 'grid', gap: 5 }}>
+                  {data.narrative.insights.map((ins, i) => (
+                    <li key={i} style={{ fontSize: 13, color: 'var(--ink-700)', lineHeight: 1.5 }}>{ins}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
 
           {/* Per-country cards */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 16 }}>

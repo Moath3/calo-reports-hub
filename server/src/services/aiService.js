@@ -288,6 +288,74 @@ export function buildRefineSystemPrompt(section, instruction) {
  * Reads the conversation and decides: ask one more clarifying question,
  * or declare ready and produce the full brief that will be passed to /analyze.
  */
+/**
+ * Time & Attendance report narrative. Generates an executive summary + a few
+ * "what to watch" insights from AGGREGATE figures ONLY — no employee names/IDs
+ * are ever passed in. Falls back to a deterministic templated summary if the
+ * API key is missing or the call fails, so the report is never blocked.
+ */
+export function buildTnaNarrativePrompt() {
+  return `You are CALO's HR operations analyst. Write a concise, factual executive summary of a Time & Attendance overtime report, using ONLY the aggregate figures provided. Never invent numbers, names, or facts not in the data.
+
+Return ONLY a JSON object (no markdown, no code fences):
+{
+  "execSummary": "2-4 sentences: in-scope headcount, the overtime load, absences, and any data-quality concerns for the period.",
+  "insights": ["3-5 short, action-oriented observations a manager should act on — e.g. a department with outsized overtime, high absence, or anomalies to clean up"]
+}
+
+RULES:
+- Plain, professional tone. No greetings, no fluff, no recommendations to 'consult HR'.
+- Use the real figures from the data; round naturally (e.g. "1,249 OT-days").
+- "insights": at most 5 items, each ONE sentence, concrete and tied to a figure.
+- Don't comment on figures that are zero or absent.
+- Remember the absences are INFERRED (no roster) — describe them as such, not as confirmed no-shows.
+- Output ONLY the JSON object.`;
+}
+
+function buildTnaFallback(a) {
+  const countries = (a.byCountry || []).map((x) => `${x.country} ${x.otDays} OT-days`).join(', ');
+  const flagged = (a.flags?.unknownCountry || 0) + (a.flags?.nameMismatches || 0) + (a.flags?.ambiguousIds || 0);
+  const execSummary = `${a.totals?.employees || 0} in-scope employees` +
+    (a.period?.start ? ` from ${a.period.start} to ${a.period.end}` : '') +
+    `: ${a.totals?.otDays || 0} OT-days (${a.totals?.otHours || 0} hours)` +
+    (countries ? ` — ${countries}` : '') +
+    `. ${a.absencesTotal || 0} inferred absences and ${a.overnightTotal || 0} overnight shifts` +
+    (a.missingHoursDays ? `, plus ${a.missingHoursDays} employee-days with incomplete punches to chase` : '') +
+    (flagged ? `; ${flagged} records flagged for data review.` : '.');
+  const insights = [];
+  const top = (a.topDepts || [])[0];
+  if (top && top.otDays) insights.push(`${top.dept} carries the most overtime (${top.otDays} OT-days across ${top.employees} staff).`);
+  if (a.flags?.unknownCountry) insights.push(`${a.flags.unknownCountry} in-scope employees have an unknown country — fix their department/entity so the 9h vs 10h rule applies correctly.`);
+  if (a.missingHoursDays) insights.push(`${a.missingHoursDays} employee-days have no recorded hours — review for incomplete punches.`);
+  if (a.flags?.nameMismatches) insights.push(`${a.flags.nameMismatches} matched rows have a name that disagrees with the master — possible ID collisions.`);
+  if (a.flags?.ambiguousIds) insights.push(`${a.flags.ambiguousIds} IDs map to more than one person in the masters — clean up duplicate IDs.`);
+  return { execSummary, insights };
+}
+
+export async function generateTnaNarrative(aggregates) {
+  const fallback = buildTnaFallback(aggregates || {});
+  if (!process.env.CLAUDE_API_KEY) return { ...fallback, ai: false };
+  try {
+    const res = await callAI(
+      "claude-sonnet",
+      buildTnaNarrativePrompt(),
+      "Aggregate figures (no names included):\n" + JSON.stringify(aggregates, null, 2),
+      { maxTokens: 1200, timeout: 60000, effort: "low", requestType: "tna-narrative" }
+    );
+    const parsed = extractJSON(res.text);
+    if (parsed && (parsed.execSummary || parsed.insights)) {
+      return {
+        execSummary: String(parsed.execSummary || fallback.execSummary),
+        insights: Array.isArray(parsed.insights) ? parsed.insights.slice(0, 5).map(String) : fallback.insights,
+        ai: true,
+      };
+    }
+    return { ...fallback, ai: false };
+  } catch (e) {
+    return { ...fallback, ai: false, error: e.message };
+  }
+}
+
 export function buildPlanSystemPrompt() {
   return `You are Calo Report Assistant, helping the user PLAN a report before it is built.
 

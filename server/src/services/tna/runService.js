@@ -125,13 +125,13 @@ export function runPeriod({ attendancePath, masters = [], month = null }) {
     const days = [...e.days.values()].sort((a, b) => (a.date < b.date ? -1 : 1)).map((d) => {
       const ci = parseMinutes(d.checkIn), co = parseMinutes(d.checkOut);
       const overnight = ci != null && co != null && co < ci; // out clock strictly before in -> crossed midnight
-      let ot = false;
+      let ot = false, dayOtMin = 0;
       if (d.minutes != null) {
         const c = classifyDay({ workedMinutes: d.minutes, incomplete: false }, { status: 'work', scheduledMinutes: cfgMin }, cfg);
-        if ((c.overtime || 0) > 0) { otDays += 1; otMin += c.overtime; ot = true; }
+        if ((c.overtime || 0) > 0) { otDays += 1; otMin += c.overtime; ot = true; dayOtMin = c.overtime; }
         if (d.minutes > 540) otDays9 += 1; // illustrative flat-9h comparison
       }
-      return { date: d.date, weekday: weekdayOf(d.date), hours: d.minutes != null ? +(d.minutes / 60).toFixed(2) : null, checkIn: d.checkIn || '', checkOut: d.checkOut || '', overnight, ot };
+      return { date: d.date, weekday: weekdayOf(d.date), hours: d.minutes != null ? +(d.minutes / 60).toFixed(2) : null, checkIn: d.checkIn || '', checkOut: d.checkOut || '', overnight, ot, otMin: dayOtMin };
     });
     const position = sc.position || '';
     const matched = scopeBy.has(e.empCode);
@@ -212,26 +212,81 @@ export function runPeriod({ attendancePath, masters = [], month = null }) {
     };
   }
 
+  const scope = {
+    matched: scopeBy.size,
+    inScope: inScopeRows.length,
+    excluded: outRows.filter((e) => e.isExcluded).length,
+    noPosition: outRows.filter((e) => e.noPosition).length,
+    unmatched: hasMasters ? outRows.filter((e) => !e.matched).length : 0,
+  };
+  const flags = {
+    ambiguousIds, nameMismatches,
+    unknownCountry: inScopeRows.filter((e) => e.country === 'UNKNOWN').length,
+    // master(s) supplied but nothing joined -> everyone is unmatched and the
+    // totals read as a misleading zero; surface it loudly instead.
+    mastersMatchedNone: hasMasters && scopeBy.size === 0,
+  };
+
+  // ── Report aggregates (drive the 9-sheet report + the AI narrative) ──
+  const workDaySet = new Set(daily.workDays);
+  // Per-date roll-up: who's present/absent/on-OT each day.
+  const byDateMap = new Map();
+  const touchDate = (date, weekday) => { let g = byDateMap.get(date); if (!g) { g = { date, weekday, present: 0, absent: 0, onOt: 0, otHours: 0 }; byDateMap.set(date, g); } return g; };
+  for (const e of inScopeRows) {
+    for (const d of e.days) { const g = touchDate(d.date, d.weekday); g.present += 1; if (d.ot) { g.onOt += 1; g.otHours += d.otMin / 60; } }
+    for (const a of e.absences) { touchDate(a.date, a.weekday).absent += 1; }
+  }
+  const byDate = [...byDateMap.values()].sort((a, b) => (a.date < b.date ? -1 : 1))
+    .map((g) => ({ ...g, otHours: +g.otHours.toFixed(1), isWorkDay: workDaySet.has(g.date) }));
+
+  // Per-department (with country) roll-up.
+  const byDeptMap = new Map();
+  for (const e of inScopeRows) {
+    const key = (e.dept || '(no dept)') + '||' + e.country;
+    let g = byDeptMap.get(key);
+    if (!g) { g = { dept: e.dept || '(no dept)', country: e.country, employees: 0, presentDays: 0, otDays: 0, otHours: 0, absences: 0 }; byDeptMap.set(key, g); }
+    g.employees += 1; g.presentDays += e.present; g.otDays += e.otDays; g.otHours += e.otHours; g.absences += e.absentDays;
+  }
+  const byDept = [...byDeptMap.values()].map((g) => ({ ...g, otHours: +g.otHours.toFixed(1) })).sort((a, b) => b.otDays - a.otDays);
+
+  const topOt = inScopeRows.filter((e) => e.otDays > 0).sort((a, b) => b.otDays - a.otDays || b.otHours - a.otHours).slice(0, 10)
+    .map((e) => ({ empCode: e.empCode, name: e.name, country: e.country, dept: e.dept, otDays: e.otDays, otHours: e.otHours }));
+  const topAbsent = inScopeRows.filter((e) => e.absentDays > 0).sort((a, b) => b.absentDays - a.absentDays).slice(0, 10)
+    .map((e) => ({ empCode: e.empCode, name: e.name, dept: e.dept, absentDays: e.absentDays }));
+
+  // Missing-hours employee-days (row present but no Total Time) — our stand-in
+  // for "incomplete punches" since the totals export has no raw punches.
+  const missingHours = [];
+  for (const e of inScopeRows) for (const d of e.days) if (d.hours == null) missingHours.push({ empCode: e.empCode, name: e.name, dept: e.dept, date: d.date, weekday: d.weekday, checkIn: d.checkIn || '', checkOut: d.checkOut || '' });
+
+  // PII-FREE bundle for the AI narrative — counts/totals/dept-names only, NO
+  // employee names or IDs.
+  const aggregates = {
+    period: { start: daily.periodStart, end: daily.periodEnd, workDays: daily.workDays.length, offDays: daily.offDays.length },
+    totals,
+    byCountry,
+    scope,
+    flags,
+    topDepts: byDept.slice(0, 8).map((d) => ({ dept: d.dept, country: d.country, employees: d.employees, otDays: d.otDays, otHours: d.otHours, absences: d.absences })),
+    absencesTotal: daily.totalAbsences,
+    overnightTotal: daily.totalOvernight,
+    missingHoursDays: missingHours.length,
+  };
+
   return {
     attendance: { employees: emp.size, cols },
     masters: mastersMeta,
-    scope: {
-      matched: scopeBy.size,
-      inScope: inScopeRows.length,
-      excluded: outRows.filter((e) => e.isExcluded).length,
-      noPosition: outRows.filter((e) => e.noPosition).length,
-      unmatched: hasMasters ? outRows.filter((e) => !e.matched).length : 0,
-    },
-    flags: {
-      ambiguousIds, nameMismatches,
-      unknownCountry: inScopeRows.filter((e) => e.country === 'UNKNOWN').length,
-      // master(s) supplied but nothing joined -> everyone is unmatched and the
-      // totals read as a misleading zero; surface it loudly instead.
-      mastersMatchedNone: hasMasters && scopeBy.size === 0,
-    },
+    scope,
+    flags,
     byCountry,
     totals,
     daily,
+    byDate,
+    byDept,
+    topOt,
+    topAbsent,
+    missingHours,
+    aggregates,
     rows: outRows,
   };
 }

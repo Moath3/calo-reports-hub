@@ -5,6 +5,7 @@ import { fileURLToPath } from "url";
 import { dirname, join, extname, basename } from "path";
 import { unlinkSync, existsSync, mkdirSync } from "fs";
 import { runPeriod } from "../services/tna/runService.js";
+import { generateTnaNarrative } from "../services/aiService.js";
 import { requireAuth } from "../middleware/auth.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { badRequest, HttpError } from "../utils/httpError.js";
@@ -63,9 +64,13 @@ router.post("/run", requireAuth, (req, res, next) => {
     }));
 
     const result = runPeriod({ attendancePath: attendance.path, masters, month });
+    // Claude writes the exec summary + insights from aggregate figures only
+    // (no names/PII). Falls back to a templated summary if the API call fails.
+    const narrative = await generateTnaNarrative(result.aggregates);
     // The Excel/CSV are built client-side from this result so they honor the
-    // user's in-scope toggle; no need to ship a pre-built workbook here.
-    res.json({ ...result, attendanceName: attendance.originalname });
+    // user's in-scope toggle; the AI-only `aggregates` bundle isn't needed there.
+    const { aggregates, ...rest } = result;
+    res.json({ ...rest, narrative, attendanceName: attendance.originalname });
   } catch (err) {
     if (err instanceof HttpError) throw err;        // explicit 400s pass through
     if (err.userError) throw new HttpError(400, err.message); // expected input problems

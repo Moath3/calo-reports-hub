@@ -78,6 +78,32 @@ test('overnight is NOT flagged when check-in equals check-out', () => {
   } finally { rmSync(p, { force: true }); }
 });
 
+test('report aggregates: byDate / byDept / topOt / missingHours, and aggregates carry no names', () => {
+  const p = tmpCsv([
+    'Employee ID,First Name,Department,Date,Total Time',
+    'A,Ann,CALO UAE - Kitchen,2026-06-01,11:00',   // OT (11h > 10h UAE)
+    'A,Ann,CALO UAE - Kitchen,2026-06-02,9:00',
+    'B,Bob,CALO UAE - Kitchen,2026-06-01,12:00',    // OT
+    'B,Bob,CALO UAE - Kitchen,2026-06-02,',          // missing hours
+    'C,Cy,CALO UAE - Dispatch,2026-06-01,8:00',
+    'C,Cy,CALO UAE - Dispatch,2026-06-02,8:00',
+  ].join('\n') + '\n');
+  try {
+    const r = runPeriod({ attendancePath: p });
+    const d1 = r.byDate.find((x) => x.date === '2026-06-01');
+    assert.equal(d1.present, 3);
+    assert.equal(d1.onOt, 2);
+    const kitchen = r.byDept.find((x) => x.dept.includes('Kitchen'));
+    assert.equal(kitchen.employees, 2);
+    assert.ok(kitchen.otDays >= 2);
+    assert.ok(r.topOt.length >= 2);
+    assert.ok(r.missingHours.some((m) => m.empCode === 'B' && m.date === '2026-06-02'));
+    // The AI bundle must never carry employee names or IDs.
+    const blob = JSON.stringify(r.aggregates);
+    assert.ok(!/Ann|Bob|"name"|empCode/.test(blob), 'aggregates leaked names/ids');
+  } finally { rmSync(p, { force: true }); }
+});
+
 test('duplicate / split-shift rows for one employee-day merge into a single day', () => {
   const p = tmpCsv([
     'Employee ID,First Name,Department,Date,First Check In,Last Check Out,Total Time',

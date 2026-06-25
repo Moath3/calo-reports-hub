@@ -133,6 +133,11 @@ class ApiClient {
     });
   }
 
+  // Diagnostics — admin connectivity check for external integrations
+  async testConnections() {
+    return this.request('/diagnostics/connections');
+  }
+
   // Time & Attendance — run a per-country overtime report from an attendance
   // export (+ optional HR master files). Returns the structured result plus
   // an Excel workbook as base64.

@@ -3,7 +3,7 @@ import { useAuth } from '../contexts/AuthContext';
 import api from '../utils/api';
 import toast from 'react-hot-toast';
 import {
-  User, Lock, Shield, Loader2, Save, Users, ToggleLeft, ToggleRight, Clock, CheckCircle, XCircle
+  User, Lock, Shield, Loader2, Save, Users, ToggleLeft, ToggleRight, Clock, CheckCircle, XCircle, Plug
 } from 'lucide-react';
 
 export default function SettingsPage() {
@@ -15,6 +15,19 @@ export default function SettingsPage() {
   const [users, setUsers] = useState([]);
   const [usersLoaded, setUsersLoaded] = useState(false);
   const [loadingUsers, setLoadingUsers] = useState(false);
+  const [conn, setConn] = useState(null);
+  const [testingConn, setTestingConn] = useState(false);
+
+  const runConnectionTest = async () => {
+    setTestingConn(true);
+    try {
+      setConn(await api.testConnections());
+    } catch (err) {
+      toast.error(err.message || 'Test failed');
+    } finally {
+      setTestingConn(false);
+    }
+  };
 
   const handleProfileSave = async (e) => {
     e.preventDefault();
@@ -85,7 +98,10 @@ export default function SettingsPage() {
   const tabs = [
     { key: 'profile', label: 'Profile', icon: User },
     { key: 'password', label: 'Password', icon: Lock },
-    ...(user?.role === 'admin' ? [{ key: 'users', label: 'Manage Users', icon: Shield }] : []),
+    ...(user?.role === 'admin' ? [
+      { key: 'users', label: 'Manage Users', icon: Shield },
+      { key: 'integrations', label: 'Integrations', icon: Plug },
+    ] : []),
   ];
 
   return (
@@ -257,6 +273,39 @@ export default function SettingsPage() {
                   </div>
                 )}
               </div>
+            </div>
+          )}
+
+          {/* Integrations (admin only) */}
+          {tab === 'integrations' && user?.role === 'admin' && (
+            <div className="card p-6 max-w-lg space-y-5">
+              <div>
+                <h2 className="text-lg font-bold text-gray-900">Integrations</h2>
+                <p className="text-sm text-gray-500 mt-0.5">Check that the API keys set in the server environment are valid. Keys are never shown here.</p>
+              </div>
+
+              <button onClick={runConnectionTest} disabled={testingConn} className="btn-primary flex items-center gap-2">
+                {testingConn ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plug className="h-4 w-4" />} Test connections
+              </button>
+
+              {conn && (
+                <div className="space-y-2">
+                  {Object.values(conn.services).map((s) => (
+                    <div key={s.label} className={`flex items-start gap-3 rounded-lg border p-3 ${s.ok ? 'border-green-200 bg-green-50/50' : s.configured ? 'border-red-200 bg-red-50/50' : 'border-amber-200 bg-amber-50/50'}`}>
+                      {s.ok
+                        ? <CheckCircle className="h-5 w-5 text-green-600 shrink-0 mt-0.5" />
+                        : <XCircle className={`h-5 w-5 shrink-0 mt-0.5 ${s.configured ? 'text-red-600' : 'text-amber-600'}`} />}
+                      <div className="min-w-0">
+                        <div className="text-sm font-semibold text-gray-900">{s.label}</div>
+                        <div className="text-xs text-gray-600">{s.message}</div>
+                      </div>
+                    </div>
+                  ))}
+                  <div className="text-xs text-gray-400">Checked {new Date(conn.checkedAt).toLocaleTimeString()}</div>
+                </div>
+              )}
+
+              <p className="text-xs text-gray-400">Set keys in Render → Environment (<code>CLAUDE_API_KEY</code>, <code>NETLIFY_ACCESS_TOKEN</code>), then click Test connections.</p>
             </div>
           )}
         </div>

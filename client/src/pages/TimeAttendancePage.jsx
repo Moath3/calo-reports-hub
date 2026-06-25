@@ -1,6 +1,6 @@
-import { useState, useMemo, useCallback, Fragment } from 'react';
+import { useState, useMemo, useCallback, useRef, Fragment } from 'react';
 import api from '../utils/api';
-import { Icon } from '../components/ui';
+import { Icon, Btn, Card, Pill, Eyebrow, KpiTile, PageHeader } from '../components/ui';
 import { buildBrandedWorkbook } from '../utils/tnaWorkbook';
 
 /**
@@ -93,263 +93,271 @@ export default function TimeAttendancePage() {
   };
 
   const flagLines = data ? buildFlagLines(data) : [];
+  const hasMasters = data?.masters?.length > 0;
 
   return (
-    <PageWrap>
-      <Header />
+    <div style={{ maxWidth: 1180, margin: '0 auto' }}>
+      <PageHeader
+        eyebrow="HR · Time & Attendance"
+        title="Overtime"
+        subtitle="Turn a biometric export into a per-country overtime report. UAE counts OT after 10h; KSA, Kuwait & Bahrain after 9h."
+      />
 
-      {error && <ErrorBanner message={error} onClose={() => setError(null)} />}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+        {error && <ErrorBanner message={error} onClose={() => setError(null)} />}
 
-      {/* Upload + options */}
-      <div style={panel}>
-        <div style={{ fontSize: 13, color: 'var(--ink-700)', marginBottom: 12, lineHeight: 1.5 }}>
-          Overtime rule: <b>UAE after 10h</b> · <b>KSA / Kuwait / Bahrain after 9h</b>. Upload the attendance
-          export, plus the HR master file(s) so the report can name employees and scope to blue-collar production.
-        </div>
-        <details style={{ marginBottom: 16, border: '1px solid var(--ink-200)', borderRadius: 'var(--r-sm)', padding: '10px 14px', background: 'var(--ink-50)' }}>
-          <summary style={{ cursor: 'pointer', fontSize: 13, fontWeight: 800, color: 'var(--calo-700, #1e8359)' }}>
-            What do “in scope” and the other terms mean?
-          </summary>
-          <div style={{ fontSize: 13, color: 'var(--ink-700)', lineHeight: 1.6, marginTop: 10, display: 'grid', gap: 7 }}>
-            <div><b>Overtime rule</b> — OT is counted after <b>10h/day in the UAE</b> and after <b>9h/day in KSA, Kuwait &amp; Bahrain</b>. Each employee’s country is read from their Department (or master entity).</div>
-            <div><b>In scope</b> — blue-collar production staff who are counted for overtime: matched to a master, with a position that isn’t a manager/admin/supervisor. <b>Only these feed the per-country cards and the totals.</b></div>
-            <div><b>Excluded (manager/admin)</b> — matched, but the title is a manager/supervisor/admin type, so left out of the OT totals.</div>
-            <div><b>No position</b> — matched to a master but the position cell is blank, so not counted. Fix the master or include them manually.</div>
-            <div><b>Unmatched</b> — not found in any uploaded master (e.g. a new joiner, or the wrong/old master). Refresh the master to include them.</div>
-            <div><b>Days / Nights</b> — click any row to open a per-person calendar: each day worked with its hours and check-in/out. <b>Nights</b> = shifts that crossed midnight (check-out earlier than check-in); the hours already span midnight and count on the check-in date.</div>
-            <div><b>Absent (inferred)</b> — there’s no roster, so a date counts as a work day only if most of the team badged in that day, and absence = a work day inside the person’s own span (first→last seen) where they didn’t badge. <b>For 7-day sites with rotating days off, this includes rest days</b> — treat it as a review list, not final.</div>
-            <div><b>Flags</b> — <i>unknown country</i> (scored at the 9h default — fix the Department/entity), <i>name mismatch</i> (attendance name disagrees with the master — possible ID mix-up, shown ⚠ in the table), <i>ambiguous IDs</i> (one ID maps to two different people).</div>
-            <div><b>Downloads</b> — Excel &amp; CSV follow the “In-scope only” toggle above the table.</div>
-          </div>
-        </details>
-        <div style={{ display: 'grid', gap: 16 }}>
-          <Field label="Attendance export (required) — .csv / .xlsx">
-            <input type="file" accept=".csv,.xlsx,.xls" onChange={(e) => setAttendance(e.target.files?.[0] || null)} style={fileInput} />
-            {attendance && <FileChip name={attendance.name} onRemove={() => setAttendance(null)} />}
-          </Field>
+        {/* Upload + options */}
+        <Card padding={26}>
+          <details style={{ marginBottom: 18, border: '1px solid var(--ink-200)', borderRadius: 'var(--r-md)', padding: '12px 16px', background: 'var(--ink-50)' }}>
+            <summary style={{ cursor: 'pointer', fontSize: 13, fontWeight: 800, color: 'var(--calo-700)' }}>
+              How it works &amp; what the terms mean
+            </summary>
+            <div style={{ fontSize: 13, color: 'var(--ink-700)', lineHeight: 1.65, marginTop: 12, display: 'grid', gap: 8 }}>
+              <div><b>Overtime rule</b> — OT after <b>10h/day in the UAE</b> and <b>9h/day in KSA, Kuwait &amp; Bahrain</b>. Country is read from each employee's Department (or master entity).</div>
+              <div><b>In scope</b> — blue-collar production staff counted for OT: matched to a master, with a non-manager/admin position. Only these feed the cards and totals.</div>
+              <div><b>Excluded / No position / Unmatched</b> — managers &amp; admins; matched but blank position; or not found in any master.</div>
+              <div><b>Days / Nights</b> — click a row for a per-person calendar (hours + check-in/out). <b>Nights</b> = shifts crossing midnight.</div>
+              <div><b>Absent (inferred)</b> — no roster, so a work day = most of the team badged in; absence = a work day in the person's span with no badge. On 7-day sites this includes rest days — a review list, not final.</div>
+              <div><b>Downloads</b> — Excel &amp; CSV follow the "In-scope only" toggle.</div>
+            </div>
+          </details>
 
-          <Field label="HR master file(s) — optional, enables names + scope">
-            <input type="file" accept=".csv,.xlsx,.xls" multiple onChange={(e) => { addMasters(e.target.files); e.target.value = ''; }} style={fileInput} />
-            {masters.length > 0 && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8 }}>
-                {masters.map((m, i) => (
-                  <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                    <FileChip name={m.file.name} onRemove={() => removeMaster(i)} />
-                    <input
-                      value={m.sheet}
-                      onChange={(e) => setMasterSheet(i, e.target.value)}
-                      placeholder="sheet (optional, e.g. Luqmat Active)"
-                      style={{ ...select, width: 240, fontWeight: 500 }}
-                      title="Pin a specific sheet to avoid contaminated tabs. Leave blank to auto-detect."
-                    />
-                  </div>
-                ))}
-              </div>
-            )}
-          </Field>
-
-          <div style={{ display: 'flex', gap: 16, alignItems: 'flex-end', flexWrap: 'wrap' }}>
-            <Field label="Month filter (optional) — YYYY-MM">
-              <input value={month} onChange={(e) => setMonth(e.target.value.trim())} placeholder="e.g. 2026-05 (blank = whole file)" style={{ ...select, width: 220 }} />
+          <div style={{ display: 'grid', gap: 18 }}>
+            <Field label="Attendance export — required (.csv / .xlsx)">
+              <FilePicker accept=".csv,.xlsx,.xls" label="Choose attendance file" onPick={(files) => setAttendance(files?.[0] || null)} />
+              {attendance && <div style={{ marginTop: 10 }}><FileChip name={attendance.name} onRemove={() => setAttendance(null)} /></div>}
             </Field>
-            <button onClick={run} disabled={!attendance || loading} style={primaryBtn(!attendance || loading)}>
-              {loading ? 'Running…' : 'Run report'}
-            </button>
-          </div>
-        </div>
-      </div>
 
-      {data && (
-        <>
-          {/* Scope + flags */}
-          <div style={panel}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
-              <div style={{ fontSize: 14, color: 'var(--ink-700)' }}>
-                <b>{data.attendance.employees}</b> employees in the file
-                {data.masters?.length > 0 && <>
-                  {' · '}<b>{data.scope.inScope}</b> in scope · {data.scope.excluded} excluded (mgr/admin) · {data.scope.noPosition} no-position · {data.scope.unmatched} unmatched
-                </>}
-              </div>
-              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                <span style={{ fontSize: 11, color: 'var(--ink-500)' }} title="Exports follow the In-scope only toggle below the table.">
-                  exports: {inScopeOnly ? 'in-scope only' : 'all employees'}
-                </span>
-                <button onClick={downloadExcel} style={ghostBtn}><Icon name="Download" size={16} /> Excel</button>
-                <button onClick={downloadCsv} style={ghostBtn}><Icon name="Download" size={16} /> CSV</button>
-              </div>
-            </div>
-          </div>
-
-          {flagLines.map((f, i) => (
-            <div key={i} style={{ ...panel, background: '#FFF8E5', borderColor: '#F1D785', padding: '12px 18px' }}>
-              <p style={{ margin: 0, fontSize: 13, color: '#6B5008', lineHeight: 1.5 }}>⚠ {f}</p>
-            </div>
-          ))}
-
-          {/* Executive summary (AI) */}
-          {data.narrative && (data.narrative.execSummary || (data.narrative.insights || []).length > 0) && (
-            <div style={panel}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                <div style={{ fontSize: 11, fontWeight: 900, letterSpacing: '.08em', color: 'var(--ink-500)' }}>EXECUTIVE SUMMARY</div>
-                <span style={{ fontSize: 10, fontWeight: 800, padding: '2px 8px', borderRadius: 999, background: data.narrative.ai ? 'var(--calo-50, #d9f0e5)' : 'var(--ink-100)', color: data.narrative.ai ? 'var(--calo-700, #1e8359)' : 'var(--ink-500)' }}>
-                  {data.narrative.ai ? 'AI' : 'auto'}
-                </span>
-              </div>
-              {data.narrative.execSummary && <p style={{ margin: 0, fontSize: 14, color: 'var(--ink-900)', lineHeight: 1.6 }}>{data.narrative.execSummary}</p>}
-              {(data.narrative.insights || []).length > 0 && (
-                <ul style={{ margin: '12px 0 0 0', paddingLeft: 18, display: 'grid', gap: 5 }}>
-                  {data.narrative.insights.map((ins, i) => (
-                    <li key={i} style={{ fontSize: 13, color: 'var(--ink-700)', lineHeight: 1.5 }}>{ins}</li>
+            <Field label="HR master file(s) — optional, adds names + scope">
+              <FilePicker accept=".csv,.xlsx,.xls" multiple label="Add master file(s)" onPick={addMasters} />
+              {masters.length > 0 && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 10 }}>
+                  {masters.map((m, i) => (
+                    <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                      <FileChip name={m.file.name} onRemove={() => removeMaster(i)} />
+                      <input
+                        value={m.sheet}
+                        onChange={(e) => setMasterSheet(i, e.target.value)}
+                        placeholder="sheet (optional, e.g. Luqmat Active)"
+                        className="input-field"
+                        style={{ width: 250, height: 38, fontSize: 13 }}
+                        title="Pin a specific sheet to avoid contaminated tabs. Leave blank to auto-detect."
+                      />
+                    </div>
                   ))}
-                </ul>
+                </div>
               )}
-            </div>
-          )}
+            </Field>
 
-          {/* Per-country cards */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 16 }}>
-            {data.byCountry.map((g) => (
-              <div key={g.country} style={panel}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-                  <div style={{ fontSize: 18, fontWeight: 900, color: 'var(--ink-900)' }}>{g.country}</div>
-                  <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--ink-500)' }}>OT &gt; {g.rule}</div>
-                </div>
-                <div style={{ fontSize: 32, fontWeight: 900, color: 'var(--calo-600, #02B376)', letterSpacing: '-0.02em', marginTop: 8 }}>
-                  {g.otDays} <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--ink-500)' }}>OT-days</span>
-                </div>
-                <div style={{ fontSize: 13, color: 'var(--ink-700)', marginTop: 4 }}>
-                  {g.otHours.toFixed(1)} OT-hours · {g.emps} emp · {g.present} present-days
-                </div>
-                {g.country === 'UAE' && (
-                  <div style={{ fontSize: 12, color: 'var(--ink-500)', marginTop: 6 }}>
-                    A flat 9h rule would show {g.otDays9} OT-days ({g.otDays9 - g.otDays} more).
-                  </div>
-                )}
+            <div style={{ display: 'flex', gap: 18, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+              <Field label="Month filter — optional (YYYY-MM)">
+                <input value={month} onChange={(e) => setMonth(e.target.value.trim())} placeholder="2026-05 — blank = whole file" className="input-field" style={{ width: 230 }} />
+              </Field>
+              <Btn variant="primary" size="lg" icon={loading ? undefined : 'Play'} onClick={run} disabled={!attendance || loading}>
+                {loading ? 'Running…' : 'Run report'}
+              </Btn>
+            </div>
+          </div>
+        </Card>
+
+        {data && (
+          <>
+            {/* Flags */}
+            {flagLines.map((f, i) => (
+              <div key={i} style={{ background: '#FEF5E4', border: '1px solid #F6E0B6', borderRadius: 'var(--r-lg)', padding: '12px 18px', display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+                <Icon name="TriangleAlert" size={16} color="#8A5A1A" style={{ marginTop: 1, flexShrink: 0 }} />
+                <p style={{ margin: 0, fontSize: 13, color: '#7A4F12', lineHeight: 1.5 }}>{f}</p>
               </div>
             ))}
-          </div>
 
-          {/* Calendar summary */}
-          {data.daily?.periodStart && (
-            <div style={panel}>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 24, alignItems: 'baseline' }}>
-                <div style={{ fontSize: 13, color: 'var(--ink-700)' }}>
-                  <span style={{ fontWeight: 800 }}>Calendar</span> · {fmtDay(data.daily.periodStart)} → {fmtDay(data.daily.periodEnd)}
-                </div>
-                <Stat label="work-days" value={data.daily.workDays.length} note="inferred" />
-                <Stat label="off-days" value={data.daily.offDays.length} note="inferred" />
-                <Stat label="absences" value={data.daily.totalAbsences} />
-                <Stat label="overnight shifts" value={data.daily.totalOvernight} />
-              </div>
-              {data.daily.offDays.length === 0 && (
-                <div style={{ marginTop: 10, fontSize: 12, color: '#6B5008', background: '#FFF8E5', border: '1px solid #F1D785', borderRadius: 6, padding: '8px 12px' }}>
-                  No company-wide off-days detected — this looks like a <b>7-day operation</b>. The “absences” below will include individual rest days; review against the roster before acting on them.
-                </div>
-              )}
+            {/* KPI strip */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 16 }}>
+              <KpiTile label="In scope" value={data.scope.inScope} unit="emp" />
+              <KpiTile label="OT-days" value={data.totals.otDays} accent />
+              <KpiTile label="OT-hours" value={Math.round(data.totals.otHours)} />
+              <KpiTile label="Absences" value={data.daily?.totalAbsences ?? 0} />
+              <KpiTile label="Overnight" value={data.daily?.totalOvernight ?? 0} />
             </div>
-          )}
 
-          {/* Per-employee table */}
-          <div style={panel}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, flexWrap: 'wrap', gap: 12 }}>
-              <div style={{ fontSize: 22, fontWeight: 900, color: 'var(--ink-900)', letterSpacing: '-0.02em' }}>
-                {data.totals.otDays} OT-days · {data.totals.otHours.toFixed(1)} hours <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--ink-500)' }}>({data.totals.employees} in scope)</span>
+            {/* Executive summary (AI) */}
+            {data.narrative && (data.narrative.execSummary || (data.narrative.insights || []).length > 0) && (
+              <Card padding={24}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+                  <Eyebrow style={{ margin: 0 }}>Executive Summary</Eyebrow>
+                  <Pill tone={data.narrative.ai ? 'green' : 'neutral'} size="sm" icon={data.narrative.ai ? 'Sparkles' : undefined}>{data.narrative.ai ? 'AI' : 'auto'}</Pill>
+                </div>
+                {data.narrative.execSummary && <p style={{ margin: 0, fontSize: 15, color: 'var(--ink-900)', lineHeight: 1.6 }}>{data.narrative.execSummary}</p>}
+                {(data.narrative.insights || []).length > 0 && (
+                  <ul style={{ margin: '14px 0 0 0', paddingLeft: 18, display: 'grid', gap: 6 }}>
+                    {data.narrative.insights.map((ins, i) => (
+                      <li key={i} style={{ fontSize: 13.5, color: 'var(--ink-700)', lineHeight: 1.55 }}>{ins}</li>
+                    ))}
+                  </ul>
+                )}
+              </Card>
+            )}
+
+            {/* Per-country cards */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(230px, 1fr))', gap: 16 }}>
+              {data.byCountry.map((g) => (
+                <Card key={g.country} hover padding={22}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <Eyebrow style={{ margin: 0, color: 'var(--ink-900)' }}>{g.country}</Eyebrow>
+                    <Pill tone="green" size="sm">OT &gt; {g.rule}</Pill>
+                  </div>
+                  <div className="num" style={{ fontSize: 36, fontWeight: 900, color: 'var(--calo-600)', letterSpacing: '-0.03em', marginTop: 12, lineHeight: 1 }}>
+                    {g.otDays}<span style={{ fontSize: 14, fontWeight: 700, color: 'var(--ink-500)', marginLeft: 6 }}>OT-days</span>
+                  </div>
+                  <div style={{ fontSize: 13, color: 'var(--ink-600)', marginTop: 8 }}>
+                    {g.otHours.toFixed(1)} hours · {g.emps} emp · {g.present} present-days
+                  </div>
+                  {g.country === 'UAE' && (
+                    <div style={{ fontSize: 12, color: 'var(--ink-500)', marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--ink-100)' }}>
+                      A flat 9h rule would show {g.otDays9} ({g.otDays9 - g.otDays} more).
+                    </div>
+                  )}
+                </Card>
+              ))}
+            </div>
+
+            {/* Calendar summary */}
+            {data.daily?.periodStart && (
+              <Card padding={22}>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 28, alignItems: 'center' }}>
+                  <div>
+                    <Eyebrow style={{ margin: 0 }}>Calendar</Eyebrow>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--ink-900)', marginTop: 4 }}>{fmtDay(data.daily.periodStart)} → {fmtDay(data.daily.periodEnd)}</div>
+                  </div>
+                  <Stat label="work-days" value={data.daily.workDays.length} note="inferred" />
+                  <Stat label="off-days" value={data.daily.offDays.length} note="inferred" />
+                  <Stat label="absences" value={data.daily.totalAbsences} />
+                  <Stat label="overnight" value={data.daily.totalOvernight} />
+                </div>
+                {data.daily.offDays.length === 0 && (
+                  <div style={{ marginTop: 14, fontSize: 12.5, color: '#7A4F12', background: '#FEF5E4', border: '1px solid #F6E0B6', borderRadius: 'var(--r-md)', padding: '10px 14px', lineHeight: 1.5 }}>
+                    No company-wide off-days detected — this looks like a <b>7-day operation</b>. The absences include individual rest days; review against the roster before acting on them.
+                  </div>
+                )}
+              </Card>
+            )}
+
+            {/* Per-employee table */}
+            <Card padding={0}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 14, flexWrap: 'wrap', padding: '18px 22px', borderBottom: '1px solid var(--ink-100)' }}>
+                <div>
+                  <div style={{ fontSize: 22, fontWeight: 900, color: 'var(--ink-900)', letterSpacing: '-0.02em' }}>
+                    {data.totals.otDays} <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--ink-500)' }}>OT-days</span> · {data.totals.otHours.toFixed(1)} <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--ink-500)' }}>hours</span>
+                  </div>
+                  {hasMasters && (
+                    <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
+                      <Pill tone="green" size="sm">{data.scope.inScope} in scope</Pill>
+                      <Pill tone="neutral" size="sm">{data.scope.excluded} excluded</Pill>
+                      {data.scope.noPosition > 0 && <Pill tone="amber" size="sm">{data.scope.noPosition} no-position</Pill>}
+                      {data.scope.unmatched > 0 && <Pill tone="amber" size="sm">{data.scope.unmatched} unmatched</Pill>}
+                    </div>
+                  )}
+                </div>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <Btn variant="leaf" size="sm" icon="Download" onClick={downloadExcel}>Excel report</Btn>
+                  <Btn variant="secondary" size="sm" icon="Download" onClick={downloadCsv}>CSV</Btn>
+                </div>
               </div>
-              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                <label style={{ fontSize: 13, color: 'var(--ink-700)', display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
-                  <input type="checkbox" checked={inScopeOnly} onChange={(e) => setInScopeOnly(e.target.checked)} style={{ accentColor: 'var(--calo-500)' }} />
-                  In-scope only
+
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap', padding: '12px 22px' }}>
+                <label style={{ fontSize: 13, color: 'var(--ink-700)', display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer', fontWeight: 600 }}>
+                  <input type="checkbox" checked={inScopeOnly} onChange={(e) => setInScopeOnly(e.target.checked)} style={{ accentColor: 'var(--calo-500)', width: 15, height: 15 }} />
+                  In-scope only <span style={{ color: 'var(--ink-400, #9aa6a0)', fontWeight: 500 }}>· exports follow this</span>
                 </label>
-                <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search name, ID, dept…" style={searchInput} />
+                <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search name, ID, dept…" className="input-field" style={{ width: 260, height: 38 }} />
               </div>
-            </div>
-            <div style={{ overflowX: 'auto', borderRadius: 'var(--r-md)', border: '1px solid var(--ink-200)' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-                <thead>
-                  <tr>
-                    <th style={{ width: 30, background: 'var(--ink-50)', borderBottom: '1px solid var(--ink-200)' }} />
-                    <Th onClick={() => handleSort('empCode')} active={sort.key === 'empCode'} dir={sort.dir}>Emp Code</Th>
-                    <Th onClick={() => handleSort('name')} active={sort.key === 'name'} dir={sort.dir}>Name</Th>
-                    <Th onClick={() => handleSort('country')} active={sort.key === 'country'} dir={sort.dir}>Country</Th>
-                    <Th onClick={() => handleSort('dept')} active={sort.key === 'dept'} dir={sort.dir}>Department</Th>
-                    <Th onClick={() => handleSort('position')} active={sort.key === 'position'} dir={sort.dir}>Position</Th>
-                    <Th onClick={() => handleSort('daysWorked')} active={sort.key === 'daysWorked'} dir={sort.dir} align="right">Days</Th>
-                    <Th onClick={() => handleSort('absentDays')} active={sort.key === 'absentDays'} dir={sort.dir} align="right">Absent</Th>
-                    <Th onClick={() => handleSort('overnightDays')} active={sort.key === 'overnightDays'} dir={sort.dir} align="right">Nights</Th>
-                    <Th onClick={() => handleSort('otDays')} active={sort.key === 'otDays'} dir={sort.dir} align="right">OT-days</Th>
-                    <Th onClick={() => handleSort('otHours')} active={sort.key === 'otHours'} dir={sort.dir} align="right">OT-hours</Th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filtered.length === 0 ? (
-                    <tr><td colSpan={11} style={{ padding: '24px 16px', textAlign: 'center', color: 'var(--ink-500)' }}>No employees match.</td></tr>
-                  ) : filtered.map((r, i) => {
-                    const open = expanded.has(r.empCode);
-                    return (
-                      <Fragment key={r.empCode || i}>
-                        <tr onClick={() => toggleExpand(r.empCode)} style={{ background: i % 2 === 0 ? '#fff' : 'var(--ink-50)', cursor: 'pointer' }}>
-                          <Td><span style={{ color: 'var(--ink-500)', display: 'inline-block', transform: open ? 'rotate(90deg)' : 'none', transition: 'transform .15s' }}>▸</span></Td>
-                          <Td mono>{r.empCode}</Td>
-                          <Td bold>{r.name || '—'}{r.nameMismatch && <span title="Name disagrees with master — possible ID collision" style={{ marginLeft: 6, color: '#9A6F0E' }}>⚠</span>}</Td>
-                          <Td>{r.country}</Td>
-                          <Td>{r.dept || '—'}</Td>
-                          <Td>{r.position || (r.matched ? <span style={{ color: 'var(--ink-500)' }}>(blank)</span> : '—')}</Td>
-                          <Td align="right">{r.daysWorked}</Td>
-                          <Td align="right">{r.absentDays ? <span style={{ color: '#9A6F0E', fontWeight: 700 }}>{r.absentDays}</span> : '0'}</Td>
-                          <Td align="right">{r.overnightDays || 0}</Td>
-                          <Td align="right" bold>{r.otDays}</Td>
-                          <Td align="right">{r.otHours.toFixed(1)}</Td>
-                        </tr>
-                        {open && (
-                          <tr><td colSpan={11} style={{ padding: 0, borderBottom: '1px solid var(--ink-200)' }}><EmployeeCalendar row={r} /></td></tr>
-                        )}
-                      </Fragment>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </>
-      )}
-    </PageWrap>
+
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                  <thead>
+                    <tr>
+                      <th style={{ width: 34, background: 'var(--ink-50)', borderBottom: '1px solid var(--ink-200)' }} />
+                      <Th onClick={() => handleSort('empCode')} active={sort.key === 'empCode'} dir={sort.dir}>Emp Code</Th>
+                      <Th onClick={() => handleSort('name')} active={sort.key === 'name'} dir={sort.dir}>Name</Th>
+                      <Th onClick={() => handleSort('country')} active={sort.key === 'country'} dir={sort.dir}>Country</Th>
+                      <Th onClick={() => handleSort('dept')} active={sort.key === 'dept'} dir={sort.dir}>Department</Th>
+                      <Th onClick={() => handleSort('position')} active={sort.key === 'position'} dir={sort.dir}>Position</Th>
+                      <Th onClick={() => handleSort('daysWorked')} active={sort.key === 'daysWorked'} dir={sort.dir} align="right">Days</Th>
+                      <Th onClick={() => handleSort('absentDays')} active={sort.key === 'absentDays'} dir={sort.dir} align="right">Absent</Th>
+                      <Th onClick={() => handleSort('overnightDays')} active={sort.key === 'overnightDays'} dir={sort.dir} align="right">Nights</Th>
+                      <Th onClick={() => handleSort('otDays')} active={sort.key === 'otDays'} dir={sort.dir} align="right">OT-days</Th>
+                      <Th onClick={() => handleSort('otHours')} active={sort.key === 'otHours'} dir={sort.dir} align="right">OT-hours</Th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filtered.length === 0 ? (
+                      <tr><td colSpan={11} style={{ padding: '28px 16px', textAlign: 'center', color: 'var(--ink-500)' }}>No employees match.</td></tr>
+                    ) : filtered.map((r, i) => {
+                      const open = expanded.has(r.empCode);
+                      return (
+                        <Fragment key={r.empCode || i}>
+                          <tr onClick={() => toggleExpand(r.empCode)} style={{ background: open ? 'var(--calo-50)' : (i % 2 === 0 ? '#fff' : 'var(--ink-50)'), cursor: 'pointer' }}>
+                            <Td><span style={{ color: 'var(--ink-500)', display: 'inline-block', transform: open ? 'rotate(90deg)' : 'none', transition: 'transform .15s' }}>▸</span></Td>
+                            <Td mono>{r.empCode}</Td>
+                            <Td bold>{r.name || '—'}{r.nameMismatch && <span title="Name disagrees with master — possible ID collision" style={{ marginLeft: 6, color: '#9A6F0E' }}>⚠</span>}</Td>
+                            <Td>{r.country}</Td>
+                            <Td>{r.dept || '—'}</Td>
+                            <Td>{r.position || (r.matched ? <span style={{ color: 'var(--ink-500)' }}>(blank)</span> : '—')}</Td>
+                            <Td align="right">{r.daysWorked}</Td>
+                            <Td align="right">{r.absentDays ? <span style={{ color: '#9A6F0E', fontWeight: 700 }}>{r.absentDays}</span> : '0'}</Td>
+                            <Td align="right">{r.overnightDays || 0}</Td>
+                            <Td align="right" bold>{r.otDays}</Td>
+                            <Td align="right">{r.otHours.toFixed(1)}</Td>
+                          </tr>
+                          {open && (
+                            <tr><td colSpan={11} style={{ padding: 0, borderBottom: '1px solid var(--ink-200)' }}><EmployeeCalendar row={r} /></td></tr>
+                          )}
+                        </Fragment>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </Card>
+          </>
+        )}
+      </div>
+    </div>
   );
 }
 
 // ---- subcomponents -----------------------------------------------
 
-function PageWrap({ children }) {
-  return <div style={{ maxWidth: 1280, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 20 }}>{children}</div>;
-}
-function Header() {
+function FilePicker({ accept, multiple, onPick, label }) {
+  const ref = useRef(null);
   return (
-    <div>
-      <div style={{ fontSize: 11, fontWeight: 900, letterSpacing: '.16em', color: 'var(--ink-500)' }}>HR · TIME &amp; ATTENDANCE</div>
-      <h1 style={{ fontSize: 32, fontWeight: 900, color: 'var(--ink-900)', letterSpacing: '-0.025em', margin: '4px 0 0 0' }}>Overtime</h1>
-    </div>
+    <>
+      <input ref={ref} type="file" accept={accept} multiple={multiple} style={{ display: 'none' }}
+        onChange={(e) => { onPick(e.target.files); e.target.value = ''; }} />
+      <Btn variant="secondary" size="sm" icon="Upload" onClick={() => ref.current?.click()}>{label}</Btn>
+    </>
   );
 }
 function Field({ label, children }) {
   return (
     <div>
-      <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--ink-500)', letterSpacing: '.06em', textTransform: 'uppercase', marginBottom: 6 }}>{label}</div>
+      <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--ink-500)', letterSpacing: '.06em', textTransform: 'uppercase', marginBottom: 8 }}>{label}</div>
       {children}
     </div>
   );
 }
 function FileChip({ name, onRemove }) {
   return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, marginTop: 8, padding: '6px 10px', background: 'var(--calo-50, #d9f0e5)', color: 'var(--calo-700, #1e8359)', borderRadius: 999, fontSize: 13, fontWeight: 700 }}>
-      <Icon name="FileText" size={14} /> {name}
-      <button onClick={onRemove} style={{ border: 'none', background: 'none', color: 'inherit', cursor: 'pointer', fontWeight: 900, fontSize: 15, lineHeight: 1 }}>×</button>
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '6px 8px 6px 12px', background: 'var(--calo-50)', color: 'var(--calo-800)', border: '1px solid var(--calo-100)', borderRadius: 'var(--r-pill)', fontSize: 13, fontWeight: 700 }}>
+      <Icon name="FileSpreadsheet" size={14} /> {name}
+      <button onClick={onRemove} title="Remove" style={{ border: 'none', background: 'rgba(0,0,0,.06)', color: 'inherit', cursor: 'pointer', fontWeight: 900, fontSize: 13, lineHeight: 1, width: 18, height: 18, borderRadius: '50%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>×</button>
     </span>
   );
 }
 function ErrorBanner({ message, onClose }) {
   return (
-    <div style={{ background: '#FDECEC', border: '1px solid #f5c6c6', color: '#9f2f2f', borderRadius: 'var(--r-md)', padding: '12px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 14, fontWeight: 600 }}>
-      <span>{message}</span>
-      <button onClick={onClose} style={{ border: 'none', background: 'none', color: '#9f2f2f', cursor: 'pointer', fontWeight: 700 }}>×</button>
+    <div style={{ background: '#FDECEC', border: '1px solid #F5CFCF', color: '#8C2929', borderRadius: 'var(--r-lg)', padding: '12px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, fontSize: 14, fontWeight: 600 }}>
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}><Icon name="CircleAlert" size={16} /> {message}</span>
+      <button onClick={onClose} style={{ border: 'none', background: 'none', color: '#8C2929', cursor: 'pointer', fontWeight: 700, fontSize: 16 }}>×</button>
     </div>
   );
 }
@@ -363,31 +371,30 @@ function Th({ children, onClick, active, dir, align = 'left' }) {
 function Td({ children, align = 'left', mono, bold }) {
   return <td style={{ padding: '11px 14px', borderBottom: '1px solid var(--ink-100)', textAlign: align, fontFamily: mono ? 'ui-monospace, SFMono-Regular, monospace' : 'inherit', fontWeight: bold ? 700 : 400, color: 'var(--ink-900)' }}>{children}</td>;
 }
-
 function Stat({ label, value, note }) {
   return (
     <div>
-      <span style={{ fontSize: 20, fontWeight: 900, color: 'var(--ink-900)' }}>{value}</span>
+      <span className="num" style={{ fontSize: 22, fontWeight: 900, color: 'var(--ink-900)', letterSpacing: '-0.02em' }}>{value}</span>
       <span style={{ fontSize: 12, color: 'var(--ink-500)', marginLeft: 6 }}>{label}{note ? ` (${note})` : ''}</span>
     </div>
   );
 }
 
 const legendHd = { fontSize: 11, fontWeight: 800, color: 'var(--ink-500)', letterSpacing: '.06em', textTransform: 'uppercase' };
-const dayChip = (bg) => ({ display: 'inline-flex', flexDirection: 'column', gap: 1, padding: '6px 10px', borderRadius: 8, background: bg, fontSize: 12, minWidth: 76, lineHeight: 1.35 });
+const dayChip = (bg, bd) => ({ display: 'inline-flex', flexDirection: 'column', gap: 1, padding: '6px 10px', borderRadius: 'var(--r-md)', background: bg, border: `1px solid ${bd}`, fontSize: 12, minWidth: 76, lineHeight: 1.35 });
 
 function EmployeeCalendar({ row }) {
   const present = row.days || [], absences = row.absences || [];
   return (
-    <div style={{ padding: '14px 18px', display: 'grid', gap: 14, background: 'var(--ink-50)' }}>
+    <div style={{ padding: '16px 20px', display: 'grid', gap: 16, background: 'var(--ink-50)' }}>
       <div>
         <div style={legendHd}>Days worked — {present.length}{row.overnightDays ? ` · ${row.overnightDays} overnight 🌙` : ''}</div>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
           {present.length === 0 ? <span style={{ fontSize: 12, color: 'var(--ink-500)' }}>No attendance recorded.</span> :
             present.map((d) => (
-              <div key={d.date} style={dayChip(d.ot ? 'var(--calo-50, #d9f0e5)' : '#fff')} title={`${d.checkIn || '?'}–${d.checkOut || '?'}${d.overnight ? ' (overnight)' : ''}`}>
+              <div key={d.date} style={dayChip(d.ot ? 'var(--calo-50)' : '#fff', d.ot ? 'var(--calo-100)' : 'var(--ink-200)')} title={`${d.checkIn || '?'}–${d.checkOut || '?'}${d.overnight ? ' (overnight)' : ''}`}>
                 <span style={{ fontWeight: 700, color: 'var(--ink-900)' }}>{fmtDay(d.date)} {d.overnight ? '🌙' : ''}</span>
-                <span style={{ color: 'var(--ink-700)' }}>{d.hours != null ? `${d.hours.toFixed(2)}h` : '—'}{d.ot ? <span style={{ color: 'var(--calo-700, #1e8359)', fontWeight: 700 }}> ·OT</span> : ''}</span>
+                <span style={{ color: 'var(--ink-700)' }}>{d.hours != null ? `${d.hours.toFixed(2)}h` : '—'}{d.ot ? <span style={{ color: 'var(--calo-700)', fontWeight: 700 }}> ·OT</span> : ''}</span>
                 {(d.checkIn || d.checkOut) ? <span style={{ color: 'var(--ink-500)', fontSize: 11 }}>{d.checkIn || '?'}–{d.checkOut || '?'}</span> : null}
               </div>
             ))}
@@ -396,9 +403,9 @@ function EmployeeCalendar({ row }) {
       {absences.length > 0 && (
         <div>
           <div style={legendHd}>Absent — {absences.length} <span style={{ textTransform: 'none', fontWeight: 600, color: '#9A6F0E' }}>(inferred — review)</span></div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
             {absences.map((a) => (
-              <span key={a.date} style={dayChip('#FFF8E5')}>
+              <span key={a.date} style={dayChip('#FEF5E4', '#F6E0B6')}>
                 <span style={{ fontWeight: 700, color: '#6B5008' }}>{fmtDay(a.date)}</span>
                 <span style={{ color: '#6B5008' }}>{a.weekday}</span>
               </span>
@@ -437,12 +444,3 @@ function fmtDay(ymd) {
   if (!ymd) return '—';
   return new Date(ymd + 'T00:00:00Z').toLocaleDateString(undefined, { day: 'numeric', month: 'short', timeZone: 'UTC' });
 }
-
-// ---- inline styles ------------------------------------------------
-
-const panel = { background: '#fff', borderRadius: 'var(--r-md)', border: '1px solid var(--ink-200)', padding: 24, boxShadow: 'var(--shadow-sm)' };
-const select = { width: '100%', padding: '10px 12px', borderRadius: 'var(--r-sm)', border: '1px solid var(--ink-200)', background: '#fff', fontSize: 14, fontWeight: 600, color: 'var(--ink-900)' };
-const searchInput = { ...select, width: 240, fontWeight: 500 };
-const fileInput = { fontSize: 13, color: 'var(--ink-700)' };
-const primaryBtn = (disabled) => ({ background: disabled ? 'var(--ink-200)' : 'var(--calo-500)', color: disabled ? 'var(--ink-500)' : '#fff', border: 'none', borderRadius: 'var(--r-sm)', padding: '11px 22px', fontSize: 14, fontWeight: 800, cursor: disabled ? 'not-allowed' : 'pointer', letterSpacing: '-0.01em' });
-const ghostBtn = { display: 'inline-flex', alignItems: 'center', gap: 6, background: '#fff', color: 'var(--ink-700)', border: '1px solid var(--ink-200)', borderRadius: 'var(--r-sm)', padding: '9px 14px', fontSize: 13, fontWeight: 700, cursor: 'pointer' };

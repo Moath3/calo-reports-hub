@@ -141,12 +141,13 @@ class ApiClient {
   // Time & Attendance — run a per-country overtime report from an attendance
   // export (+ optional HR master files). Returns the structured result plus
   // an Excel workbook as base64.
-  async runTimeAttendance(attendanceFile, masterFiles = [], { month, masterSheets } = {}) {
+  async runTimeAttendance(attendanceFile, masterFiles = [], { month, masterSheets, entities } = {}) {
     const fd = new FormData();
     fd.append('attendance', attendanceFile);
     for (const f of masterFiles) fd.append('masters', f);
     if (month) fd.append('month', month);
     if (masterSheets && masterSheets.length) fd.append('masterSheets', JSON.stringify(masterSheets));
+    if (entities && entities.length) fd.append('entities', JSON.stringify(entities));
     return this.request('/time-attendance/run', { method: 'POST', body: fd });
   }
 

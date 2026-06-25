@@ -39,11 +39,12 @@ function eachDate(start, end) {
  * Run a T&A period.
  * @param {object} opts
  * @param {string} opts.attendancePath - path to the attendance export (.csv/.xlsx)
- * @param {Array<{label:string,path:string,sheet?:string}>} [opts.masters] - HR masters
+ * @param {Array<{label:string,path:string,sheet?:string}>} [opts.masters] - HR master files
+ * @param {Array<{empId:string,name:string,position:string,entity:string,source:string}>} [opts.rosterRecords] - pre-loaded roster (e.g. from Zelt), merged with file masters
  * @param {string|null} [opts.month] - optional 'YYYY-MM' filter on the Date column
  * @returns {object} structured result (see fields below)
  */
-export function runPeriod({ attendancePath, masters = [], month = null }) {
+export function runPeriod({ attendancePath, masters = [], rosterRecords = [], month = null }) {
   // ── Pass 1: per-employee day minutes from the attendance ──────────
   const { rows, cols } = loadAttendance(attendancePath);
   if (!cols.id) {
@@ -84,13 +85,20 @@ export function runPeriod({ attendancePath, masters = [], month = null }) {
   const scopeBy = new Map(); // empCode -> { position, source, entity, nameMismatch }
   const mastersMeta = [];
   let ambiguousIds = 0, nameMismatches = 0;
-  if (masters.length) {
+  const hasMasters = masters.length > 0 || rosterRecords.length > 0;
+  if (hasMasters) {
     const attIdSet = new Set([...emp.keys()].map(normalizeId));
     const combined = masters.flatMap((m) => {
       const { records, meta } = loadMaster(m, attIdSet);
       mastersMeta.push({ label: m.label, ...meta });
       return records;
     });
+    // Roster records (e.g. from Zelt) join the same way as file masters.
+    if (rosterRecords.length) {
+      const overlap = rosterRecords.reduce((n, r) => n + (attIdSet.has(normalizeId(r.empId)) ? 1 : 0), 0);
+      mastersMeta.push({ label: 'Zelt', sheetName: 'roster', rows: rosterRecords.length, idCol: 'employeeId', overlap, candidates: ['employeeId'] });
+      combined.push(...rosterRecords);
+    }
     const groups = new Map();
     for (const rec of combined) { const k = normalizeId(rec.empId); if (!k) continue; (groups.get(k) || groups.set(k, []).get(k)).push(rec); }
     const byId = new Map();
@@ -112,7 +120,6 @@ export function runPeriod({ attendancePath, masters = [], month = null }) {
       scopeBy.set(e.empCode, { position: rec.position || '', source: rec.source || '', entity: rec.entity || null, nameMismatch: mismatch });
     }
   }
-  const hasMasters = masters.length > 0;
 
   // ── Pass 2: per-country OT per employee ───────────────────────────
   const outRows = [];

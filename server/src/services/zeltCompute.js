@@ -112,6 +112,56 @@ export async function getBalancesForEntity(entityName, asOfDate = null) {
   }
 }
 
+/**
+ * Roster for one or more entities — id / name / position, shaped as T&A master
+ * records ({ empId, name, position, entity, source }). Reuses the cached user
+ * list and the same "currently employed" filter as the balances path, and
+ * fetches employeeId via the per-user basics endpoint when the user list omits it.
+ */
+export async function getRosterForEntities(entityNames) {
+  const wanted = (entityNames || []).map((e) => String(e).toLowerCase().trim()).filter(Boolean);
+  if (!wanted.length) return [];
+  const users = await fetchAllUsers();
+
+  const seen = new Map();
+  for (const u of users) {
+    const k = u.userId || u.id || readEmployeeId(u) || JSON.stringify(u).slice(0, 40);
+    if (!seen.has(k)) seen.set(k, u);
+  }
+  const targets = Array.from(seen.values()).filter((u) => {
+    const status = u?.accountStatus || u?.status || u?.lifecycle?.status;
+    if (status === 'Deactivated' || status === 'Terminated') return false;
+    const eventStatus = u?.userEvent?.status || u?.lifecycle?.status;
+    if (eventStatus === 'Terminated' || eventStatus === 'Resigned' || eventStatus === 'Offboarded') return false;
+    if (u?.leaveDate || u?.lifecycle?.leaveDate) return false;
+    const e = readEntity(u);
+    if (!e) return false;
+    const eNorm = e.toLowerCase().trim();
+    return wanted.some((w) => eNorm === w || eNorm.includes(w) || w.includes(eNorm));
+  });
+
+  // Backfill employeeId where the user list didn't include it.
+  const needBasics = targets.filter((u) => readEmployeeId(u) == null).map((u) => u.userId || u.id);
+  let basics = new Map();
+  if (needBasics.length) {
+    try { basics = await fetchUserBasics(needBasics); }
+    catch (err) { console.warn(`[zelt] roster basics fetch failed: ${err.message}`); }
+  }
+
+  return targets
+    .map((u) => {
+      const userId = u.userId || u.id;
+      return {
+        empId: String(readEmployeeId(u) ?? basics.get(userId) ?? '').trim(),
+        name: readName(u),
+        position: u?.role?.jobPosition?.title || u?.jobTitle || u?.position || '',
+        entity: readEntity(u),
+        source: 'Zelt',
+      };
+    })
+    .filter((r) => r.empId || (r.name && r.name !== '(unnamed)'));
+}
+
 function saveBalanceSnapshot(entityName, asOfDate, data) {
   try {
     getDb().prepare(`

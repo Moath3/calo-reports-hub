@@ -6,6 +6,7 @@ import { dirname, join, extname, basename } from "path";
 import { unlinkSync, existsSync, mkdirSync } from "fs";
 import { runPeriod } from "../services/tna/runService.js";
 import { generateTnaNarrative } from "../services/aiService.js";
+import { getRosterForEntities } from "../services/zeltCompute.js";
 import { requireAuth } from "../middleware/auth.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { badRequest, HttpError } from "../utils/httpError.js";
@@ -63,7 +64,23 @@ router.post("/run", requireAuth, (req, res, next) => {
       sheet: (Array.isArray(sheets) && sheets[i]) ? String(sheets[i]).trim() || null : null,
     }));
 
-    const result = runPeriod({ attendancePath: attendance.path, masters, month });
+    // Optional Zelt roster — entities picked in the UI. Fetched live and used as
+    // a master alongside any uploaded files. A Zelt failure is surfaced clearly
+    // (the user explicitly asked for it) rather than silently producing no roster.
+    let entities = [];
+    if (req.body.entities) {
+      try { const p = JSON.parse(req.body.entities); entities = Array.isArray(p) ? p.filter(Boolean) : []; } catch { entities = []; }
+    }
+    let rosterRecords = [];
+    if (entities.length) {
+      try {
+        rosterRecords = await getRosterForEntities(entities);
+      } catch (err) {
+        throw new HttpError(502, "Couldn't load the Zelt roster — is Zelt connected? (" + err.message + ")");
+      }
+    }
+
+    const result = runPeriod({ attendancePath: attendance.path, masters, rosterRecords, month });
     // Claude writes the exec summary + insights from aggregate figures only
     // (no names/PII). Falls back to a templated summary if the API call fails.
     const narrative = await generateTnaNarrative(result.aggregates);

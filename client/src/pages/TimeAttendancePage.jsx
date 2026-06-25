@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useRef, Fragment } from 'react';
+import { useState, useMemo, useCallback, useRef, useEffect, Fragment } from 'react';
 import api from '../utils/api';
 import { Icon, Btn, Card, Pill, Eyebrow, KpiTile, PageHeader } from '../components/ui';
 import { buildBrandedWorkbook } from '../utils/tnaWorkbook';
@@ -24,6 +24,27 @@ export default function TimeAttendancePage() {
   const [expanded, setExpanded] = useState(() => new Set());
   const toggleExpand = (code) => setExpanded((s) => { const n = new Set(s); n.has(code) ? n.delete(code) : n.add(code); return n; });
 
+  // Zelt roster (optional source for names + scope, instead of uploading masters)
+  const [zeltOn, setZeltOn] = useState(false);
+  const [entityOptions, setEntityOptions] = useState([]);
+  const [entitiesLoading, setEntitiesLoading] = useState(false);
+  const [entities, setEntities] = useState([]); // selected entity names
+
+  useEffect(() => {
+    let alive = true;
+    api.zeltStatus()
+      .then((s) => {
+        if (!alive || !s?.connected) return;
+        setZeltOn(true);
+        setEntitiesLoading(true);
+        return api.zeltEntities()
+          .then((r) => { if (alive) setEntityOptions(r.entities || []); })
+          .finally(() => { if (alive) setEntitiesLoading(false); });
+      })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, []);
+
   const addMasters = (fileList) => {
     const incoming = Array.from(fileList || []).map((file) => ({ file, sheet: '' }));
     setMasters((m) => [...m, ...incoming].slice(0, 8));
@@ -38,7 +59,7 @@ export default function TimeAttendancePage() {
       const result = await api.runTimeAttendance(
         attendance,
         masters.map((m) => m.file),
-        { month: month || undefined, masterSheets: masters.map((m) => m.sheet || '') }
+        { month: month || undefined, masterSheets: masters.map((m) => m.sheet || ''), entities }
       );
       setData(result);
     } catch (e) {
@@ -47,7 +68,7 @@ export default function TimeAttendancePage() {
     } finally {
       setLoading(false);
     }
-  }, [attendance, masters, month]);
+  }, [attendance, masters, month, entities]);
 
   const filtered = useMemo(() => {
     if (!data?.rows) return [];
@@ -128,25 +149,57 @@ export default function TimeAttendancePage() {
               {attendance && <div style={{ marginTop: 10 }}><FileChip name={attendance.name} onRemove={() => setAttendance(null)} /></div>}
             </Field>
 
-            <Field label="HR master file(s) — optional, adds names + scope">
-              <FilePicker accept=".csv,.xlsx,.xls" multiple label="Add master file(s)" onPick={addMasters} />
-              {masters.length > 0 && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 10 }}>
-                  {masters.map((m, i) => (
-                    <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                      <FileChip name={m.file.name} onRemove={() => removeMaster(i)} />
-                      <input
-                        value={m.sheet}
-                        onChange={(e) => setMasterSheet(i, e.target.value)}
-                        placeholder="sheet (optional, e.g. Luqmat Active)"
-                        className="input-field"
-                        style={{ width: 250, height: 38, fontSize: 13 }}
-                        title="Pin a specific sheet to avoid contaminated tabs. Leave blank to auto-detect."
-                      />
-                    </div>
-                  ))}
+            <Field label="Roster — optional, adds names, blue-collar scope & per-entity filtering">
+              <div style={{ display: 'grid', gap: 14 }}>
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                    <Pill tone={zeltOn ? 'green' : 'neutral'} size="sm" icon="Plug">Zelt</Pill>
+                    <span style={{ fontSize: 12, color: 'var(--ink-500)' }}>
+                      {zeltOn ? 'pick the entities you’re reporting — pulls their live roster' : 'not connected — upload master files below instead'}
+                    </span>
+                  </div>
+                  {zeltOn && (
+                    <>
+                      <EntityPicker options={entityOptions} selected={entities} onChange={setEntities} loading={entitiesLoading} />
+                      {entities.length > 0 && (
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+                          {entities.map((e) => (
+                            <span key={e} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 6px 4px 10px', background: 'var(--calo-50)', color: 'var(--calo-800)', border: '1px solid var(--calo-100)', borderRadius: 'var(--r-pill)', fontSize: 12, fontWeight: 700 }}>
+                              {e}
+                              <button onClick={() => setEntities(entities.filter((x) => x !== e))} title="Remove" style={{ border: 'none', background: 'rgba(0,0,0,.06)', color: 'inherit', cursor: 'pointer', width: 16, height: 16, borderRadius: '50%', fontSize: 12, lineHeight: 1 }}>×</button>
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </>
+                  )}
                 </div>
-              )}
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, color: 'var(--ink-400, #9aa6a0)', fontSize: 11, fontWeight: 700, letterSpacing: '.08em' }}>
+                  <div style={{ flex: 1, height: 1, background: 'var(--ink-100)' }} /> OR UPLOAD FILES <div style={{ flex: 1, height: 1, background: 'var(--ink-100)' }} />
+                </div>
+
+                <div>
+                  <FilePicker accept=".csv,.xlsx,.xls" multiple label="Add master file(s)" onPick={addMasters} />
+                  {masters.length > 0 && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 10 }}>
+                      {masters.map((m, i) => (
+                        <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                          <FileChip name={m.file.name} onRemove={() => removeMaster(i)} />
+                          <input
+                            value={m.sheet}
+                            onChange={(e) => setMasterSheet(i, e.target.value)}
+                            placeholder="sheet (optional, e.g. Luqmat Active)"
+                            className="input-field"
+                            style={{ width: 250, height: 38, fontSize: 13 }}
+                            title="Pin a specific sheet to avoid contaminated tabs. Leave blank to auto-detect."
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
             </Field>
 
             <div style={{ display: 'flex', gap: 18, alignItems: 'flex-end', flexWrap: 'wrap' }}>
@@ -342,6 +395,48 @@ function Field({ label, children }) {
     <div>
       <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--ink-500)', letterSpacing: '.06em', textTransform: 'uppercase', marginBottom: 8 }}>{label}</div>
       {children}
+    </div>
+  );
+}
+const miniBtn = { background: '#fff', border: '1px solid var(--ink-200)', borderRadius: 'var(--r-sm)', padding: '4px 10px', fontSize: 12, fontWeight: 700, cursor: 'pointer', color: 'var(--ink-700)' };
+function EntityPicker({ options, selected, onChange, loading }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!open) return;
+    const h = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', h);
+    return () => document.removeEventListener('mousedown', h);
+  }, [open]);
+  const toggle = (e) => onChange(selected.includes(e) ? selected.filter((x) => x !== e) : [...selected, e]);
+  const label = loading ? 'Loading entities…' : selected.length === 0 ? 'Select entities…' : selected.length === 1 ? selected[0] : `${selected.length} entities selected`;
+  return (
+    <div ref={ref} style={{ position: 'relative', maxWidth: 420 }}>
+      <button type="button" disabled={loading} onClick={() => setOpen((o) => !o)} className="input-field"
+        style={{ textAlign: 'left', display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', cursor: loading ? 'wait' : 'pointer' }}>
+        <span style={{ color: selected.length ? 'var(--ink-900)' : 'var(--ink-500)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span>
+        <span style={{ color: 'var(--ink-500)', marginLeft: 8 }}>▾</span>
+      </button>
+      {open && (
+        <div style={{ position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: 0, zIndex: 30, background: '#fff', border: '1px solid var(--ink-200)', borderRadius: 'var(--r-md)', boxShadow: 'var(--shadow-lg)', maxHeight: 320, overflowY: 'auto', padding: 6 }}>
+          <div style={{ display: 'flex', gap: 6, padding: '4px 6px 8px', borderBottom: '1px solid var(--ink-100)' }}>
+            <button type="button" onClick={() => onChange([...options])} style={miniBtn}>Select all</button>
+            <button type="button" onClick={() => onChange([])} style={miniBtn}>Clear</button>
+            <div style={{ flex: 1 }} />
+            <button type="button" onClick={() => setOpen(false)} style={miniBtn}>Done</button>
+          </div>
+          {options.length === 0 ? <div style={{ padding: 10, fontSize: 13, color: 'var(--ink-500)' }}>No entities found.</div> :
+            options.map((e) => {
+              const checked = selected.includes(e);
+              return (
+                <label key={e} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 10px', cursor: 'pointer', borderRadius: 'var(--r-sm)', background: checked ? 'var(--calo-50)' : 'transparent', fontSize: 13, fontWeight: 600, color: 'var(--ink-900)' }}>
+                  <input type="checkbox" checked={checked} onChange={() => toggle(e)} style={{ accentColor: 'var(--calo-500)' }} />
+                  {e}
+                </label>
+              );
+            })}
+        </div>
+      )}
     </div>
   );
 }

@@ -78,6 +78,25 @@ test('overnight is NOT flagged when check-in equals check-out', () => {
   } finally { rmSync(p, { force: true }); }
 });
 
+test('rosterRecords (e.g. from Zelt) act as a master — match + position scope', () => {
+  const p = tmpCsv([
+    'Employee ID,First Name,Department,Date,Total Time',
+    'FTE1,Ali,CALO UAE,2026-06-01,11:00',
+    'FTE2,Sam,CALO UAE,2026-06-01,8:00',
+  ].join('\n') + '\n');
+  try {
+    const rosterRecords = [
+      { empId: 'FTE1', name: 'Ali Hassan', position: 'Cook', entity: 'CALO UAE', source: 'Zelt' },
+      { empId: 'FTE2', name: 'Sam Omar', position: 'Kitchen Manager', entity: 'CALO UAE', source: 'Zelt' },
+    ];
+    const r = runPeriod({ attendancePath: p, rosterRecords });
+    assert.equal(r.scope.matched, 2);
+    assert.equal(r.scope.inScope, 1);   // FTE2 is a Manager -> excluded
+    assert.equal(r.scope.excluded, 1);
+    assert.equal(r.masters.find((m) => m.label === 'Zelt').overlap, 2);
+  } finally { rmSync(p, { force: true }); }
+});
+
 test('report aggregates: byDate / byDept / topOt / missingHours, and aggregates carry no names', () => {
   const p = tmpCsv([
     'Employee ID,First Name,Department,Date,Total Time',

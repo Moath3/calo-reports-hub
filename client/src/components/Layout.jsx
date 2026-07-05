@@ -16,6 +16,7 @@ const mainNav = [
   { to: '/leave-balances', icon: 'CalendarCheck',  label: 'Leave Balances' },
   { to: '/time-attendance', icon: 'Clock',          label: 'Time & Attendance' },
   { to: '/data-hygiene',   icon: 'ShieldCheck',     label: 'Data Hygiene', adminOnly: true },
+  { to: '/mobility',       icon: 'TrendingUp',      label: 'Mobility', adminOnly: true },
 ];
 
 const footerNav = [

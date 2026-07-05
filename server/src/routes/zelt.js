@@ -33,6 +33,8 @@ import {
 import { botGet, botConfigured, getBotStatus } from '../services/zeltBot.js';
 import { listEntities, getBalancesForEntity, clearCaches, debugSampleUser } from '../services/zeltCompute.js';
 import { runAudit } from '../services/zeltAudit.js';
+import { getMobility } from '../services/zeltMobility.js';
+import { getWatchState, runSnapshotAndDiff, sendWeeklyDigestIfDue } from '../services/zeltWatcher.js';
 
 const IS_PROD = process.env.NODE_ENV === 'production';
 
@@ -217,6 +219,33 @@ router.get('/audit', dataLimiter, requireAuth, asyncHandler(async (req, res) => 
   const forceRefresh = req.query.force === '1' || req.query.force === 'true';
   const report = await runAudit({ forceRefresh }).catch(zeltUpstream('Audit failed'));
   res.json(report);
+}));
+
+// Admin-only: mobility & turnover analytics — trailing-12-month joiner/leaver
+// series, tenure buckets, per-entity/dept splits and the leaver list.
+router.get('/mobility', dataLimiter, requireAuth, requireAdmin, asyncHandler(async (req, res) => {
+  const report = await getMobility().catch(zeltUpstream('Mobility fetch failed'));
+  res.json(report);
+}));
+
+// Admin-only: hygiene watcher state — snapshot history, latest summary,
+// diff vs the previous snapshot, and digest metadata.
+router.get('/watch', dataLimiter, requireAuth, requireAdmin, asyncHandler(async (req, res) => {
+  res.json(getWatchState());
+}));
+
+// Admin-only: take a fresh audit snapshot now, then return the updated state.
+router.post('/watch/run', dataLimiter, requireAuth, requireAdmin, asyncHandler(async (req, res) => {
+  await runSnapshotAndDiff().catch(zeltUpstream('Watcher snapshot failed'));
+  logZeltAudit(req.user.id, 'zelt.watch.run');
+  res.json(getWatchState());
+}));
+
+// Admin-only: force-send the weekly Slack digest (bypasses the 6.5-day gate).
+router.post('/watch/digest', dataLimiter, requireAuth, requireAdmin, asyncHandler(async (req, res) => {
+  const result = await sendWeeklyDigestIfDue({ force: true });
+  logZeltAudit(req.user.id, 'zelt.watch.digest', { sent: result.sent, skipped: result.skipped || null });
+  res.json(result);
 }));
 
 // Admin-only: returns the shape of one user record from Zelt for debugging

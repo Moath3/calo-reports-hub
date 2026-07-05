@@ -330,6 +330,22 @@ function initSchema() {
       captured_at INTEGER NOT NULL,
       PRIMARY KEY (entity, as_of_date)
     );
+
+    CREATE TABLE IF NOT EXISTS zelt_audit_snapshots (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      captured_at INTEGER,
+      as_of TEXT,
+      total_users INTEGER,
+      total_flagged INTEGER,
+      by_severity TEXT,
+      summary TEXT,
+      checks TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS kv (
+      key TEXT PRIMARY KEY,
+      value TEXT
+    );
   `);
 
   // Create indexes individually (sql.js exec doesn't support multiple statements well with IF NOT EXISTS)
@@ -361,6 +377,20 @@ function initSchema() {
 
   // Index for visibility queries
   try { wrapper._db.run('CREATE INDEX IF NOT EXISTS idx_reports_visibility ON reports(visibility)'); } catch {}
+}
+
+// Tiny key/value store — timestamps and other one-off state (e.g. the
+// watcher's last-digest-at) without inventing a table per value.
+export function kvGet(key) {
+  const row = getDb().prepare('SELECT value FROM kv WHERE key = ?').get(key);
+  return row ? row.value : null;
+}
+
+export function kvSet(key, value) {
+  getDb().prepare(`
+    INSERT INTO kv (key, value) VALUES (?, ?)
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value
+  `).run(key, String(value));
 }
 
 export function closeDb() {

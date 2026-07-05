@@ -398,3 +398,60 @@ RULES:
 - Set ready:true with NO question in message as soon as you have: topic + period + scope.
 - If the user says "just build it" or "go ahead" or similar, set ready:true immediately.`;
 }
+
+/**
+ * Zelt hygiene watcher digest. Turns CHECK-LEVEL aggregates (counts, owners,
+ * fix hints — never employee names) into a short Slack mrkdwn message. Falls
+ * back to a deterministic templated digest if the API key is missing or the
+ * call fails, so the weekly post is never blocked.
+ */
+export function buildHygieneDigestPrompt() {
+  return `You are CALO's HR data-quality bot. You receive aggregate results from the Zelt hygiene audit (check-level counts only — there are never employee names in the data) and write a short Slack digest (plain text, *bold* mrkdwn ok): headline with total violations + trend, top items as '• check — count (Δ) — owner — fix hint', max 12 lines, no employee names.
+
+Return ONLY a JSON object (no markdown, no code fences):
+{"text": "the Slack message"}
+
+RULES:
+- Use ONLY the figures provided. Never invent counts, checks, owners, or names.
+- Headline first: total flagged records + the week-over-week trend if present.
+- Then the top items, one per line, in the given order: '• check — count (Δ) — owner — fix hint'.
+- Include the new/resolved counts on one line if present.
+- Max 12 lines total. No greetings, no sign-off.
+- Output ONLY the JSON object.`;
+}
+
+function buildHygieneDigestFallback(a) {
+  const lines = [];
+  const trend = a.trend
+    ? ` (${a.trend.delta >= 0 ? '+' : ''}${a.trend.delta} vs ~a week ago)`
+    : '';
+  lines.push(`*Zelt hygiene digest* — ${a.totalFlagged || 0} flagged records${trend}`);
+  if (a.newFlagsCount || a.resolvedCount) {
+    lines.push(`New since last snapshot: ${a.newFlagsCount || 0} · Resolved: ${a.resolvedCount || 0}`);
+  }
+  for (const c of (a.topChecks || []).slice(0, 10)) {
+    const delta = c.delta ? ` (${c.delta > 0 ? '+' : ''}${c.delta})` : '';
+    lines.push(`• ${c.check} — ${c.count}${delta} — ${c.owner} — ${c.fixHint}`);
+  }
+  return lines.slice(0, 12).join('\n');
+}
+
+export async function generateHygieneDigest(aggregates) {
+  const fallback = buildHygieneDigestFallback(aggregates || {});
+  if (!process.env.CLAUDE_API_KEY) return { text: fallback, ai: false };
+  try {
+    const res = await callAI(
+      "claude-sonnet",
+      buildHygieneDigestPrompt(),
+      "Aggregate audit figures (check-level counts only, no names):\n" + JSON.stringify(aggregates, null, 2),
+      { maxTokens: 1200, timeout: 60000, effort: "low", requestType: "hygiene-digest" }
+    );
+    const parsed = extractJSON(res.text);
+    if (parsed && typeof parsed.text === "string" && parsed.text.trim()) {
+      return { text: parsed.text.trim(), ai: true };
+    }
+    return { text: fallback, ai: false };
+  } catch (e) {
+    return { text: fallback, ai: false, error: e.message };
+  }
+}

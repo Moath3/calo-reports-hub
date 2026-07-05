@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import api from '../utils/api';
-import { Icon } from '../components/ui';
+import { Icon, Btn, Card, Pill, Eyebrow } from '../components/ui';
 import {
   loadMasterfile,
   saveMasterfilesToStorage,
@@ -154,7 +154,7 @@ export default function ZeltAuditPage() {
   }, []);
 
   if (loading) return <Wrap><Spinner /></Wrap>;
-  if (error) return <Wrap><Header /><div style={errBanner}>{error}</div></Wrap>;
+  if (error) return <Wrap><Header /><div style={errBanner}>{error}</div><WatcherCard /></Wrap>;
   if (!report) return null;
 
   const checkKeys = Object.keys(report.summary).filter(k => !['ksaActiveCount'].includes(k));
@@ -168,6 +168,8 @@ export default function ZeltAuditPage() {
   return (
     <Wrap>
       <Header onRefresh={onRefresh} report={report} />
+
+      <WatcherCard />
 
       <ScoreCard report={report} />
 
@@ -316,6 +318,218 @@ function Header({ onRefresh, report }) {
         )}
         {onRefresh && <button onClick={onRefresh} style={ghostBtn}><Icon name="RefreshCw" size={14} /> Refresh</button>}
       </div>
+    </div>
+  );
+}
+
+// ---- Watcher ---------------------------------------------------------------
+//
+// Nightly snapshot trend + diff-since-last-snapshot, with a manual "run now"
+// and a Slack digest trigger. Self-contained: loads from /zelt/watch on mount,
+// independent of the audit load — a watcher failure shows a muted inline
+// message and never breaks the page.
+
+function fmtWhen(x) {
+  if (!x) return 'never';
+  const d = new Date(x);
+  return isNaN(d.getTime()) ? String(x) : d.toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+}
+
+function WatcherCard() {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [watchErr, setWatchErr] = useState(null);
+  const [running, setRunning] = useState(false);
+  const [digesting, setDigesting] = useState(false);
+  const [digest, setDigest] = useState(null);
+
+  useEffect(() => {
+    let alive = true;
+    api.zeltWatch()
+      .then(r => { if (alive) { setData(r); setWatchErr(null); } })
+      .catch(e => { if (alive) setWatchErr(e?.message || 'Watcher unavailable'); })
+      .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, []);
+
+  const runNow = async () => {
+    setRunning(true);
+    setWatchErr(null);
+    try {
+      // Takes ~30s — the server walks all Zelt users and re-runs every check.
+      const r = await api.zeltWatchRun();
+      setData(r);
+    } catch (e) {
+      setWatchErr(e?.message || 'Snapshot run failed');
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  const sendDigest = async () => {
+    setDigesting(true);
+    setDigest(null);
+    try {
+      const r = await api.zeltWatchDigest();
+      setDigest(r);
+    } catch (e) {
+      setDigest({ error: e?.message || 'Digest failed' });
+    } finally {
+      setDigesting(false);
+    }
+  };
+
+  const snaps = (data?.snapshots || []).slice(-30);
+  const maxFlagged = Math.max(...snaps.map(s => s.totalFlagged || 0), 1);
+  const lastSnapshotAt = data?.latest?.capturedAt || data?.lastRun || null;
+  const diff = data?.diff;
+  const hasDiff = diff && ((diff.newFlags || []).length > 0 || (diff.resolved || []).length > 0 || (diff.deltas || []).length > 0);
+
+  return (
+    <Card padding={20}>
+      {/* Header row */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <Eyebrow style={{ marginBottom: 0 }}>Watcher</Eyebrow>
+        <Pill tone="neutral" size="sm" icon="History">
+          {lastSnapshotAt ? `Last snapshot ${fmtWhen(lastSnapshotAt)}` : 'Last snapshot: never'}
+        </Pill>
+        {data && (data.slackConfigured ? (
+          <Pill tone="green" size="sm" icon="MessageSquare">Slack configured</Pill>
+        ) : (
+          <span title="Set SLACK_WEBHOOK_URL on the server to enable Slack digests.">
+            <Pill tone="neutral" size="sm" icon="MessageSquare">webhook not set</Pill>
+          </span>
+        ))}
+        {data?.lastDigestAt && (
+          <Pill tone="neutral" size="sm" icon="Send">Last digest {fmtWhen(data.lastDigestAt)}</Pill>
+        )}
+        <div style={{ flex: 1 }} />
+        <Btn variant="secondary" size="sm" icon={running ? 'LoaderCircle' : 'Camera'} onClick={runNow} disabled={running || loading}>
+          {running ? 'Running… (~30s)' : 'Run snapshot now'}
+        </Btn>
+        <Btn variant="secondary" size="sm" icon={digesting ? 'LoaderCircle' : 'Send'} onClick={sendDigest} disabled={digesting || loading}>
+          {digesting ? 'Sending…' : 'Send digest now'}
+        </Btn>
+      </div>
+
+      {/* Digest result */}
+      {digest && (
+        <div style={{ marginTop: 12 }}>
+          {digest.error ? (
+            <div style={{ fontSize: 13, color: 'var(--ink-500)' }}>Digest failed — {digest.error}</div>
+          ) : (
+            <div style={{ fontSize: 13, fontWeight: 700, color: digest.sent ? 'var(--calo-700, #1e8359)' : 'var(--ink-500)' }}>
+              {digest.sent
+                ? (typeof digest.sent === 'string' ? digest.sent : 'Digest sent to Slack.')
+                : `Skipped${typeof digest.skipped === 'string' ? ` — ${digest.skipped}` : '.'}`}
+            </div>
+          )}
+          {digest.preview && (
+            <details style={{ marginTop: 6 }}>
+              <summary style={{ fontSize: 12, fontWeight: 700, color: 'var(--ink-500)', cursor: 'pointer' }}>Digest preview</summary>
+              <pre style={{ marginTop: 6, padding: 12, background: 'var(--ink-50, #f6f6f4)', borderRadius: 8, fontSize: 12, color: 'var(--ink-700)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                {digest.preview}
+              </pre>
+            </details>
+          )}
+        </div>
+      )}
+
+      {/* Body: loading / error / trend + diff */}
+      {loading ? (
+        <div style={{ marginTop: 14, fontSize: 13, color: 'var(--ink-500)' }}>Loading watcher…</div>
+      ) : watchErr && !data ? (
+        <div style={{ marginTop: 14, fontSize: 13, color: 'var(--ink-500)' }}>Watcher unavailable — {watchErr}</div>
+      ) : (
+        <>
+          {watchErr && <div style={{ marginTop: 12, fontSize: 13, color: 'var(--ink-500)' }}>{watchErr}</div>}
+
+          {/* Trend of flagged totals across snapshots */}
+          {snaps.length === 0 ? (
+            <div style={{ marginTop: 14, fontSize: 13, color: 'var(--ink-500)' }}>
+              No snapshots yet — the watcher runs nightly, or click Run snapshot now.
+            </div>
+          ) : (
+            <div style={{ display: 'flex', alignItems: 'flex-end', gap: 3, height: 64, marginTop: 16 }}>
+              {snaps.map((s, i) => {
+                const isLast = i === snaps.length - 1;
+                return (
+                  <div
+                    key={s.capturedAt || i}
+                    title={`${fmtWhen(s.capturedAt)} — ${s.totalFlagged ?? 0} flagged`}
+                    style={{
+                      width: 14, flexShrink: 0,
+                      height: Math.max(3, Math.round(((s.totalFlagged || 0) / maxFlagged) * 60)),
+                      background: isLast ? 'var(--calo-500, #02B376)' : 'var(--ink-200)',
+                      borderRadius: '3px 3px 0 0',
+                    }}
+                  />
+                );
+              })}
+            </div>
+          )}
+
+          {/* Diff since previous snapshot */}
+          {hasDiff && (
+            <div style={{ marginTop: 16, borderTop: '1px solid var(--ink-100)', paddingTop: 14 }}>
+              <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--ink-500)', letterSpacing: '.06em', textTransform: 'uppercase', marginBottom: 10 }}>
+                What changed since {fmtWhen(diff.since)}
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 12 }}>
+                <WatcherDiffList title="New flags" color="#9A6F0E" items={diff.newFlags || []} />
+                <WatcherDiffList title="Resolved" color="#28b17b" items={diff.resolved || []} />
+              </div>
+              {(diff.deltas || []).length > 0 && (
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 12 }}>
+                  {(diff.deltas || []).map((d, i) => {
+                    const down = (d.after ?? 0) < (d.before ?? 0);
+                    return (
+                      <span key={`${d.check}-${i}`} style={{
+                        display: 'inline-flex', alignItems: 'center', gap: 4,
+                        padding: '4px 10px', borderRadius: 999, fontSize: 12, fontWeight: 700,
+                        background: down ? 'var(--calo-50, #d9f0e5)' : '#FEF5E4',
+                        color: down ? 'var(--calo-800, #16694a)' : '#8A5A1A',
+                        border: `1px solid ${down ? 'var(--calo-100, #c2e8d6)' : '#F6E0B6'}`,
+                      }}>
+                        {LABELS[d.check] || d.check} {d.before ?? 0}→{d.after ?? 0}
+                      </span>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+        </>
+      )}
+    </Card>
+  );
+}
+
+function WatcherDiffList({ title, color, items }) {
+  const shown = items.slice(0, 15);
+  return (
+    <div style={{ border: '1px solid var(--ink-100)', borderRadius: 8, padding: 12 }}>
+      <div style={{ fontSize: 11, fontWeight: 800, color, letterSpacing: '.06em', textTransform: 'uppercase', marginBottom: 8 }}>
+        {title} · {items.length}
+      </div>
+      {items.length === 0 ? (
+        <div style={{ fontSize: 12.5, color: 'var(--ink-500)' }}>None.</div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {shown.map((f, i) => (
+            <div key={`${f.check}-${f.userId || f.employeeId || i}`} style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--ink-900)' }}>{LABELS[f.check] || f.check}</span>
+              {f.owner && <Pill tone="neutral" size="sm">{f.owner}</Pill>}
+              <span style={{ fontSize: 12, color: 'var(--ink-500)' }}>
+                {f.name || '—'}{f.employeeId ? ` · ${f.employeeId}` : ''}
+              </span>
+            </div>
+          ))}
+          {items.length > 15 && (
+            <div style={{ fontSize: 12, color: 'var(--ink-500)' }}>+{items.length - 15} more</div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

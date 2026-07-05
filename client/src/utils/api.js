@@ -338,6 +338,18 @@ class ApiClient {
   async zeltAudit({ force = false } = {}) {
     return this.request('/zelt/audit' + (force ? '?force=1' : ''));
   }
+  async zeltMobility() {
+    return this.request('/zelt/mobility');
+  }
+  async zeltWatch() {
+    return this.request('/zelt/watch');
+  }
+  async zeltWatchRun() {
+    return this.request('/zelt/watch/run', { method: 'POST' });
+  }
+  async zeltWatchDigest() {
+    return this.request('/zelt/watch/digest', { method: 'POST' });
+  }
 
   // Logout
   logout() {

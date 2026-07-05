@@ -11,6 +11,7 @@ import { initDb, closeDb, getDbHealth } from './db/database.js';
 import { HttpError } from './utils/httpError.js';
 import { getStatus as getZeltOauthStatus, drainRefresh as drainZeltRefresh } from './services/zeltApi.js';
 import { warmSession as warmZeltSession, getBotStatus as getZeltBotStatus } from './services/zeltBot.js';
+import { startWatcherScheduler } from './services/zeltWatcher.js';
 import authRoutes from './routes/auth.js';
 import uploadRoutes from './routes/upload.js';
 import aiRoutes from './routes/ai.js';
@@ -187,6 +188,10 @@ initDb().then(() => {
   // this, the heartbeat doesn't run until the first user request triggers a
   // lazy login, so a freshly deployed build serves the first user a re-login.
   try { warmZeltSession(); } catch (e) { console.warn('[zelt-bot] warmSession failed:', e.message); }
+
+  // Hygiene watcher: hourly check, ~daily audit snapshot, weekly Slack digest.
+  // Never fatal — the watcher skips ticks while Zelt is disconnected.
+  try { startWatcherScheduler(); } catch (e) { console.warn('[zelt-watcher] start failed:', e.message); }
 
   app.listen(PORT, () => {
     console.log(`\n  CALO Report AI Platform`);

@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useDropzone } from 'react-dropzone';
 import api from '../utils/api';
+import { normalizeReportData } from '../utils/reportData';
 import toast from 'react-hot-toast';
 import { Card, Pill, Btn, Icon, LabeledInput, CALO_BRAND_COLOR } from '../components/ui';
 
@@ -246,9 +247,10 @@ export default function NewReportPage() {
     try {
       const extra = [customPrompt, style !== 'standard' ? `Style: ${style}` : ''].filter(Boolean).join('\n\n') || undefined;
       const res = await api.analyzeData(dataSummary, provider, extra, selectedTemplateId || undefined);
-      const aiReport = res.reportData || res.report || {};
+      // Normalize legacy/flat AI shapes into canonical { generalInfo, sections }
+      const aiReport = normalizeReportData(res.reportData || res.report || {});
       // Bake chosen visual variant into generalInfo
-      aiReport.generalInfo = { ...(aiReport.generalInfo || {}), variant };
+      aiReport.generalInfo = { ...aiReport.generalInfo, variant };
       const createRes = await api.createReport({
         title: title.trim(),
         description: description.trim(),
@@ -355,8 +357,9 @@ export default function NewReportPage() {
         note: 'The user had a short planning chat with you. Build the full report from the brief below. Synthesize realistic structure, KPIs, sections and plausible placeholder numbers where specific data was not provided.',
       };
       const res = await api.analyzeData(dataPayload, provider || 'claude-opus', undefined, selectedTemplateId || undefined);
-      const aiReport = res.reportData || res.report || {};
-      aiReport.generalInfo = { ...(aiReport.generalInfo || {}), variant };
+      // Normalize legacy/flat AI shapes into canonical { generalInfo, sections }
+      const aiReport = normalizeReportData(res.reportData || res.report || {});
+      aiReport.generalInfo = { ...aiReport.generalInfo, variant };
 
       const firstUserMsg = chatMessages.find(m => m.role === 'user')?.content || finalBrief;
       const derivedTitle = suggestedTitle ||
@@ -852,8 +855,8 @@ export default function NewReportPage() {
                   <option key={p.id} value={p.id}>{p.name}</option>
                 )) : (
                   <>
-                    <option value="claude-sonnet">Claude Sonnet 4.5 — fast & smart</option>
-                    <option value="claude-opus">Claude Opus 4.1 — heavy-duty reasoning</option>
+                    <option value="claude-sonnet">Claude Sonnet 4.6 — fast & smart</option>
+                    <option value="claude-opus">Claude Opus 4.7 — heavy-duty reasoning</option>
                   </>
                 )}
               </select>

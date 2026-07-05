@@ -127,7 +127,9 @@ function renderReportHTML(data, { collapsible = false } = {}) {
         </div>`;
       case 'chart': {
         const cid = 'ch' + Math.random().toString(36).slice(2, 8);
-        const cd = JSON.stringify({ type: b.chartType || 'bar', data: { labels: b.labels || [], datasets: b.datasets || [] } }).replace(/"/g, '&quot;');
+        // Full attribute escaping (& < > " ') — quote-only replacement leaves
+        // pre-existing entities/brackets able to break out of the attribute.
+        const cd = escapeHtml(JSON.stringify({ type: b.chartType || 'bar', data: { labels: b.labels || [], datasets: b.datasets || [] } }));
         return `<div style="background:white;padding:20px;border-radius:12px;border:1px solid #E2E8F0;margin-bottom:14px"><div style="font-weight:700;margin-bottom:10px;color:#1A1D23">${escapeHtml(b.title || 'Chart')}</div><canvas id="${cid}" data-chartcfg="${cd}"></canvas></div>`;
       }
       default: return '';
@@ -226,6 +228,7 @@ export default function ReportPreviewPage() {
   const [exportingImg, setExportingImg] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [netlifyUrl, setNetlifyUrl] = useState('');
+  const [publishedWithPassword, setPublishedWithPassword] = useState(false);
   const [showPublishPanel, setShowPublishPanel] = useState(false);
   const [accessCode, setAccessCode] = useState('');
   const [visibility, setVisibility] = useState('private');
@@ -258,6 +261,7 @@ export default function ReportPreviewPage() {
       .then(res => {
         setReport(res.report);
         setNetlifyUrl(res.report.netlify_url || '');
+        setPublishedWithPassword(Boolean(res.report.netlify_password_protected || res.report.passwordProtected));
         setVisibility(res.report.visibility || 'private');
         setIsOwner(res.report.is_owner !== false);
         setStatus(res.report.status || 'draft');
@@ -422,6 +426,9 @@ export default function ReportPreviewPage() {
       const url = res.url || res.netlifyUrl;
       if (url) {
         setNetlifyUrl(url);
+        // Server publish response includes passwordProtected; fall back to
+        // whether an access code was actually entered for this publish.
+        setPublishedWithPassword(res.passwordProtected !== undefined ? Boolean(res.passwordProtected) : Boolean(password));
         setStatus('published');
         setShowPublishPanel(false);
         setAccessCode('');
@@ -989,9 +996,11 @@ export default function ReportPreviewPage() {
             <a href={netlifyUrl} target="_blank" rel="noopener noreferrer" className="text-green-600 hover:underline truncate">
               {netlifyUrl}
             </a>
-            <span className="inline-flex items-center gap-1 ml-2 px-2 py-0.5 bg-green-100 text-green-700 rounded-full text-xs font-medium">
-              <Shield className="h-3 w-3" /> Password Protected
-            </span>
+            {publishedWithPassword && (
+              <span className="inline-flex items-center gap-1 ml-2 px-2 py-0.5 bg-green-100 text-green-700 rounded-full text-xs font-medium">
+                <Shield className="h-3 w-3" /> Password Protected
+              </span>
+            )}
           </div>
           <a href={netlifyUrl} target="_blank" rel="noopener noreferrer" className="btn-ghost p-1.5 text-green-600">
             <ExternalLink className="h-4 w-4" />

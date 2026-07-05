@@ -167,14 +167,14 @@ function renderBlock(b, color, colorDark) {
   if (b.type === "comparison") {
     h = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">';
     var panes = [
-      { title: b.leftTitle,  rows: b.leftRows,  accent: false, meta: 'Previous' },
-      { title: b.rightTitle, rows: b.rightRows, accent: true,  meta: 'This' },
+      { title: b.leftTitle,  rows: b.leftRows,  accent: false, meta: b.leftMeta || '' },
+      { title: b.rightTitle, rows: b.rightRows, accent: true,  meta: b.rightMeta || '' },
     ];
     panes.forEach(function(p) {
       var bg = p.accent ? 'background:linear-gradient(135deg,' + colorDark + ',' + color + ');color:#fff;' : 'background:#fff;color:#0A1F17;border:1px solid #E8E9E3;';
       var sh = p.accent ? 'box-shadow:0 10px 30px rgba(2,179,118,.25);' : '';
       h += '<div style="padding:22px;border-radius:14px;' + bg + sh + '">';
-      h += '<div style="font-size:11px;font-weight:900;letter-spacing:.14em;opacity:' + (p.accent ? '.85' : '.6') + ';text-transform:uppercase">' + p.meta + '</div>';
+      if (p.meta) h += '<div style="font-size:11px;font-weight:900;letter-spacing:.14em;opacity:' + (p.accent ? '.85' : '.6') + ';text-transform:uppercase">' + escapeHtml(p.meta) + '</div>';
       h += '<div style="font-size:17px;font-weight:900;margin-top:4px;letter-spacing:-0.01em">' + escapeHtml(p.title || '') + '</div>';
       h += '<div style="border-top:1px solid ' + (p.accent ? 'rgba(255,255,255,.2)' : '#F4F4F0') + ';margin-top:14px;padding-top:12px">';
       (p.rows || []).forEach(function(rv) {
@@ -187,7 +187,10 @@ function renderBlock(b, color, colorDark) {
     return h + '</div>';
   }
   if (b.type === "callout") {
-    return '<div style="padding:32px;background:#0A1F17;border-radius:18px;color:#fff;display:flex;gap:22px;align-items:center;margin-bottom:16px;position:relative;overflow:hidden">' +
+    var coBg = escapeHtml(b.bgColor || '#0A1F17');
+    var coText = escapeHtml(b.textColor || '#fff');
+    var coBorder = b.borderColor ? 'border:1px solid ' + escapeHtml(b.borderColor) + ';' : '';
+    return '<div style="padding:32px;background:' + coBg + ';border-radius:18px;color:' + coText + ';' + coBorder + 'display:flex;gap:22px;align-items:center;margin-bottom:16px;position:relative;overflow:hidden">' +
       '<div style="position:absolute;right:-40px;bottom:-40px;width:220px;height:220px;border-radius:50%;background:' + color + ';opacity:.12;pointer-events:none"></div>' +
       (b.icon ? '<div style="font-size:44px;flex-shrink:0;position:relative">' + escapeHtml(b.icon) + '</div>' : '') +
       '<div style="position:relative">' +
@@ -197,7 +200,7 @@ function renderBlock(b, color, colorDark) {
   }
   if (b.type === "chart") {
     var cid = "ch" + Math.random().toString(36).slice(2, 8);
-    var cd = JSON.stringify({ type: b.chartType || "bar", data: { labels: b.labels || [], datasets: b.datasets || [] } }).replace(/"/g, "&quot;");
+    var cd = escapeHtml(JSON.stringify({ type: b.chartType || "bar", data: { labels: b.labels || [], datasets: b.datasets || [] } }));
     return '<div style="background:#FAFAF7;padding:24px;border-radius:16px;border:1px solid #F4F4F0;margin-bottom:16px"><div style="font-size:11px;font-weight:900;color:' + color + ';letter-spacing:.14em;text-transform:uppercase;margin-bottom:12px">' + escapeHtml(b.title || "Chart") + '</div><canvas id="' + cid + '" data-chartcfg="' + cd + '"></canvas></div>';
   }
   if (b.type === "link") {

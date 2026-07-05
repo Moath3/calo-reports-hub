@@ -1,12 +1,13 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import api from '../utils/api';
+import { normalizeReportData } from '../utils/reportData';
 import toast from 'react-hot-toast';
 import {
   Save, Eye, ArrowLeft, Plus, Trash2, GripVertical, ChevronDown, ChevronUp,
   Loader2, Sparkles, Send, Brain, Palette, Type, BarChart3, Table, Image,
   MessageSquare, List, AlertTriangle, Copy, Paperclip, ClipboardPaste, CheckCircle2,
-  Link2, Upload, ArrowUp, ArrowDown
+  Link2, Upload, ArrowUp, ArrowDown, LineChart
 } from 'lucide-react';
 
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
@@ -25,6 +26,7 @@ const BLOCK_TYPES = [
   { type: 'callout', label: 'Callout Box', icon: AlertTriangle },
   { type: 'image', label: 'Image', icon: Image },
   { type: 'link', label: 'Link', icon: Link2 },
+  { type: 'chart', label: 'Chart', icon: LineChart },
 ];
 
 /* ============ Visual Sub-Editors (no JSON exposed) ============ */
@@ -205,6 +207,59 @@ function ComparisonEditor({ block, onChange }) {
   );
 }
 
+function ChartEditor({ block, onChange }) {
+  // Null-guard: blocks may arrive without labels/datasets
+  const firstDataset = (Array.isArray(block.datasets) && block.datasets[0]) || { label: '', data: [] };
+  const [labelsText, setLabelsText] = useState((Array.isArray(block.labels) ? block.labels : []).join(', '));
+  const [dataText, setDataText] = useState((Array.isArray(firstDataset.data) ? firstDataset.data : []).join(', '));
+
+  const patchFirstDataset = (patch) => {
+    const datasets = Array.isArray(block.datasets) && block.datasets.length
+      ? [...block.datasets]
+      : [{ label: '', data: [] }];
+    datasets[0] = { ...(datasets[0] || { label: '', data: [] }), ...patch };
+    onChange({ ...block, datasets });
+  };
+
+  return (
+    <>
+      <Field label="Chart Title" value={block.title || ''} onChange={v => onChange({ ...block, title: v })} />
+      <div>
+        <label className="label">Chart Type</label>
+        <select className="input-field text-sm" value={block.chartType || 'bar'}
+          onChange={e => onChange({ ...block, chartType: e.target.value })}>
+          <option value="bar">Bar</option>
+          <option value="line">Line</option>
+          <option value="pie">Pie</option>
+          <option value="doughnut">Doughnut</option>
+        </select>
+      </div>
+      <div>
+        <label className="label">Labels (comma-separated)</label>
+        <input className="input-field text-sm" placeholder="Jan, Feb, Mar" value={labelsText}
+          onChange={e => {
+            setLabelsText(e.target.value);
+            onChange({ ...block, labels: e.target.value.split(',').map(s => s.trim()).filter(Boolean) });
+          }} />
+      </div>
+      <Field label="Dataset Label" value={firstDataset.label || ''} onChange={v => patchFirstDataset({ label: v })} />
+      <div>
+        <label className="label">Dataset Values (comma-separated numbers)</label>
+        <input className="input-field text-sm" placeholder="10, 20, 30" value={dataText}
+          onChange={e => {
+            setDataText(e.target.value);
+            const nums = e.target.value.split(',')
+              .map(s => s.trim())
+              .filter(s => s !== '')
+              .map(Number)
+              .filter(n => !Number.isNaN(n));
+            patchFirstDataset({ data: nums });
+          }} />
+      </div>
+    </>
+  );
+}
+
 function KpiStripEditor({ kpis, onChange }) {
   const update = (i, field, val) => {
     const next = [...(kpis || [])]; next[i] = { ...next[i], [field]: val }; onChange(next);
@@ -367,6 +422,7 @@ function BlockEditor({ block, onChange, onRemove, onMoveUp, onMoveDown, isFirst,
               <Field label="Description (optional)" value={block.description || ''} onChange={v => set('description', v)} />
             </>
           )}
+          {block.type === 'chart' && <ChartEditor block={block} onChange={onChange} />}
         </div>
       )}
     </div>
@@ -426,7 +482,10 @@ export default function ReportEditorPage() {
 
   useEffect(() => {
     api.getReport(id)
-      .then(res => setReport(res.report))
+      // Normalize legacy/flat report shapes (old AI responses saved in the DB)
+      // into canonical { generalInfo, sections } so they're editable; the next
+      // save persists the repaired shape.
+      .then(res => setReport({ ...res.report, report_data: normalizeReportData(res.report.report_data) }))
       .catch(() => { toast.error('Report not found'); navigate('/reports'); })
       .finally(() => setLoading(false));
     api.getProviders()
@@ -514,6 +573,7 @@ export default function ReportEditorPage() {
     if (type === 'keyvalue') nb.items = [{ key: 'Key', value: 'Value' }];
     if (type === 'comparison') { nb.leftTitle = 'Left'; nb.rightTitle = 'Right'; nb.leftRows = [{ key: '', value: '' }]; nb.rightRows = [{ key: '', value: '' }]; }
     if (type === 'link') { nb.text = 'Link text'; nb.url = 'https://'; nb.description = ''; }
+    if (type === 'chart') { nb.chartType = 'bar'; nb.title = ''; nb.labels = []; nb.datasets = [{ label: '', data: [] }]; }
     s[sIdx] = { ...s[sIdx], blocks: [...(s[sIdx].blocks || []), nb] };
   });
 
@@ -553,18 +613,35 @@ export default function ReportEditorPage() {
       hasUpdates = true;
       const parts = [];
       if (updates.generalInfo) parts.push('General Info');
+      if (Array.isArray(updates.kpiStrip)) parts.push('KPI Strip');
       if (updates.sections) updates.sections.forEach((su, i) => { if (su) parts.push(sections[i]?.title || `Section ${i + 1}`); });
 
       updateData(rd => {
-        if (updates.generalInfo) rd.generalInfo = { ...rd.generalInfo, ...updates.generalInfo };
+        if (updates.generalInfo) {
+          const giUpdates = { ...updates.generalInfo };
+          // Don't let an empty kpiStrip wipe out existing KPIs
+          if (Array.isArray(giUpdates.kpiStrip) && giUpdates.kpiStrip.length === 0 &&
+              Array.isArray(rd.generalInfo?.kpiStrip) && rd.generalInfo.kpiStrip.length > 0) {
+            delete giUpdates.kpiStrip;
+          }
+          rd.generalInfo = { ...rd.generalInfo, ...giUpdates };
+        }
+        // Some models emit kpiStrip at the updates root (the chat prompt lists it
+        // as a separate schema item) — fold it into generalInfo. Same empty-array guard.
+        if (Array.isArray(updates.kpiStrip) &&
+            !(updates.kpiStrip.length === 0 && (rd.generalInfo?.kpiStrip || []).length > 0)) {
+          rd.generalInfo = { ...(rd.generalInfo || {}), kpiStrip: updates.kpiStrip };
+        }
         if (updates.sections) {
-          const newSections = [...rd.sections];
+          const newSections = [...(rd.sections || [])];
           updates.sections.forEach((su, i) => {
             if (su) {
               newSections[i] = newSections[i] ? { ...newSections[i], ...su } : su;
             }
           });
-          rd.sections = newSections;
+          // Sparse updates can leave holes (e.g. index 5 written when only 3
+          // sections exist) — drop them so the editor doesn't crash.
+          rd.sections = newSections.filter(Boolean);
         }
       });
       toast.success(`Updated: ${parts.join(', ') || 'Report data'}`);
@@ -577,10 +654,12 @@ export default function ReportEditorPage() {
     if (!aiMsg.trim()) return;
     const msg = aiMsg.trim();
     setAiMsg('');
-    setAiChat(prev => [...prev, { role: 'user', content: msg }]);
+    // Build the history explicitly so we never send a stale closure snapshot
+    const newHistory = [...aiChat, { role: 'user', content: msg }];
+    setAiChat(newHistory);
     setAiLoading(true);
     try {
-      const res = await api.chatAI(msg, reportData, aiProvider, aiChat.slice(-CHAT_HISTORY_LIMIT));
+      const res = await api.chatAI(msg, reportData, aiProvider, newHistory.slice(-CHAT_HISTORY_LIMIT));
       handleAIResponse(res);
     } catch (err) {
       setAiChat(prev => [...prev, { role: 'assistant', content: 'Error: ' + (err.message || 'AI request failed') }]);
@@ -588,9 +667,10 @@ export default function ReportEditorPage() {
   };
 
   const sendQuickAction = (text) => {
-    setAiChat(prev => [...prev, { role: 'user', content: text }]);
+    const newHistory = [...aiChat, { role: 'user', content: text }];
+    setAiChat(newHistory);
     setAiLoading(true);
-    api.chatAI(text, reportData, aiProvider, aiChat.slice(-CHAT_HISTORY_LIMIT))
+    api.chatAI(text, reportData, aiProvider, newHistory.slice(-CHAT_HISTORY_LIMIT))
       .then(res => handleAIResponse(res))
       .catch(err => setAiChat(prev => [...prev, { role: 'assistant', content: 'Error: ' + err.message }]))
       .finally(() => setAiLoading(false));
@@ -691,9 +771,9 @@ export default function ReportEditorPage() {
                 <input className="flex-1 font-semibold text-gray-900 bg-transparent border-none outline-none"
                   value={section.title || ''} onChange={e => updateSection(sIdx, s => { s[sIdx] = { ...s[sIdx], title: e.target.value }; })} placeholder="Section title..." />
                 <button onClick={() => handleRefine(sIdx)} className="btn-ghost p-1.5 text-purple-600" title="AI Refine" disabled={aiLoading}><Sparkles className="h-4 w-4" /></button>
-                <button onClick={() => moveSection(sIdx, -1)} disabled={sIdx === 0} className="btn-ghost p-1.5 disabled:opacity-30"><ChevronUp className="h-4 w-4" /></button>
-                <button onClick={() => moveSection(sIdx, 1)} disabled={sIdx === sections.length - 1} className="btn-ghost p-1.5 disabled:opacity-30"><ChevronDown className="h-4 w-4" /></button>
-                <button onClick={() => removeSection(sIdx)} className="btn-ghost p-1.5 text-red-500"><Trash2 className="h-4 w-4" /></button>
+                <button onClick={() => moveSection(sIdx, -1)} disabled={aiLoading || sIdx === 0} title={aiLoading ? 'Wait for the AI update to finish' : 'Move up'} className="btn-ghost p-1.5 disabled:opacity-30"><ChevronUp className="h-4 w-4" /></button>
+                <button onClick={() => moveSection(sIdx, 1)} disabled={aiLoading || sIdx === sections.length - 1} title={aiLoading ? 'Wait for the AI update to finish' : 'Move down'} className="btn-ghost p-1.5 disabled:opacity-30"><ChevronDown className="h-4 w-4" /></button>
+                <button onClick={() => removeSection(sIdx)} disabled={aiLoading} title={aiLoading ? 'Wait for the AI update to finish' : 'Delete section'} className="btn-ghost p-1.5 text-red-500 disabled:opacity-30"><Trash2 className="h-4 w-4" /></button>
               </div>
               <div className="p-4 space-y-3">
                 {(section.blocks || []).map((block, bIdx) => (
@@ -722,7 +802,7 @@ export default function ReportEditorPage() {
               </div>
             </div>
           ))}
-          <button onClick={addSection} className="btn-secondary w-full flex items-center justify-center gap-2 py-4 border-dashed">
+          <button onClick={addSection} disabled={aiLoading} title={aiLoading ? 'Wait for the AI update to finish' : undefined} className="btn-secondary w-full flex items-center justify-center gap-2 py-4 border-dashed disabled:opacity-50 disabled:cursor-not-allowed">
             <Plus className="h-5 w-5" /> Add Section
           </button>
         </div>
@@ -761,8 +841,8 @@ export default function ReportEditorPage() {
               {aiProviders.length > 0 ? aiProviders.map(p => (
                 <option key={p.id} value={p.id}>{p.name}</option>
               )) : <>
-                <option value="claude-sonnet">Claude Sonnet 4.5</option>
-                <option value="claude-opus">Claude Opus 4.1</option>
+                <option value="claude-sonnet">Claude Sonnet 4.6</option>
+                <option value="claude-opus">Claude Opus 4.7</option>
               </>}
             </select>
           </div>

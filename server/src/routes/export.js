@@ -82,7 +82,9 @@ router.post("/netlify", requireAuth, asyncHandler(async (req, res) => {
       }
       const site = await siteRes.json();
       siteId = site.id || site.site_id;
-      siteUrl = "https://" + slug + ".netlify.app";
+      // Trust the URL Netlify actually assigned (name collisions get suffixed),
+      // falling back to the locally-built slug URL only if the API omits it.
+      siteUrl = site.ssl_url || site.url || ("https://" + slug + ".netlify.app");
     }
 
     // Deploy to the site
@@ -110,7 +112,7 @@ router.post("/netlify", requireAuth, asyncHandler(async (req, res) => {
     db.prepare("UPDATE reports SET netlify_site_id = ?, netlify_url = ?, status = 'published', updated_at = CURRENT_TIMESTAMP WHERE id = ?")
       .run(siteId, siteUrl, reportId);
 
-    res.json({ url: siteUrl, siteId, deployId: deploy.id });
+    res.json({ url: siteUrl, siteId, deployId: deploy.id, passwordProtected: Boolean(password) });
   } catch (err) {
     // Preserve original behavior: surface Netlify error message in the response
     throw new HttpError(500, "Netlify deploy failed: " + err.message);

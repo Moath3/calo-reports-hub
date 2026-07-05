@@ -178,22 +178,31 @@ function normalizeProvider(p) {
 export function buildReportSystemPrompt(dataSummary, templateData) {
   const today = new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
   let prompt = "You are CALO Report AI, an expert data analyst. Analyze the data and produce a professional report.\n\n" +
-    "Return ONLY valid JSON (no markdown, no code blocks):\n" +
-    "{ \"title\": \"Report Title\", \"subtitle\": \"Subtitle\", \"reportDate\": \"" + today + "\", \"brandColor\": \"#02B376\",\n" +
-    "  \"kpis\": [{ \"label\": \"Name\", \"value\": \"123\", \"unit\": \"opt\", \"trend\": \"up|down|stable\" }],\n" +
-    "  \"sections\": [{ \"title\": \"Section\", \"icon\": \"emoji\", \"blocks\": [...] }],\n" +
-    "  \"summary\": \"Executive summary\", \"insights\": [\"insight1\"] }\n\n" +
-    "BLOCK TYPES:\n" +
-    "1. badge: {\"type\":\"badge\",\"label\":\"text\",\"style\":\"green|amber|red|blue\"}\n" +
-    "2. notes: {\"type\":\"notes\",\"content\":\"paragraph\"}\n" +
-    "3. metrics: {\"type\":\"metrics\",\"items\":[{\"label\":\"N\",\"value\":\"V\",\"change\":\"+5%\",\"trend\":\"up\"}]}\n" +
-    "4. table: {\"type\":\"table\",\"headers\":[\"C1\"],\"rows\":[[\"v1\"]]}\n" +
-    "5. keyvalue: {\"type\":\"keyvalue\",\"items\":[{\"key\":\"K\",\"value\":\"V\"}]}\n" +
-    "6. comparison: {\"type\":\"comparison\",\"leftTitle\":\"A\",\"rightTitle\":\"B\",\"leftRows\":[{\"key\":\"k\",\"value\":\"v\"}],\"rightRows\":[{\"key\":\"k\",\"value\":\"v\"}]}\n" +
-    "7. callout: {\"type\":\"callout\",\"title\":\"T\",\"value\":\"V\",\"icon\":\"emoji\"}\n" +
-    "8. chart: {\"type\":\"chart\",\"chartType\":\"bar|line|pie|doughnut\",\"title\":\"T\",\"labels\":[\"A\"],\"datasets\":[{\"label\":\"S\",\"data\":[10]}]}\n" +
-    "9. link: {\"type\":\"link\",\"text\":\"Link text\",\"url\":\"https://...\",\"description\":\"optional desc\"}\n" +
-    "10. image: {\"type\":\"image\",\"url\":\"image-url\",\"caption\":\"optional caption\"}\n\n";
+    "Return ONLY valid JSON (no markdown, no code blocks) with this EXACT top-level structure:\n" +
+    "{\n" +
+    "  \"generalInfo\": {\n" +
+    "    \"title\": \"Report Title\",\n" +
+    "    \"subtitle\": \"Subtitle\",\n" +
+    "    \"reportDate\": \"" + today + "\",\n" +
+    "    \"companyName\": \"optional org name\",\n" +
+    "    \"brandColor\": \"#02B376\",\n" +
+    "    \"kpiStrip\": [{ \"label\": \"Name\", \"value\": \"123\", \"unit\": \"optional\", \"trend\": \"up|down|stable\" }]\n" +
+    "  },\n" +
+    "  \"sections\": [{ \"title\": \"Section\", \"icon\": \"emoji\", \"blocks\": [...] }]\n" +
+    "}\n\n" +
+    "The FIRST section MUST be titled \"Executive Summary\" and contain a notes block whose items are the executive summary sentences followed by 3-5 actionable insights. " +
+    "Do NOT emit top-level \"summary\", \"insights\", \"kpis\", or \"title\" fields — everything lives in generalInfo and sections.\n\n" +
+    "BLOCK TYPE SCHEMAS (ALL values MUST be strings; the ONLY exception is chart datasets \"data\", which are numbers):\n" +
+    "1. badge: {\"type\":\"badge\",\"title\":\"T\",\"subtitle\":\"S\",\"period\":\"P\",\"label\":\"L\",\"style\":\"green|amber|red|blue\"}\n" +
+    "2. notes: {\"type\":\"notes\",\"label\":\"L\",\"items\":[\"bullet1\",\"bullet2\"]}\n" +
+    "3. metrics: {\"type\":\"metrics\",\"label\":\"L\",\"items\":[{\"label\":\"N\",\"value\":\"V\",\"change\":\"+5%\",\"trend\":\"up|down|stable\"}]}\n" +
+    "4. table: {\"type\":\"table\",\"label\":\"L\",\"headers\":[\"H1\",\"H2\"],\"rows\":[[\"c1\",\"c2\"]]}\n" +
+    "5. keyvalue: {\"type\":\"keyvalue\",\"label\":\"L\",\"items\":[{\"key\":\"K\",\"value\":\"V\"}]}\n" +
+    "6. comparison: {\"type\":\"comparison\",\"label\":\"L\",\"leftTitle\":\"A\",\"rightTitle\":\"B\",\"leftRows\":[{\"key\":\"k\",\"value\":\"v\"}],\"rightRows\":[{\"key\":\"k\",\"value\":\"v\"}],\"leftMeta\":\"optional eyebrow\",\"rightMeta\":\"optional eyebrow\"}\n" +
+    "7. callout: {\"type\":\"callout\",\"title\":\"T\",\"value\":\"V\",\"icon\":\"emoji\",\"bgColor\":\"#hex optional\",\"borderColor\":\"#hex optional\",\"textColor\":\"#hex optional\"}\n" +
+    "8. link: {\"type\":\"link\",\"text\":\"Link text\",\"url\":\"https://...\",\"description\":\"optional desc\"}\n" +
+    "9. image: {\"type\":\"image\",\"url\":\"image-url\",\"caption\":\"optional caption\"}\n" +
+    "10. chart: {\"type\":\"chart\",\"chartType\":\"bar|line|pie|doughnut\",\"title\":\"T\",\"labels\":[\"A\"],\"datasets\":[{\"label\":\"S\",\"data\":[10]}]}\n\n";
 
   if (templateData) {
     prompt += "TEMPLATE STRUCTURE (USE THIS AS YOUR GUIDE):\n" +
@@ -207,8 +216,10 @@ export function buildReportSystemPrompt(dataSummary, templateData) {
       "ALL values MUST be strings (even numbers: \"1234\" not 1234).\n\n" +
       "TEMPLATE JSON:\n" + JSON.stringify(templateData, null, 2) + "\n\n";
   } else {
-    prompt += "GUIDELINES:\n- Identify 4-6 KPIs\n- Create 4-8 sections\n- Use charts for numerical data\n- Use comparisons for paired data\n" +
-      "- Write insightful analysis\n- Generate 3-5 actionable insights\n- ALL values as strings\n\n";
+    prompt += "GUIDELINES:\n- Identify 4-6 KPIs for generalInfo.kpiStrip\n" +
+      "- First section: \"Executive Summary\" (notes block — summary sentences + 3-5 actionable insights as items)\n" +
+      "- Then create 4-8 content sections\n- Use charts for numerical data\n- Use comparisons for paired data\n" +
+      "- Write insightful analysis\n- ALL values as strings (chart datasets \"data\" excepted)\n\n";
   }
 
   prompt += "DATA:\n" + JSON.stringify(dataSummary, null, 2);

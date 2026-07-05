@@ -147,14 +147,21 @@ router.post("/plan", requireAuth, asyncHandler(async (req, res) => {
   const result = await callAI(provider, systemPrompt, userMessage, { requestType: "chat" });
   const duration = Date.now() - startTime;
 
+  logUsage(req.user.id, provider, result, "chat", duration);
+
   const parsed = extractJSON(result.text);
   if (!parsed) {
-    throw unprocessable("AI did not return valid plan JSON.", {
-      rawResponse: (result.text || "").slice(0, 1000),
+    // Model replied in plain text instead of JSON — degrade gracefully: show
+    // the raw reply as a chat message rather than surfacing a 422 toast.
+    return res.json({
+      message: result.text,
+      ready: false,
+      brief: '',
+      suggestedTitle: '',
+      model: result.model,
     });
   }
 
-  logUsage(req.user.id, provider, result, "chat", duration);
   res.json({
     message: parsed.message || '',
     ready: parsed.ready === true,

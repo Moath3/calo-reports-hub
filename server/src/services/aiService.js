@@ -1,3 +1,5 @@
+import { HttpError } from "../utils/httpError.js";
+
 const TIMEOUT_MS = 120000; // 2 min — chat/refine
 const ANALYZE_TIMEOUT_MS = 480000; // 8 min — adaptive thinking on full reports
 const CHAT_CONTEXT_CHAR_LIMIT = 8000; // current report state attached to the chat path
@@ -45,6 +47,33 @@ export function extractJSON(text) {
   return null;
 }
 
+// Model IDs currently in use — consumed by the diagnostics "Test connections"
+// probe so it can verify the org can actually CALL these models, not just
+// that the key is valid.
+export function getModelIds() {
+  return { sonnet: SONNET_MODEL, opus: OPUS_MODEL };
+}
+
+/**
+ * Translate an Anthropic /v1/messages failure into an actionable message.
+ * Without this, upstream failures surfaced as a masked "Internal server error"
+ * in production — the user couldn't tell a revoked key from missing model
+ * access from an empty billing balance.
+ */
+export function describeClaudeFailure(status, bodyText, model) {
+  let apiMsg = "";
+  try { apiMsg = JSON.parse(bodyText)?.error?.message || ""; } catch (e) {}
+  const detail = apiMsg ? ` — ${apiMsg.slice(0, 160)}` : "";
+  if (status === 401) return `Claude rejected the API key (401)${detail}. Update CLAUDE_API_KEY in Render → Environment; it must be an Anthropic Console key (sk-ant-…), not a Claude.ai login.`;
+  if (status === 403) return `The Claude API key lacks permission (403)${detail}. Check the key's workspace/org in the Anthropic Console.`;
+  if (status === 404 || (status === 400 && /model/i.test(apiMsg))) {
+    return `The model "${model}" is not available on this Anthropic org (${status})${detail}. Enable it in the Anthropic Console, or set CLAUDE_OPUS_MODEL / CLAUDE_SONNET_MODEL in Render to a model the org can use.`;
+  }
+  if (status === 429) return `Claude rate limit or out of credits (429)${detail}. Check Anthropic Console → Billing — a new org often has no credit balance.`;
+  if (status === 500 || status === 529) return `Anthropic is temporarily overloaded (${status}) — try again in a minute.`;
+  return `Claude API error (${status})${detail}.`;
+}
+
 /**
  * Low-level Anthropic API call.
  *
@@ -75,7 +104,7 @@ async function callClaude({
   effort = null,
 }) {
   const apiKey = process.env.CLAUDE_API_KEY;
-  if (!apiKey) throw new Error("CLAUDE_API_KEY not configured");
+  if (!apiKey) throw new HttpError(503, "Claude is not configured — set CLAUDE_API_KEY in Render → Environment.");
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeout);
@@ -100,20 +129,30 @@ async function callClaude({
     if (thinking) body.thinking = { type: "adaptive" };
     if (effort) body.output_config = { effort };
 
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    });
+    let res;
+    try {
+      res = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": apiKey,
+          "anthropic-version": "2023-06-01",
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+    } catch (e) {
+      if (e.name === "AbortError") {
+        throw new HttpError(504, `Claude timed out after ${Math.round(timeout / 1000)}s — long reports can take several minutes; try again.`);
+      }
+      throw new HttpError(502, "Could not reach the Claude API: " + e.message);
+    }
 
     if (!res.ok) {
-      const err = await res.text();
-      throw new Error("Claude API error (" + res.status + "): " + err);
+      const errText = await res.text();
+      // HttpError so the real upstream reason reaches the client instead of
+      // being sanitized to "Internal server error" in production.
+      throw new HttpError(502, describeClaudeFailure(res.status, errText, model), { upstreamStatus: res.status });
     }
 
     const data = await res.json();

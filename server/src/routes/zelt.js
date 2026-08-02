@@ -120,6 +120,15 @@ router.get('/oauth/callback', oauthLimiter, async (req, res) => {
     }));
   } catch (err) {
     console.error('[zelt/oauth/callback]', err.message);
+    // Classic double-hit: the browser loads the callback URL twice, the first
+    // hit exchanges the (single-use) code and stores tokens, the second throws.
+    // If we're actually connected, say so instead of scaring the admin.
+    if (getStatus().connected) {
+      return res.send(renderCallbackPage({
+        ok: true,
+        message: 'Zelt is already connected — this link was opened twice, which is harmless. You can close this tab and return to the hub.',
+      }));
+    }
     return res.status(500).send(renderCallbackPage({
       ok: false,
       message: 'Token exchange failed. Contact your hub admin to diagnose.',

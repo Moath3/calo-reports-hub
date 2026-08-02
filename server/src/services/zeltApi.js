@@ -421,6 +421,12 @@ async function zeltGetOauth(path, params) {
     // CDN/WAF bot-block at high concurrency. Wait longer + retry once.
     await sleep(1000 + Math.random() * 1500);
     resp = await attempt();
+  } else if (resp.status === 429) {
+    // Partner API rate limit. The advertised window is usually 60s — too long
+    // to block a request on — so retry once after a short pause and otherwise
+    // surface a friendly, actionable error instead of raw JSON.
+    await sleep(2000 + Math.random() * 1000);
+    resp = await attempt();
   } else if (resp.status >= 500) {
     await sleep(500 + Math.random() * 500);
     resp = await attempt();
@@ -428,7 +434,9 @@ async function zeltGetOauth(path, params) {
 
   if (!resp.ok) {
     const text = await resp.text().catch(() => '');
-    const err = new Error(`Zelt API ${resp.status}: ${text.slice(0, 200)}`);
+    const err = new Error(resp.status === 429
+      ? 'Zelt partner API rate-limited (too many requests) — wait a minute and click Refresh.'
+      : `Zelt API ${resp.status}: ${text.slice(0, 200)}`);
     err.status = resp.status;
     throw err;
   }

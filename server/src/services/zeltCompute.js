@@ -150,10 +150,12 @@ export async function entitiesForDepartments(departments) {
 // and falls back to the last persisted snapshot (with stale=true and the
 // captured-at timestamp) if the fresh path fully fails. Means a Zelt outage
 // shows the last known balances + a banner instead of a hard error.
-export async function getBalancesForEntity(entityName, asOfDate = null) {
+export async function getBalancesForEntity(entityName, asOfDate = null, departments = []) {
   try {
-    const fresh = await fetchBalancesForEntityFresh(entityName, asOfDate);
-    saveBalanceSnapshot(entityName, asOfDate, fresh);
+    const fresh = await fetchBalancesForEntityFresh(entityName, asOfDate, departments);
+    // Dept-scoped fetches must NOT overwrite the full-entity snapshot — the
+    // fallback below always serves the full snapshot and the route re-filters.
+    if (!departments.length) saveBalanceSnapshot(entityName, asOfDate, fresh);
     return { ...fresh, stale: false };
   } catch (err) {
     const snapshot = loadBalanceSnapshot(entityName, asOfDate);
@@ -249,11 +251,17 @@ function loadBalanceSnapshot(entityName, asOfDate) {
   }
 }
 
-async function fetchBalancesForEntityFresh(entityName, asOfDate = null) {
-  // asOfDate: ISO date string (YYYY-MM-DD), past only, optional
-  const key = `${entityName.toLowerCase()}|${asOfDate || 'today'}`;
+async function fetchBalancesForEntityFresh(entityName, asOfDate = null, departments = []) {
+  // asOfDate: ISO date string (YYYY-MM-DD), past only, optional.
+  // departments: optional — narrows the TARGETS before the expensive per-user
+  // fetches, so a department query costs a handful of partner calls instead of
+  // the whole entity's staff (which was bursting Zelt's partner rate limit).
+  const deptNorm = (departments || []).map(d => String(d).trim().toLowerCase()).filter(Boolean).sort();
+  const key = `${entityName.toLowerCase()}|${asOfDate || 'today'}${deptNorm.length ? '|' + deptNorm.join(',') : ''}`;
   const cached = cache.balances.get(key);
   if (cached && cached.expiresAt > Date.now()) return cached.value;
+  const entKey = entityName.toLowerCase().trim();
+  const deptSet = new Set(deptNorm);
 
   const users = await fetchAllUsers();
 
@@ -283,7 +291,12 @@ async function fetchBalancesForEntityFresh(entityName, asOfDate = null) {
     if (e) entitiesSeen.add(e);
     if (!e) return false;
     const eNorm = e.toLowerCase().trim();
-    return eNorm === key || eNorm.includes(key) || key.includes(eNorm);
+    if (!(eNorm === entKey || eNorm.includes(entKey) || entKey.includes(eNorm))) return false;
+    if (deptSet.size) {
+      const d = u?.role?.department?.name || u?.department?.name || u?.department;
+      if (!d || typeof d !== 'string' || !deptSet.has(d.trim().toLowerCase())) return false;
+    }
+    return true;
   });
 
   const targetUserIds = targets.map(u => u.userId || u.id);

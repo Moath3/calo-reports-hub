@@ -211,10 +211,16 @@ router.get('/balances', dataLimiter, requireAuth, asyncHandler(async (req, res) 
 
   // Partial-failure tolerance: return the entities that worked plus a `failed`
   // list, instead of letting one broken entity kill the whole report. Only
-  // hard-fail when EVERY entity failed.
-  const settled = await Promise.allSettled(
-    targetEntities.map(e => getBalancesForEntity(e, asOfDate))
-  );
+  // hard-fail when EVERY entity failed. Entities are fetched SEQUENTIALLY —
+  // a parallel fan-out burst is what tripped Zelt's partner rate limit (429).
+  const settled = [];
+  for (const e of targetEntities) {
+    try {
+      settled.push({ status: 'fulfilled', value: await getBalancesForEntity(e, asOfDate, departments) });
+    } catch (reason) {
+      settled.push({ status: 'rejected', reason });
+    }
+  }
   const datas = [];
   const failed = [];
   settled.forEach((s, i) => {

@@ -31,7 +31,7 @@ import {
   zeltGetOauthOnly,
 } from '../services/zeltApi.js';
 import { botGet, botConfigured, getBotStatus } from '../services/zeltBot.js';
-import { listEntities, listDepartments, getBalancesForEntity, clearCaches, debugSampleUser } from '../services/zeltCompute.js';
+import { listEntities, listDepartments, entitiesForDepartments, getBalancesForEntity, clearCaches, debugSampleUser } from '../services/zeltCompute.js';
 import { runAudit } from '../services/zeltAudit.js';
 import { getMobility } from '../services/zeltMobility.js';
 import { getWatchState, runSnapshotAndDiff, sendWeeklyDigestIfDue } from '../services/zeltWatcher.js';
@@ -183,10 +183,41 @@ router.get('/balances', dataLimiter, requireAuth, asyncHandler(async (req, res) 
     ? rows.filter(r => r.department && deptSet.has(String(r.department).trim().toLowerCase()))
     : rows;
 
-  const datas = await Promise.all(
-    entities.map(e => getBalancesForEntity(e, asOfDate).catch(zeltUpstream('Failed to fetch balances')))
+  // Department-first fan-out narrowing: when departments are picked, only fetch
+  // entities that actually contain them (from the cached user list). A fan-out
+  // to ALL entities otherwise hits fringe entities that have no snapshot and a
+  // degraded upstream path, and one broken entity would fail the whole request.
+  let targetEntities = entities;
+  if (deptSet.size && entities.length > 1) {
+    const relevant = await entitiesForDepartments(departments).catch(() => null);
+    if (relevant && relevant.length) {
+      const relNorm = relevant.map(r => r.toLowerCase());
+      const narrowed = entities.filter(e => {
+        const en = e.toLowerCase();
+        return relNorm.some(r => r === en || r.includes(en) || en.includes(r));
+      });
+      if (narrowed.length) targetEntities = narrowed;
+    }
+  }
+
+  // Partial-failure tolerance: return the entities that worked plus a `failed`
+  // list, instead of letting one broken entity kill the whole report. Only
+  // hard-fail when EVERY entity failed.
+  const settled = await Promise.allSettled(
+    targetEntities.map(e => getBalancesForEntity(e, asOfDate))
   );
-  if (datas.length === 1) {
+  const datas = [];
+  const failed = [];
+  settled.forEach((s, i) => {
+    if (s.status === 'fulfilled') datas.push(s.value);
+    else {
+      const msg = s.reason?.message === 'NotConnected' ? 'Zelt not connected' : (s.reason?.message || 'fetch failed');
+      failed.push({ entity: targetEntities[i], reason: msg.slice(0, 200) });
+    }
+  });
+  if (!datas.length) zeltUpstream('Failed to fetch balances')(settled[0].reason);
+
+  if (targetEntities.length === 1) {
     const d = datas[0];
     const rows = byDept(d.rows);
     return res.json({ ...d, rows, count: rows.length, departments });
@@ -210,12 +241,13 @@ router.get('/balances', dataLimiter, requireAuth, asyncHandler(async (req, res) 
     : null;
 
   res.json({
-    entity: entities.join(' + '),
+    entity: targetEntities.join(' + '),
     asOf: datas[0].asOf,
     count: allRows.length,
     rows: allRows,
     multi: true,
     departments,
+    failed: failed.length ? failed : undefined,
     sources: datas.map(d => ({
       entity: d.entity,
       count: d.count,

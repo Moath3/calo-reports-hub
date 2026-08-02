@@ -119,6 +119,33 @@ export async function listDepartments() {
   return departments;
 }
 
+// Entities that actually contain the given departments (among currently
+// employed users). Lets the department-first mode fan out to only the relevant
+// entities instead of hammering — and failing on — entities that can't
+// contribute a single row.
+export function deriveEntitiesForDepartments(users, departments) {
+  const want = new Set((departments || []).map((d) => String(d).trim().toLowerCase()).filter(Boolean));
+  if (!want.size) return [];
+  const set = new Set();
+  for (const u of users || []) {
+    const status = u?.accountStatus || u?.status || u?.lifecycle?.status;
+    if (status === 'Deactivated' || status === 'Terminated') continue;
+    const eventStatus = u?.userEvent?.status || u?.lifecycle?.status;
+    if (eventStatus === 'Terminated' || eventStatus === 'Resigned' || eventStatus === 'Offboarded') continue;
+    if (u?.leaveDate || u?.lifecycle?.leaveDate) continue;
+    const d = u?.role?.department?.name || u?.department?.name || u?.department;
+    if (!d || typeof d !== 'string' || !want.has(d.trim().toLowerCase())) continue;
+    const e = readEntity(u);
+    if (e && typeof e === 'string' && e.trim()) set.add(e.trim());
+  }
+  return Array.from(set).sort((a, b) => a.localeCompare(b));
+}
+
+export async function entitiesForDepartments(departments) {
+  const users = await fetchAllUsers();
+  return deriveEntitiesForDepartments(users, departments);
+}
+
 // Public entry point: tries a fresh fetch, persists the result on success,
 // and falls back to the last persisted snapshot (with stale=true and the
 // captured-at timestamp) if the fresh path fully fails. Means a Zelt outage

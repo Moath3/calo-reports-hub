@@ -357,6 +357,26 @@ export default function ZeltLeavePage() {
         </div>
       )}
 
+      {/* Entities that failed to load (partial result) */}
+      {data && data.failed?.length > 0 && (
+        <div style={{
+          background: '#FFF8E5', border: '1px solid #F1D785', borderRadius: 8,
+          padding: 14, display: 'flex', gap: 12, alignItems: 'flex-start',
+        }}>
+          <div style={{ fontSize: 18, lineHeight: 1, color: '#9A6F0E' }}>⚠</div>
+          <div style={{ flex: 1, fontSize: 13, color: '#7B5A0E' }}>
+            <div style={{ fontWeight: 800, fontSize: 14, color: '#9A6F0E' }}>
+              {data.failed.length} entit{data.failed.length === 1 ? 'y' : 'ies'} couldn’t be loaded — showing the rest
+            </div>
+            <ul style={{ margin: '6px 0 0 16px', padding: 0 }}>
+              {data.failed.map(f => (
+                <li key={f.entity}><b>{f.entity}</b> — <span style={{ opacity: .85 }}>{f.reason}</span></li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      )}
+
       {/* Diagnostic when zero rows */}
       {data && data.count === 0 && data.diagnostic && (
         <div style={{ ...panel, background: '#FFF8E5', borderColor: '#F1D785' }}>

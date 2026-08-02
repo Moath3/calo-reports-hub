@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { deriveDepartmentsFromUsers } from './zeltCompute.js';
+import { deriveDepartmentsFromUsers, deriveEntitiesForDepartments } from './zeltCompute.js';
 
 test('deriveDepartmentsFromUsers: active users only, deduped, sorted', () => {
   const users = [
@@ -20,4 +20,16 @@ test('deriveDepartmentsFromUsers: tolerates empty/garbage input', () => {
   assert.deepEqual(deriveDepartmentsFromUsers([]), []);
   assert.deepEqual(deriveDepartmentsFromUsers(null), []);
   assert.deepEqual(deriveDepartmentsFromUsers([{}, { role: {} }, { department: 42 }]), []);
+});
+
+test('deriveEntitiesForDepartments: only entities whose ACTIVE staff hold the departments', () => {
+  const users = [
+    { accountStatus: 'Active', role: { department: { name: 'Kitchen' } }, userContract: { entity: { legalName: 'Luqmat' } } },
+    { accountStatus: 'Active', role: { department: { name: 'Kitchen' } }, userContract: { entity: { legalName: 'MP UAE' } } },
+    { accountStatus: 'Active', role: { department: { name: 'Finance' } }, userContract: { entity: { legalName: 'Vresto UK' } } },   // other dept
+    { accountStatus: 'Terminated', role: { department: { name: 'Kitchen' } }, userContract: { entity: { legalName: 'Fakihi' } } }, // terminated
+  ];
+  assert.deepEqual(deriveEntitiesForDepartments(users, ['kitchen']), ['Luqmat', 'MP UAE']); // case-insensitive match
+  assert.deepEqual(deriveEntitiesForDepartments(users, []), []);
+  assert.deepEqual(deriveEntitiesForDepartments(null, ['Kitchen']), []);
 });

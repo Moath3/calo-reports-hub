@@ -26,6 +26,7 @@ const ABSENCE_USER_CHUNK_SIZE = 50; // users per /partner/absences batch call
 
 const cache = {
   entities: { value: null, expiresAt: 0 },
+  departments: { value: null, expiresAt: 0 },
   balances: new Map(), // key: entity → { value, expiresAt }
   // Heavyweight: full user list. Reused across entity picks for 5 min so
   // generating reports for two different entities doesn't refetch 1961 users.
@@ -85,6 +86,37 @@ export async function listEntities() {
   cache.entities = { value: entities, expiresAt: Date.now() + ENTITIES_TTL_MS };
   console.log(`[zelt] entities derived from ${users.length} users (${entities.length} entities)`);
   return entities;
+}
+
+// Pure derivation so it's unit-testable: department names of CURRENTLY
+// EMPLOYED users only (same filter as the balances path), deduped + sorted.
+// Terminated people shouldn't keep ghost departments alive in the dropdown.
+export function deriveDepartmentsFromUsers(users) {
+  const set = new Set();
+  for (const u of users || []) {
+    const status = u?.accountStatus || u?.status || u?.lifecycle?.status;
+    if (status === 'Deactivated' || status === 'Terminated') continue;
+    const eventStatus = u?.userEvent?.status || u?.lifecycle?.status;
+    if (eventStatus === 'Terminated' || eventStatus === 'Resigned' || eventStatus === 'Offboarded') continue;
+    if (u?.leaveDate || u?.lifecycle?.leaveDate) continue;
+    const d = u?.role?.department?.name || u?.department?.name || u?.department;
+    if (d && typeof d === 'string' && d.trim()) set.add(d.trim());
+  }
+  return Array.from(set).sort((a, b) => a.localeCompare(b));
+}
+
+// Department list for the leave-balances filter. Derived from the user list
+// (there's no dedicated partner endpoint for departments) and cached like
+// entities — department names barely change.
+export async function listDepartments() {
+  if (cache.departments.value && cache.departments.expiresAt > Date.now()) {
+    return cache.departments.value;
+  }
+  const users = await fetchAllUsers();
+  const departments = deriveDepartmentsFromUsers(users);
+  cache.departments = { value: departments, expiresAt: Date.now() + ENTITIES_TTL_MS };
+  console.log(`[zelt] departments derived from ${users.length} users (${departments.length} departments)`);
+  return departments;
 }
 
 // Public entry point: tries a fresh fetch, persists the result on success,
@@ -361,6 +393,7 @@ export async function fetchAllUsersForAudit() {
 
 export function clearCaches() {
   cache.entities = { value: null, expiresAt: 0 };
+  cache.departments = { value: null, expiresAt: 0 };
   cache.balances.clear();
   cache.allUsers = { value: null, expiresAt: 0 };
   cache.basics = { value: new Map(), expiresAt: 0 };

@@ -31,7 +31,7 @@ import {
   zeltGetOauthOnly,
 } from '../services/zeltApi.js';
 import { botGet, botConfigured, getBotStatus } from '../services/zeltBot.js';
-import { listEntities, getBalancesForEntity, clearCaches, debugSampleUser } from '../services/zeltCompute.js';
+import { listEntities, listDepartments, getBalancesForEntity, clearCaches, debugSampleUser } from '../services/zeltCompute.js';
 import { runAudit } from '../services/zeltAudit.js';
 import { getMobility } from '../services/zeltMobility.js';
 import { getWatchState, runSnapshotAndDiff, sendWeeklyDigestIfDue } from '../services/zeltWatcher.js';
@@ -152,6 +152,11 @@ router.get('/entities', dataLimiter, requireAuth, asyncHandler(async (req, res) 
   res.json({ entities });
 }));
 
+router.get('/departments', dataLimiter, requireAuth, asyncHandler(async (req, res) => {
+  const departments = await listDepartments().catch(zeltUpstream('Failed to fetch departments'));
+  res.json({ departments });
+}));
+
 router.get('/balances', dataLimiter, requireAuth, asyncHandler(async (req, res) => {
   const raw = req.query.entity;
   if (!raw || typeof raw !== 'string') throw badRequest('Missing required query param: entity');
@@ -167,16 +172,31 @@ router.get('/balances', dataLimiter, requireAuth, asyncHandler(async (req, res) 
     asOfDate = d;
   }
 
+  // departments: optional, comma-joined. Rows are filtered AFTER the per-entity
+  // compute so the entity-level caches and stale-snapshot fallback stay
+  // reusable across different department picks.
+  const departments = typeof req.query.departments === 'string'
+    ? req.query.departments.split(',').map(s => s.trim()).filter(Boolean)
+    : [];
+  const deptSet = new Set(departments.map(d => d.toLowerCase()));
+  const byDept = (rows) => deptSet.size
+    ? rows.filter(r => r.department && deptSet.has(String(r.department).trim().toLowerCase()))
+    : rows;
+
   const datas = await Promise.all(
     entities.map(e => getBalancesForEntity(e, asOfDate).catch(zeltUpstream('Failed to fetch balances')))
   );
-  if (datas.length === 1) return res.json(datas[0]);
+  if (datas.length === 1) {
+    const d = datas[0];
+    const rows = byDept(d.rows);
+    return res.json({ ...d, rows, count: rows.length, departments });
+  }
 
   // Aggregate multi-entity result
   const allRows = [];
   const allDiagnostics = [];
   for (const d of datas) {
-    for (const r of d.rows) allRows.push({ ...r, entity: d.entity });
+    for (const r of byDept(d.rows)) allRows.push({ ...r, entity: d.entity });
     if (d.diagnostic) allDiagnostics.push(d.diagnostic);
   }
   allRows.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
@@ -195,6 +215,7 @@ router.get('/balances', dataLimiter, requireAuth, asyncHandler(async (req, res) 
     count: allRows.length,
     rows: allRows,
     multi: true,
+    departments,
     sources: datas.map(d => ({
       entity: d.entity,
       count: d.count,

@@ -21,6 +21,10 @@ export default function ZeltLeavePage() {
   const [selectedEntities, setSelectedEntities] = useState([]);
   const [entitiesOpen, setEntitiesOpen] = useState(false);
   const entitiesDropdownRef = useRef(null);
+  const [deptOptions, setDeptOptions] = useState([]);
+  const [selectedDepts, setSelectedDepts] = useState([]);
+  const [deptsOpen, setDeptsOpen] = useState(false);
+  const deptsDropdownRef = useRef(null);
   const todayIso = new Date().toISOString().slice(0, 10);
   const [asOfDate, setAsOfDate] = useState(todayIso); // YYYY-MM-DD; defaults to today
   const [data, setData] = useState(null);
@@ -54,7 +58,19 @@ export default function ZeltLeavePage() {
     return () => document.removeEventListener('mousedown', onMouseDown);
   }, [entitiesOpen]);
 
-  // Once connected, load entities
+  useEffect(() => {
+    if (!deptsOpen) return;
+    const onMouseDown = (e) => {
+      if (deptsDropdownRef.current && !deptsDropdownRef.current.contains(e.target)) {
+        setDeptsOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onMouseDown);
+    return () => document.removeEventListener('mousedown', onMouseDown);
+  }, [deptsOpen]);
+
+  // Once connected, load entities + departments (departments are an optional
+  // filter — a failure there shouldn't block the page, so no setError).
   useEffect(() => {
     if (!status.connected) return;
     setLoadingEntities(true);
@@ -62,23 +78,29 @@ export default function ZeltLeavePage() {
       .then(({ entities }) => { setEntities(entities); setError(null); })
       .catch(e => setError(formatErr(e, 'Failed to load entities')))
       .finally(() => setLoadingEntities(false));
+    api.zeltDepartments()
+      .then(({ departments }) => setDeptOptions(departments || []))
+      .catch(() => {});
   }, [status.connected]);
 
   const handleGenerate = useCallback(async () => {
-    const picks = selectedEntities.length ? selectedEntities : (entity ? [entity] : []);
+    // Department-first mode: departments picked with no entities -> query ALL
+    // entities and let the server filter rows to the chosen departments.
+    const deptOnly = selectedDepts.length > 0 && selectedEntities.length === 0 && !entity;
+    const picks = selectedEntities.length ? selectedEntities : (entity ? [entity] : (deptOnly ? [...entities] : []));
     if (!picks.length) return;
     setLoadingBalances(true);
     setError(null);
     try {
-      const result = await api.zeltBalances(picks.join(','), asOfDate || null);
-      setData(result);
+      const result = await api.zeltBalances(picks.join(','), asOfDate || null, selectedDepts);
+      setData({ ...result, deptOnly });
     } catch (e) {
       setError(formatErr(e, 'Failed to load balances'));
       setData(null);
     } finally {
       setLoadingBalances(false);
     }
-  }, [entity, selectedEntities, asOfDate]);
+  }, [entity, selectedEntities, selectedDepts, entities, asOfDate]);
 
   const handleConnect = useCallback(async () => {
     try {
@@ -228,6 +250,60 @@ export default function ZeltLeavePage() {
               </div>
             )}
           </div>
+          <div ref={deptsDropdownRef} style={{ flex: '1 1 260px', minWidth: 240, position: 'relative' }}>
+            <Label>Departments {selectedDepts.length === 0 && <span style={{ fontWeight: 400, color: 'var(--ink-500)', textTransform: 'none' }}>(optional)</span>}</Label>
+            <button
+              type="button"
+              onClick={() => setDeptsOpen(o => !o)}
+              style={{ ...select, textAlign: 'left', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+              title="Filter to specific departments. Pick departments with no entities to search ALL entities."
+            >
+              <span style={{ color: selectedDepts.length ? 'var(--ink-900)' : 'var(--ink-500)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+                {selectedDepts.length === 0 ? 'All departments' :
+                  selectedDepts.length === 1 ? selectedDepts[0] :
+                  `${selectedDepts.length} departments · ${selectedDepts.slice(0, 2).join(', ')}${selectedDepts.length > 2 ? '…' : ''}`}
+              </span>
+              <span style={{ marginLeft: 8, color: 'var(--ink-500)' }}>▾</span>
+            </button>
+            {deptsOpen && (
+              <div style={{
+                position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: 0, zIndex: 30,
+                background: '#fff', border: '1px solid var(--ink-200)', borderRadius: 'var(--r-md)',
+                boxShadow: 'var(--shadow-lg)', maxHeight: 360, overflowY: 'auto', padding: 8,
+              }}>
+                <div style={{ display: 'flex', gap: 6, padding: '4px 6px 8px', borderBottom: '1px solid var(--ink-100)' }}>
+                  <button onClick={() => setSelectedDepts([])} style={ghostBtn}>Clear</button>
+                  <div style={{ flex: 1 }} />
+                  <button onClick={() => setDeptsOpen(false)} style={ghostBtn}>Done</button>
+                </div>
+                {deptOptions.length === 0 ? (
+                  <div style={{ padding: 10, fontSize: 13, color: 'var(--ink-500)' }}>Loading departments…</div>
+                ) : deptOptions.map(d => {
+                  const checked = selectedDepts.includes(d);
+                  return (
+                    <label key={d} style={{
+                      display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px',
+                      cursor: 'pointer', borderRadius: 'var(--r-sm)',
+                      background: checked ? 'var(--calo-50, #d9f0e5)' : 'transparent',
+                    }}
+                      onMouseEnter={el => { if (!checked) el.currentTarget.style.background = 'var(--ink-50)'; }}
+                      onMouseLeave={el => { if (!checked) el.currentTarget.style.background = 'transparent'; }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => setSelectedDepts(s =>
+                          s.includes(d) ? s.filter(x => x !== d) : [...s, d]
+                        )}
+                        style={{ accentColor: 'var(--calo-500)' }}
+                      />
+                      <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--ink-900)' }}>{d}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            )}
+          </div>
           <div>
             <Label>As of {asOfDate === todayIso && <span style={{ fontWeight: 400, color: 'var(--ink-500)' }}>(today)</span>}</Label>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -251,8 +327,9 @@ export default function ZeltLeavePage() {
           </div>
           <button
             onClick={handleGenerate}
-            disabled={selectedEntities.length === 0 || loadingBalances}
-            style={primaryBtn(selectedEntities.length === 0 || loadingBalances)}
+            disabled={(selectedEntities.length === 0 && selectedDepts.length === 0) || loadingBalances}
+            style={primaryBtn((selectedEntities.length === 0 && selectedDepts.length === 0) || loadingBalances)}
+            title={selectedEntities.length === 0 && selectedDepts.length > 0 ? 'Searches the selected departments across ALL entities' : undefined}
           >
             {loadingBalances ? 'Generating…' : 'Generate report'}
           </button>
@@ -322,7 +399,9 @@ export default function ZeltLeavePage() {
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, flexWrap: 'wrap', gap: 12 }}>
             <div>
               <div style={{ fontSize: 13, color: 'var(--ink-500)', fontWeight: 700, letterSpacing: '.02em', textTransform: 'uppercase' }}>
-                {data.entity}
+                {data.departments?.length
+                  ? `${data.departments.join(', ')} · ${data.deptOnly ? 'all entities' : data.entity}`
+                  : data.entity}
               </div>
               <div style={{ fontSize: 22, fontWeight: 900, color: 'var(--ink-900)', letterSpacing: '-0.02em' }}>
                 {data.count} employees · as of {fmtDate(data.asOf)}
@@ -346,7 +425,8 @@ export default function ZeltLeavePage() {
                   const url = URL.createObjectURL(blob);
                   const a = document.createElement('a');
                   a.href = url;
-                  const safe = (data.entity || 'entities').replace(/[^a-z0-9]+/gi, '-').toLowerCase();
+                  const safe = ((data.departments?.length ? data.departments.join('-') : data.entity) || 'entities')
+                    .replace(/[^a-z0-9]+/gi, '-').toLowerCase().slice(0, 60);
                   a.download = `calo-available-now-${safe}-${asOfDate}.csv`;
                   document.body.appendChild(a);
                   a.click();

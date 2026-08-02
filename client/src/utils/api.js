@@ -326,9 +326,13 @@ class ApiClient {
   async zeltEntities() {
     return this.request('/zelt/entities');
   }
-  async zeltBalances(entity, asOfDate = null) {
+  async zeltDepartments() {
+    return this.request('/zelt/departments');
+  }
+  async zeltBalances(entity, asOfDate = null, departments = []) {
     const params = { entity };
     if (asOfDate) params.asOfDate = asOfDate;
+    if (departments && departments.length) params.departments = departments.join(',');
     const q = new URLSearchParams(params).toString();
     return this.request(`/zelt/balances?${q}`);
   }

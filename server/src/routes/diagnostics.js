@@ -2,6 +2,8 @@ import { Router } from "express";
 import { requireAuth, requireAdmin } from "../middleware/auth.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { getModelIds, describeClaudeFailure } from "../services/aiService.js";
+import { zeltGetOauthOnly } from "../services/zeltApi.js";
+import { botGet, botConfigured } from "../services/zeltBot.js";
 
 // Admin-only connectivity checks for the external integrations. Each test runs
 // server-side (where the keys live) and returns only a status + friendly
@@ -98,6 +100,43 @@ router.get("/connections", requireAuth, requireAdmin, asyncHandler(async (req, r
       services.netlify = { label: "Netlify", configured: true, ok: false, message: e.name === "AbortError" ? "Timed out reaching api.netlify.com" : "Request failed: " + e.message };
     }
   }
+
+  // ── Zelt — distinguishes the partner OAuth (absence history, entity lists)
+  // from the bot session (live balances, user cache). The Hub can limp along on
+  // the bot alone, which HIDES a dead OAuth — this row is where that shows red
+  // instead of surfacing weeks later as a 403 on some report.
+  const zeltChecks = [];
+  try {
+    await zeltGetOauthOnly("/apiv2/partner/users", { page: 1, pageSize: 1 });
+    zeltChecks.push({ name: "Partner API (OAuth)", role: "absence history, entity lists", ok: true, message: "responds" });
+  } catch (e) {
+    const msg = e.message === "NotConnected"
+      ? "OAuth not connected — re-run the Connect Zelt bootstrap (Leave Balances page)"
+      : (e.status ? `${e.status} — token dead/expired; re-run the Connect Zelt bootstrap` : (e.message || "failed").slice(0, 160));
+    zeltChecks.push({ name: "Partner API (OAuth)", role: "absence history, entity lists", ok: false, message: msg });
+  }
+  if (botConfigured()) {
+    try {
+      await botGet("/apiv2/absence-policies/extended");
+      zeltChecks.push({ name: "Bot session", role: "live balances, user cache", ok: true, message: "responds" });
+    } catch (e) {
+      zeltChecks.push({ name: "Bot session", role: "live balances, user cache", ok: false, message: (e.message || "failed").slice(0, 160) });
+    }
+  } else {
+    zeltChecks.push({ name: "Bot session", role: "live balances, user cache", ok: false, message: "ZELT_BOT_EMAIL / ZELT_BOT_PASSWORD not set" });
+  }
+  const zeltOk = zeltChecks.every((c) => c.ok);
+  services.zelt = {
+    label: "Zelt (HRIS)",
+    configured: true,
+    ok: zeltOk,
+    message: zeltOk
+      ? "Partner OAuth + bot session both respond"
+      : (zeltChecks[0].ok
+          ? "Bot session issue — see below"
+          : "Partner OAuth is down — the Hub limps on the bot fallback (absence history degraded)"),
+    checks: zeltChecks,
+  };
 
   res.json({ checkedAt: new Date().toISOString(), services });
 }));

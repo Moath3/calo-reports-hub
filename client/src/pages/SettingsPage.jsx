@@ -298,13 +298,13 @@ export default function SettingsPage() {
                       <div className="min-w-0 flex-1">
                         <div className="text-sm font-semibold text-gray-900">{s.label}</div>
                         <div className="text-xs text-gray-600">{s.message}</div>
-                        {Array.isArray(s.models) && s.models.map((m) => (
-                          <div key={m.model} className="mt-1.5 flex items-start gap-1.5 text-xs">
+                        {(s.models || s.checks || []).map((m) => (
+                          <div key={m.model || m.name} className="mt-1.5 flex items-start gap-1.5 text-xs">
                             {m.ok
                               ? <CheckCircle className="h-3.5 w-3.5 text-green-600 shrink-0 mt-0.5" />
                               : <XCircle className="h-3.5 w-3.5 text-red-600 shrink-0 mt-0.5" />}
                             <span className="min-w-0">
-                              <code className="text-gray-800">{m.model}</code>
+                              <code className="text-gray-800">{m.model || m.name}</code>
                               <span className="text-gray-400"> · {m.role}</span>
                               {!m.ok && <span className="block text-red-700 mt-0.5">{m.message}</span>}
                             </span>

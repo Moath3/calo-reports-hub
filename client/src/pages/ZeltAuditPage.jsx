@@ -8,8 +8,10 @@ import {
   loadMasterfilesFromStorage,
   clearMasterfilesFromStorage,
   crossCheckMasterfiles,
+  collectMasterfileRows,
   SOURCE_LABELS,
 } from '../utils/masterfile';
+import { runStructureChecks } from '../utils/structureChecks';
 
 const SEVERITY = {
   activeWithLeaveDate: 'high',
@@ -35,6 +37,23 @@ const SEVERITY = {
   masterfileNotInZelt: 'high',
   deptMismatchVsMasterfile: 'medium',
   positionMismatchVsMasterfile: 'low',
+  // Masterfile structure checks (2026 people-structure canon)
+  mfDeptFamilyMismatch: 'high',
+  mfHqProductionClash: 'high',
+  mfEntityCountry: 'high',
+  mfRetiredBusinessLine: 'high',
+  mfRetiredDepartment: 'medium',
+  mfInvalidBusinessLine: 'medium',
+  mfInvalidDepartment: 'medium',
+  mfFamilyLevelMismatch: 'medium',
+  mfTitleMismatch: 'medium',
+  mfRetailBranch: 'medium',
+  mfTeamNotInDept: 'low',
+  mfTitleVariant: 'low',
+  // Server-side Zelt canon checks (arrive in the audit response)
+  retiredDepartment: 'high',
+  titleDeptMismatch: 'medium',
+  nonCanonicalTitle: 'medium',
   missingEmployeeId: 'medium',
   duplicateNames: 'medium',
   missingEntity: 'medium',
@@ -85,6 +104,23 @@ const LABELS = {
   masterfileNotInZelt: 'Active in masterfile but not active in Zelt',
   deptMismatchVsMasterfile: 'Department mismatch: Zelt vs masterfile',
   positionMismatchVsMasterfile: 'Position mismatch: Zelt vs masterfile',
+  // Masterfile structure checks (2026 people-structure canon)
+  mfRetiredBusinessLine: 'Retired business line (masterfile)',
+  mfInvalidBusinessLine: 'Business line not in approved list (masterfile)',
+  mfRetiredDepartment: 'Retired department (masterfile)',
+  mfInvalidDepartment: 'Department not in approved list (masterfile)',
+  mfFamilyLevelMismatch: 'Job family vs role level mismatch',
+  mfDeptFamilyMismatch: 'Department vs job family mismatch',
+  mfHqProductionClash: 'MP HQ business line on a production department',
+  mfRetailBranch: 'Retail branch tagging issue',
+  mfTeamNotInDept: 'Team not listed under its department',
+  mfTitleMismatch: 'Job title contradicts dept/family (masterfile)',
+  mfTitleVariant: 'Off-catalog job title spelling',
+  mfEntityCountry: 'Legal entity country vs work country mismatch',
+  // Server-side Zelt canon checks
+  retiredDepartment: 'Retired department (Zelt)',
+  titleDeptMismatch: 'Title vs department mismatch',
+  nonCanonicalTitle: 'Non-catalog job title',
 };
 
 export default function ZeltAuditPage() {
@@ -110,16 +146,23 @@ export default function ZeltAuditPage() {
 
   const onRefresh = () => load(true);
 
-  // Augment the audit report with cross-checks against uploaded masterfiles.
+  // Augment the audit report with cross-checks against uploaded masterfiles
+  // AND the 2026 people-structure checks over the masterfile rows themselves.
   // Recomputes whenever the raw report or any masterfile changes; the score
   // (which reads from report.checks) updates automatically.
   const report = useMemo(() => {
     if (!reportRaw) return null;
     const cross = crossCheckMasterfiles(reportRaw.activeUsers, masterfiles);
-    if (!cross) return reportRaw;
+    const mfRows = collectMasterfileRows(masterfiles);
+    const structure = mfRows.length ? runStructureChecks(mfRows) : null;
+    if (!cross && !structure) return reportRaw;
     const checks = { ...reportRaw.checks };
     const summary = { ...reportRaw.summary };
-    for (const [k, items] of Object.entries(cross)) {
+    for (const [k, items] of Object.entries(cross || {})) {
+      checks[k] = items;
+      summary[k] = items.length;
+    }
+    for (const [k, items] of Object.entries(structure?.checks || {})) {
       checks[k] = items;
       summary[k] = items.length;
     }
@@ -267,6 +310,12 @@ export default function ZeltAuditPage() {
                       {it.eventStatus && <div style={{ fontSize: 11, color: 'var(--ink-500)' }}>event: {it.eventStatus}</div>}
                       {it.startDate && <div style={{ fontSize: 11, color: 'var(--ink-500)' }}>start: {it.startDate}</div>}
                       {it.suggestion && <div style={{ fontSize: 11, color: 'var(--ink-500)', fontStyle: 'italic' }}>{it.suggestion}</div>}
+                      {it.detail && <div style={{ fontSize: 11, color: 'var(--ink-500)', fontStyle: 'italic' }}>{it.detail}</div>}
+                      {it.source && (
+                        <div style={{ fontSize: 11, color: 'var(--ink-500)' }}>
+                          {[it.source, it.dept, it.position].filter(Boolean).join(' · ')}
+                        </div>
+                      )}
                       {it.count != null && <div style={{ fontSize: 11, color: 'var(--ink-500)' }}>{it.count} matches</div>}
                     </div>
                   ))}
@@ -536,20 +585,25 @@ function WatcherDiffList({ title, color, items }) {
 
 // ---- Masterfile upload panel ----------------------------------------------
 //
-// Two slots — KSA Luqmat masterfile + 3rd Party Production masterfile.
+// One workbook now covers everything: the new "KSA Masterfile - Luqmat" file
+// carries the canonical GCC Masterfile / Luqmat / Production Masterfile tabs
+// and is parsed into all sources at once. Legacy files still work as fallback.
 // Files are parsed entirely in the browser via dynamic import of SheetJS
 // (no PII upload). Parsed snapshots persist in localStorage so the user
 // doesn't have to re-upload every visit.
 function MasterfileUploadPanel({ masterfiles, onUpload, onRemove, busy, error }) {
   const slots = [
-    { key: 'ksaLuqmat',  label: 'KSA Masterfile (Luqmat Active)',     hint: 'Loads only the "Luqmat Active Employees" sheet.' },
-    { key: 'thirdParty', label: 'HR Masterfile (3rd Party Production)', hint: 'Loads only the "Data-Full Time" sheet (skips monthly contractors).' },
+    { key: 'ksaLuqmat',  label: 'KSA Masterfile (Luqmat Active)',     hint: 'New "KSA Masterfile - Luqmat" workbook preferred — reads the GCC Masterfile / Luqmat / Production Masterfile tabs. Legacy "Luqmat Active Employees" files still accepted.' },
+    { key: 'thirdParty', label: 'HR Masterfile (3rd Party Production)', hint: 'Only needed for legacy files ("Data-Full Time" sheet). The new workbook in the first slot already covers 3rd-party production.' },
   ];
 
   return (
     <div style={{ ...panel, padding: 16 }}>
       <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--ink-500)', letterSpacing: '.06em', textTransform: 'uppercase', marginBottom: 10 }}>
         Cross-source masterfiles (parsed in your browser, never uploaded)
+      </div>
+      <div style={{ fontSize: 12, color: 'var(--ink-500)', marginBottom: 10 }}>
+        One workbook now covers everything: upload the new "KSA Masterfile - Luqmat" file (GCC Masterfile / Luqmat / Production Masterfile tabs) and all sources load from it. Legacy files still accepted.
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 12 }}>
         {slots.map(slot => {
@@ -722,7 +776,7 @@ function buildCsvReport(report) {
         it.entity || '',
         it.department || '',
         it.site || '',
-        it.suggestion || '',
+        it.suggestion || it.detail || '',
         compactDetails(it),
       ]);
     }
@@ -748,6 +802,8 @@ function buildHtmlReport(report) {
           it.entity, it.department, it.site,
           it.leaveDate && `leaveDate ${it.leaveDate}`,
           it.suggestion,
+          it.detail,
+          it.source,
         ].filter(Boolean).map(escapeHtml).join(' · ');
         return `<li style="padding:6px 0;border-bottom:1px solid #eee"><strong>${escapeHtml(title)}</strong>${meta ? `<div style="font-size:12px;color:#777">${meta}</div>` : ''}</li>`;
       }).join('');

@@ -12,12 +12,35 @@
  * hygiene score immediately reflects cross-source health.
  */
 
-// Source configurations. Per the user's instructions:
+// 2026 people-structure fields shared by every parse path. Candidates cover
+// the header spellings across the three canonical tabs AND the legacy sheets,
+// so one pickFirst list works everywhere (missing columns just yield null).
+const STRUCTURE_COLUMNS = {
+  businessLine: ['Business Line'],
+  team: ['Branch/Team', 'Team / Branch', 'Section/Branch', 'Section'],
+  org: ['Organisation', 'Organization'],
+  roleLevel: ['Role Level'],
+  jobFamily: ['Job Family', 'Production / Non-Production'],
+  legalEntity: ['Legal Entity', 'Entity', 'Sponsor'],
+  workCountry: ['Work Country', 'Region', 'Working Location'],
+};
+
+// Canonical NEW-structure tabs in the "KSA Masterfile - Luqmat" workbook.
+// Matched EXACTLY (whitespace/case-insensitive) so legacy/archive tabs like
+// 'Luqmat Active Employees', 'Copy of Luqmat' or 'MD ...' never match.
+const STRUCTURE_TABS = [
+  { sheet: 'GCC Masterfile', source: 'GCC' },
+  { sheet: 'Luqmat', source: 'Luqmat' },
+  { sheet: 'Production Masterfile', source: '3rd-Party' },
+];
+
+// LEGACY source configurations (kept as fallback so old files still work):
 // - KSA Masterfile: only the "Luqmat Active Employees" sheet (skip everything else)
 // - 3rd Party Masterfile: only the "Data-Full Time" sheet (skip Data-Monthly Contractor)
 const SOURCES = {
   ksaLuqmat: {
     label: 'KSA Masterfile (Luqmat Active)',
+    rowSource: 'Luqmat',
     // The actual sheet name has a trailing space in the file we inspected;
     // fall through to a fuzzy match if exact-match fails.
     sheetCandidates: ['Luqmat Active Employees ', 'Luqmat Active Employees', 'Luqmat Active'],
@@ -30,10 +53,12 @@ const SOURCES = {
       status: ['Status'],
       entity: ['Entity', 'Sponsor', 'Calo Organisation', 'Legal Entity'],
       joiningDate: ['Joining Date', 'Hire Date'],
+      ...STRUCTURE_COLUMNS,
     },
   },
   thirdParty: {
     label: 'HR Masterfile (3rd Party Production)',
+    rowSource: '3rd-Party',
     sheetCandidates: ['Data-Full Time', 'Main_Sheet'],
     columns: {
       iqamaId: ['National ID', 'Iqama No', 'Iqama number'],
@@ -44,8 +69,22 @@ const SOURCES = {
       status: ['Status'],
       entity: ['Legal Entity', 'Sponsor', 'Entity'],
       joiningDate: ['Hire Date', 'Joining Date'],
+      ...STRUCTURE_COLUMNS,
     },
   },
+};
+
+// Column map for the canonical new-structure tabs. Header spellings differ
+// per tab; pickFirst falls through, so one map covers all three.
+const STRUCTURE_TAB_COLUMNS = {
+  iqamaId: ['Iqama No', 'Iqama number', 'National ID'],
+  empId: ['Empl. ID', 'Emp No', 'Emp Number', 'Emp\nNumber', 'EMP ID', 'Emp ID'],
+  name: ['Name', 'Full Name'],
+  dept: ['Department', 'Dept'],
+  position: ['Position', 'Job Title'],
+  status: ['Status'],
+  joiningDate: ['Joining Date', 'Hire Date'],
+  ...STRUCTURE_COLUMNS,
 };
 
 export const SOURCE_LABELS = Object.fromEntries(
@@ -76,10 +115,24 @@ function findSheet(wb, candidates) {
   return null;
 }
 
+function mapRow(raw, columns) {
+  const out = {};
+  for (const [key, candidates] of Object.entries(columns)) {
+    out[key] = pickFirst(raw, candidates);
+  }
+  return out;
+}
+
 /**
  * Parse an XLSX File handle into a normalized masterfile snapshot.
  * Returns { source, label, sheet, rows, loadedAt }.
  * Dynamic import of `xlsx` keeps the ~400KB SheetJS bundle off the main chunk.
+ *
+ * NEW-structure path: when the workbook contains any of the canonical 2026
+ * tabs (GCC Masterfile / Luqmat / Production Masterfile) we parse ALL that
+ * are present — one workbook can now supply every source. Each row is tagged
+ * with source: 'GCC' | 'Luqmat' | '3rd-Party'. Legacy sheets remain the
+ * fallback so old files still work.
  */
 export async function loadMasterfile(file, sourceKey) {
   const config = SOURCES[sourceKey];
@@ -89,18 +142,48 @@ export async function loadMasterfile(file, sourceKey) {
   const buf = await file.arrayBuffer();
   const wb = XLSX.read(buf, { type: 'array' });
 
+  // ---- New-structure path: canonical tabs win over legacy sheets ----
+  const canonicalTabs = STRUCTURE_TABS
+    .map(t => ({ ...t, sheetName: findSheet(wb, [t.sheet]) }))
+    .filter(t => t.sheetName);
+
+  if (canonicalTabs.length > 0) {
+    const rows = [];
+    for (const tab of canonicalTabs) {
+      const raw = XLSX.utils.sheet_to_json(wb.Sheets[tab.sheetName], { defval: null });
+      for (const r of raw) {
+        const out = mapRow(r, STRUCTURE_TAB_COLUMNS);
+        if (!(out.iqamaId || out.empId || out.name)) continue;
+        out.source = tab.source;
+        // Keep the legacy cross-check field populated too.
+        out.entity = out.entity ?? out.legalEntity;
+        rows.push(out);
+      }
+    }
+    return {
+      source: sourceKey,
+      label: `New masterfile (${canonicalTabs.map(t => t.sheet).join(' + ')})`,
+      sheet: canonicalTabs.map(t => t.sheetName).join(' + '),
+      structure: true,
+      rows,
+      loadedAt: Date.now(),
+      fileName: file.name,
+    };
+  }
+
+  // ---- Legacy fallback path ----
   const sheetName = findSheet(wb, config.sheetCandidates);
   if (!sheetName) {
-    throw new Error(`Sheet not found. Looked for: ${config.sheetCandidates.join(', ')}. Available: ${wb.SheetNames.join(', ')}`);
+    const wanted = STRUCTURE_TABS.map(t => t.sheet).concat(config.sheetCandidates);
+    throw new Error(`Sheet not found. Looked for: ${wanted.join(', ')}. Available: ${wb.SheetNames.join(', ')}`);
   }
 
   const raw = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { defval: null });
   const rows = raw
     .map(r => {
-      const out = {};
-      for (const [key, candidates] of Object.entries(config.columns)) {
-        out[key] = pickFirst(r, candidates);
-      }
+      const out = mapRow(r, config.columns);
+      out.source = config.rowSource;
+      out.legalEntity = out.legalEntity ?? out.entity;
       return out;
     })
     .filter(r => r.iqamaId || r.empId || r.name);
@@ -113,6 +196,27 @@ export async function loadMasterfile(file, sourceKey) {
     loadedAt: Date.now(),
     fileName: file.name,
   };
+}
+
+/**
+ * Flatten every parsed masterfile into one row list for the structure checks.
+ * Dedupes on source+id so the same workbook uploaded into both slots (the new
+ * file covers everything) doesn't double-count.
+ */
+export function collectMasterfileRows(masterfiles) {
+  const rows = [];
+  const seen = new Set();
+  for (const mf of Object.values(masterfiles || {})) {
+    if (!mf || !Array.isArray(mf.rows)) continue;
+    for (const r of mf.rows) {
+      const id = String(r.empId ?? '').trim() || String(r.iqamaId ?? '').trim() || String(r.name ?? '').trim();
+      const key = `${r.source || mf.source || ''}|${id.toLowerCase()}`;
+      if (id && seen.has(key)) continue;
+      seen.add(key);
+      rows.push(r);
+    }
+  }
+  return rows;
 }
 
 export function saveMasterfilesToStorage(byKey) {

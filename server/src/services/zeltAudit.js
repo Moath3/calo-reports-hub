@@ -6,6 +6,8 @@
  * against live Zelt data.
  */
 import { fetchAllUsersForAudit, clearCaches } from './zeltCompute.js';
+// 2026 people-structure canon — deliberately lives with the client (client/src/utils/caloCanon.js) so both sides share one source of truth (plain ESM, framework-free).
+import { isApprovedDept, retiredDeptReplacement, inferFromTitle, titleCanonIssue, normTag } from '../../../client/src/utils/caloCanon.js';
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const FUTURE_JOINER_DAYS = 90; // flag joiners whose start date is more than this far out
@@ -33,25 +35,11 @@ const APPROVED_ENTITIES = new Set([
   'Calo Catering Services Ltd (UK - Head Office)', 'Calo Catering Services Ltd (UK - Production)',
 ].map(s => s.toLowerCase()));
 
-// Approved departments — the canonical data-hygiene set (P&C Bible), including
-// the production departments (Kitchen, Dispatch, Logistics, etc.) that the old
-// office-only list wrongly flagged. Job-family/business-line are separate tags;
-// a dept being "Production" doesn't make it unapproved.
-const APPROVED_DEPARTMENTS = new Set([
-  // Production
-  'Kitchen', 'Dispatch', 'Logistics', 'Maintenance', 'Stewarding', 'Quality', 'Supply Chain', 'Central Operations',
-  // Retail
-  'Retail', 'Retail Non Production',
-  // Commercial / growth
-  'Marketing & Growth', 'Marketing', 'Growth', 'Business Development', 'Expansion', 'Calo Market', 'Calo Black', 'Calo Athletes', 'Calo 2.0',
-  // Tech / product
-  'Product', 'Engineering', 'AI', 'Automation',
-  // Corporate / support
-  'People and Culture', 'Customer Experience', 'Finance Operations', 'Strategic Finance',
-  'CEO Office', 'Leadership', 'Legal', 'Food Team', 'Operations', 'PRO',
-  // Common short variants seen in zelt data
-  'P&C', 'CX', 'Food',
-].map(s => s.toLowerCase()));
+// Department validation now comes from the canon (DEPARTMENTS 21 +
+// RETIRED_DEPARTMENTS) via isApprovedDept / retiredDeptReplacement above.
+// The old APPROVED_DEPARTMENTS list is gone — it whitelisted retired depts
+// (Maintenance, Central Operations, Finance Operations, Strategic Finance,
+// Leadership); those now flag as retiredDepartment with their replacement.
 
 // Entity → {org, country, expected currency}. Drives org/country classification
 // and the currency check from the ACTUAL payroll-entity names (regex fallback
@@ -80,6 +68,22 @@ const ENTITY_MAP = {
   'retail dubai':   { org: 'MP UAE', country: 'UAE',    currency: 'AED' },
   'calo catering services ltd (uk - head office)': { org: 'MP UK', country: 'UK', currency: 'GBP' },
   'calo catering services ltd (uk - production)':  { org: 'MP UK', country: 'UK', currency: 'GBP' },
+  // Legal CR names (2026 canon) — org set ONLY where the entity maps 1:1 to a
+  // single organization; otherwise omitted so classifyOrg falls through to
+  // ORG_PATTERNS.
+  'luqmat':  { org: 'MP KSA', country: 'KSA', currency: 'SAR' },
+  'alahlam': { org: 'MP KSA', country: 'KSA', currency: 'SAR' }, // Fakihi alias
+  'ahlam':   { org: 'MP KSA', country: 'KSA', currency: 'SAR' }, // Fakihi alias
+  'gaya':                         { country: 'UAE',     currency: 'AED' },
+  'al ghad':                      { country: 'Oman',    currency: 'OMR' },
+  'calo catering company':        { country: 'Kuwait',  currency: 'KWD' },
+  'calo catering & hospitality':  { country: 'Qatar',   currency: 'QAR' },
+  'falcon':                       { country: 'Bahrain', currency: 'BHD' },
+  'v resto':                      { country: 'Bahrain', currency: 'BHD' },
+  'vresto':                       { country: 'Bahrain', currency: 'BHD' },
+  'calo online services':         { country: 'Bahrain', currency: 'BHD' },
+  'calo cafe':                    { country: 'Bahrain', currency: 'BHD' },
+  'remotepass':                   { country: 'Remote',  currency: null  },
 };
 
 // Country codes by entity prefix — used to flag currency mismatches AND
@@ -122,7 +126,9 @@ function classifyCountry(u) {
 function classifyOrg(u) {
   const ent = readEntity(u) || '';
   const mapped = ENTITY_MAP[ent.toLowerCase()];
-  if (mapped) return mapped.org;
+  // Some map entries carry country/currency only (org ambiguous) — fall
+  // through to ORG_PATTERNS for those instead of returning undefined.
+  if (mapped?.org) return mapped.org;
   for (const { org, pattern } of ORG_PATTERNS) {
     if (pattern.test(ent)) return org;
   }
@@ -291,15 +297,29 @@ export async function runAudit({ forceRefresh = false } = {}) {
       suggestion: `Rename to legal CR name (e.g. Falcon, Vresto, Luqmat, Fakeehi)`,
     }));
 
-  // 12. Department not in approved list (guide §7 — 18 expected)
-  out.checks.unapprovedDepartment = users
+  // 12. Department checks against the 2026 canon (21 approved + retired map).
+  // 12a. Retired department still in use — the fix ships with the flag:
+  // `replacement` is the canon's designated successor.
+  out.checks.retiredDepartment = users
     .filter(u => u.accountStatus === 'Active' && !u.leaveDate)
     .map(u => ({ user: u, dept: u?.role?.department?.name }))
-    .filter(({ dept }) => dept && !APPROVED_DEPARTMENTS.has(dept.toLowerCase()))
+    .filter(({ dept }) => dept && retiredDeptReplacement(dept))
     .map(({ user, dept }) => ({
       userId: user.userId, employeeId: readEmployeeId(user), name: user.displayName,
       currentDepartment: dept,
-      suggestion: `Move to approved dept or split out as Business Line (Lola, Calo Market, etc.)`,
+      replacement: retiredDeptReplacement(dept),
+      suggestion: `Retired department — retag to ${retiredDeptReplacement(dept)}`,
+    }));
+
+  // 12b. Department neither approved (canon 21, &/and-insensitive) nor retired.
+  out.checks.unapprovedDepartment = users
+    .filter(u => u.accountStatus === 'Active' && !u.leaveDate)
+    .map(u => ({ user: u, dept: u?.role?.department?.name }))
+    .filter(({ dept }) => dept && !isApprovedDept(dept) && !retiredDeptReplacement(dept))
+    .map(({ user, dept }) => ({
+      userId: user.userId, employeeId: readEmployeeId(user), name: user.displayName,
+      currentDepartment: dept,
+      suggestion: `Not in the canon 21 departments — move to an approved dept or split out as Business Line (Lola, Calo Market, etc.)`,
     }));
 
   // 13. Legacy site — "[Not in use]" with active users still assigned
@@ -378,6 +398,49 @@ export async function runAudit({ forceRefresh = false } = {}) {
       variants,
       suggestion: `Pick one canonical form, migrate all employees, delete the others.`,
     }));
+
+  // 16b. Title implies a different department (canon inferFromTitle).
+  // Conservative by design — inference only fires on the canon's
+  // high-precision rules; a missed inference is fine, a false flag is not.
+  out.checks.titleDeptMismatch = users
+    .filter(u => u.accountStatus === 'Active' && !u.leaveDate)
+    .map(u => ({
+      user: u,
+      dept: u?.role?.department?.name,
+      title: u?.role?.jobPosition?.title || u?.role?.jobTitle || null,
+    }))
+    .filter(({ dept, title }) => dept && title)
+    .map(({ user, dept, title }) => {
+      const inferred = inferFromTitle(title);
+      if (!inferred?.depts?.length) return null;
+      if (inferred.depts.some(d => normTag(d) === normTag(dept))) return null;
+      return {
+        userId: user.userId, employeeId: readEmployeeId(user), name: user.displayName,
+        entity: readEntity(user),
+        dept,
+        position: title,
+        expectedDepts: inferred.depts,
+      };
+    })
+    .filter(Boolean);
+
+  // 16c. Title uses a known off-catalog variant — the canon knows the catalog
+  // spelling. Skips self-suggestions (the canon's variant regexes can match
+  // the canonical spelling itself, e.g. "Commis 1").
+  out.checks.nonCanonicalTitle = users
+    .filter(u => u.accountStatus === 'Active' && !u.leaveDate)
+    .map(u => ({ user: u, title: u?.role?.jobPosition?.title || u?.role?.jobTitle || null }))
+    .filter(({ title }) => title)
+    .map(({ user, title }) => {
+      const suggested = titleCanonIssue(title);
+      if (!suggested || suggested === title) return null;
+      return {
+        userId: user.userId, employeeId: readEmployeeId(user), name: user.displayName,
+        position: title,
+        suggested,
+      };
+    })
+    .filter(Boolean);
 
   // 17. Active users with placeholder emails
   out.checks.placeholderEmails = users

@@ -9,7 +9,6 @@ import {
   clearMasterfilesFromStorage,
   crossCheckMasterfiles,
   collectMasterfileRows,
-  SOURCE_LABELS,
 } from '../utils/masterfile';
 import { runStructureChecks } from '../utils/structureChecks';
 
@@ -131,7 +130,7 @@ export default function ZeltAuditPage() {
   const [expanded, setExpanded] = useState(null);
   const [masterfiles, setMasterfiles] = useState(() => loadMasterfilesFromStorage());
   const [mfError, setMfError] = useState(null);
-  const [mfBusy, setMfBusy] = useState(null);
+  const [mfBusy, setMfBusy] = useState(false);
 
   const load = useCallback((force = false) => {
     setLoading(true);
@@ -169,31 +168,37 @@ export default function ZeltAuditPage() {
     return { ...reportRaw, checks, summary };
   }, [reportRaw, masterfiles]);
 
-  const handleMasterfileUpload = useCallback(async (sourceKey, file) => {
+  // One upload field now. The canonical-tab path in loadMasterfile ignores the
+  // source key, so try 'ksaLuqmat' first; if a legacy single-source file
+  // doesn't match its sheets, retry as 'thirdParty' before surfacing an error.
+  // An upload REPLACES the stored masterfile data (one workbook = all sources).
+  const handleMasterfileUpload = useCallback(async (file) => {
     setMfError(null);
-    setMfBusy(sourceKey);
+    setMfBusy(true);
     try {
-      const parsed = await loadMasterfile(file, sourceKey);
-      setMasterfiles(prev => {
-        const next = { ...prev, [sourceKey]: parsed };
-        saveMasterfilesToStorage(next);
-        return next;
-      });
+      let parsed;
+      try {
+        parsed = await loadMasterfile(file, 'ksaLuqmat');
+      } catch (firstErr) {
+        try {
+          parsed = await loadMasterfile(file, 'thirdParty');
+        } catch {
+          throw firstErr;
+        }
+      }
+      const next = { workbook: parsed };
+      saveMasterfilesToStorage(next);
+      setMasterfiles(next);
     } catch (e) {
-      setMfError(`${SOURCE_LABELS[sourceKey]}: ${e.message}`);
+      setMfError(e.message);
     } finally {
-      setMfBusy(null);
+      setMfBusy(false);
     }
   }, []);
 
-  const removeMasterfile = useCallback((sourceKey) => {
-    setMasterfiles(prev => {
-      const next = { ...prev };
-      delete next[sourceKey];
-      if (Object.keys(next).length === 0) clearMasterfilesFromStorage();
-      else saveMasterfilesToStorage(next);
-      return next;
-    });
+  const clearMasterfiles = useCallback(() => {
+    clearMasterfilesFromStorage();
+    setMasterfiles({});
   }, []);
 
   if (loading) return <Wrap><Spinner /></Wrap>;
@@ -219,7 +224,7 @@ export default function ZeltAuditPage() {
       <MasterfileUploadPanel
         masterfiles={masterfiles}
         onUpload={handleMasterfileUpload}
-        onRemove={removeMasterfile}
+        onClear={clearMasterfiles}
         busy={mfBusy}
         error={mfError}
       />
@@ -554,8 +559,19 @@ function WatcherCard() {
   );
 }
 
+// Grouped by check so the check label + owner pill render ONCE per check
+// instead of repeating on every affected employee row.
 function WatcherDiffList({ title, color, items }) {
-  const shown = items.slice(0, 15);
+  const byCheck = new Map();
+  for (const f of items) {
+    const key = f.check || 'unknown';
+    let g = byCheck.get(key);
+    if (!g) { g = { check: key, owner: null, records: [] }; byCheck.set(key, g); }
+    if (!g.owner && f.owner) g.owner = f.owner;
+    g.records.push(f);
+  }
+  const groups = [...byCheck.values()].sort((a, b) => b.records.length - a.records.length);
+
   return (
     <div style={{ border: '1px solid var(--ink-100)', borderRadius: 8, padding: 12 }}>
       <div style={{ fontSize: 11, fontWeight: 800, color, letterSpacing: '.06em', textTransform: 'uppercase', marginBottom: 8 }}>
@@ -564,19 +580,28 @@ function WatcherDiffList({ title, color, items }) {
       {items.length === 0 ? (
         <div style={{ fontSize: 12.5, color: 'var(--ink-500)' }}>None.</div>
       ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          {shown.map((f, i) => (
-            <div key={`${f.check}-${f.userId || f.employeeId || i}`} style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-              <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--ink-900)' }}>{LABELS[f.check] || f.check}</span>
-              {f.owner && <Pill tone="neutral" size="sm">{f.owner}</Pill>}
-              <span style={{ fontSize: 12, color: 'var(--ink-500)' }}>
-                {f.name || '—'}{f.employeeId ? ` · ${f.employeeId}` : ''}
-              </span>
-            </div>
-          ))}
-          {items.length > 15 && (
-            <div style={{ fontSize: 12, color: 'var(--ink-500)' }}>+{items.length - 15} more</div>
-          )}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {groups.map(g => {
+            const shown = g.records.slice(0, 10);
+            const more = g.records.length - shown.length;
+            return (
+              <div key={g.check}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--ink-900)' }}>{LABELS[g.check] || g.check}</span>
+                  {g.owner && <Pill tone="neutral" size="sm">{g.owner}</Pill>}
+                  <span style={{
+                    fontSize: 11, fontWeight: 800, color,
+                    background: 'var(--ink-50, #f6f6f4)', border: '1px solid var(--ink-100)',
+                    borderRadius: 999, padding: '1px 8px',
+                  }}>{g.records.length}</span>
+                </div>
+                <div style={{ marginTop: 3, fontSize: 12, color: 'var(--ink-500)', lineHeight: 1.6, overflowWrap: 'anywhere' }}>
+                  {shown.map(f => `${f.name || '—'}${f.employeeId ? ` · ${f.employeeId}` : ''}`).join(',  ')}
+                  {more > 0 && <span style={{ fontWeight: 700 }}> +{more} more</span>}
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
     </div>
@@ -585,62 +610,78 @@ function WatcherDiffList({ title, color, items }) {
 
 // ---- Masterfile upload panel ----------------------------------------------
 //
-// One workbook now covers everything: the new "KSA Masterfile - Luqmat" file
-// carries the canonical GCC Masterfile / Luqmat / Production Masterfile tabs
-// and is parsed into all sources at once. Legacy files still work as fallback.
-// Files are parsed entirely in the browser via dynamic import of SheetJS
-// (no PII upload). Parsed snapshots persist in localStorage so the user
-// doesn't have to re-upload every visit.
-function MasterfileUploadPanel({ masterfiles, onUpload, onRemove, busy, error }) {
-  const slots = [
-    { key: 'ksaLuqmat',  label: 'KSA Masterfile (Luqmat Active)',     hint: 'New "KSA Masterfile - Luqmat" workbook preferred — reads the GCC Masterfile / Luqmat / Production Masterfile tabs. Legacy "Luqmat Active Employees" files still accepted.' },
-    { key: 'thirdParty', label: 'HR Masterfile (3rd Party Production)', hint: 'Only needed for legacy files ("Data-Full Time" sheet). The new workbook in the first slot already covers 3rd-party production.' },
-  ];
+// SINGLE upload field: the "KSA Masterfile - Luqmat" workbook carries the
+// canonical GCC Masterfile / Luqmat / Production Masterfile tabs and is parsed
+// into all sources at once (masterfile.js auto-detects canonical vs legacy
+// sheets). Uploading REPLACES whatever was stored before. Files are parsed
+// entirely in the browser via dynamic import of SheetJS (no PII upload);
+// parsed snapshots persist in localStorage so the user doesn't have to
+// re-upload every visit.
+
+// Rows-per-source counts across everything loaded (rows carry a source tag:
+// 'GCC' | 'Luqmat' | '3rd-Party'; legacy files tag their single source).
+function masterfileSourceCounts(masterfiles) {
+  const counts = {};
+  for (const mf of Object.values(masterfiles || {})) {
+    if (!mf || !Array.isArray(mf.rows)) continue;
+    for (const r of mf.rows) {
+      const s = r.source || mf.source || 'Masterfile';
+      counts[s] = (counts[s] || 0) + 1;
+    }
+  }
+  const order = ['GCC', 'Luqmat', '3rd-Party'];
+  return Object.entries(counts).sort((a, b) => {
+    const ia = order.indexOf(a[0]); const ib = order.indexOf(b[0]);
+    return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+  });
+}
+
+function MasterfileUploadPanel({ masterfiles, onUpload, onClear, busy, error }) {
+  const loadedFiles = Object.values(masterfiles || {}).filter(mf => mf && Array.isArray(mf.rows));
+  const hasLoaded = loadedFiles.length > 0;
+  const sourceCounts = masterfileSourceCounts(masterfiles);
+  const fileNames = [...new Set(loadedFiles.map(mf => mf.fileName).filter(Boolean))];
 
   return (
     <div style={{ ...panel, padding: 16 }}>
       <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--ink-500)', letterSpacing: '.06em', textTransform: 'uppercase', marginBottom: 10 }}>
-        Cross-source masterfiles (parsed in your browser, never uploaded)
+        Masterfile workbook (parsed in your browser, never uploaded)
       </div>
       <div style={{ fontSize: 12, color: 'var(--ink-500)', marginBottom: 10 }}>
-        One workbook now covers everything: upload the new "KSA Masterfile - Luqmat" file (GCC Masterfile / Luqmat / Production Masterfile tabs) and all sources load from it. Legacy files still accepted.
+        One file covers GCC + Luqmat + 3rd-party (canonical tabs auto-detected); legacy files also work.
+        Cross-source checks run automatically once uploaded.
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 12 }}>
-        {slots.map(slot => {
-          const loaded = masterfiles?.[slot.key];
-          const isBusy = busy === slot.key;
-          return (
-            <div key={slot.key} style={{ border: '1px solid var(--ink-200)', borderRadius: 8, padding: 12 }}>
-              <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--ink-900)' }}>{slot.label}</div>
-              <div style={{ fontSize: 11, color: 'var(--ink-500)', marginTop: 2 }}>{slot.hint}</div>
-              <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                <label style={{ ...ghostBtn, cursor: isBusy ? 'wait' : 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                  <Icon name="Upload" size={14} />
-                  {isBusy ? 'Parsing…' : (loaded ? 'Replace file' : 'Upload XLSX')}
-                  <input
-                    type="file"
-                    accept=".xlsx,.xls"
-                    style={{ display: 'none' }}
-                    disabled={isBusy}
-                    onChange={e => {
-                      const f = e.target.files?.[0];
-                      if (f) onUpload(slot.key, f);
-                      e.target.value = '';
-                    }}
-                  />
-                </label>
-                {loaded && (
-                  <>
-                    <span style={{ fontSize: 11, color: 'var(--calo-700, #1e8359)', fontWeight: 700 }}>
-                      ✓ {loaded.rows.length} rows · {loaded.fileName}
-                    </span>
-                    <button onClick={() => onRemove(slot.key)} style={{ ...ghostBtn, color: '#9f2f2f', padding: '6px 10px', fontSize: 12 }}>Remove</button>
-                  </>
-                )}
-              </div>
-            </div>
-          );
-        })}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        <label style={{ ...ghostBtn, cursor: busy ? 'wait' : 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+          <Icon name="Upload" size={14} />
+          {busy ? 'Parsing…' : (hasLoaded ? 'Replace workbook' : 'Upload XLSX')}
+          <input
+            type="file"
+            accept=".xlsx,.xls"
+            style={{ display: 'none' }}
+            disabled={busy}
+            onChange={e => {
+              const f = e.target.files?.[0];
+              if (f) onUpload(f);
+              e.target.value = '';
+            }}
+          />
+        </label>
+        {hasLoaded && (
+          <>
+            {sourceCounts.map(([source, n]) => (
+              <span key={source} style={{
+                padding: '4px 12px', borderRadius: 999,
+                background: 'var(--calo-50, #d9f0e5)', color: 'var(--calo-700, #1e8359)',
+                fontSize: 12, fontWeight: 700,
+              }}>{source} · {n} rows</span>
+            ))}
+            {fileNames.length > 0 && (
+              <span style={{ fontSize: 11, color: 'var(--ink-500)' }}>{fileNames.join(', ')}</span>
+            )}
+            <button onClick={onClear} style={{ ...ghostBtn, color: '#9f2f2f', padding: '6px 10px', fontSize: 12 }}>Clear</button>
+          </>
+        )}
       </div>
       {error && <div style={{ ...errBanner, marginTop: 10, fontSize: 12 }}>{error}</div>}
     </div>

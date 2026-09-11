@@ -163,6 +163,16 @@ export async function runAudit({ forceRefresh = false } = {}) {
   if (forceRefresh) clearCaches();
   const users = await fetchAllUsersForAudit();
   const today = new Date();
+
+  // Auditable population: live or joining records only. People who are leaving
+  // or gone (even when accountStatus still says Active) are lifecycle findings,
+  // not data-quality ones — they have dedicated checks below.
+  const LIVE_STATUSES = ['Active', 'Invited', 'Invited to Onboard', 'Created'];
+  const TERMINAL_EVENTS = ['Terminated', 'Resigned', 'Offboarded'];
+  const isLive = (u) => LIVE_STATUSES.includes(u.accountStatus)
+    && !TERMINAL_EVENTS.includes(u?.userEvent?.status)
+    && !u.leaveDate && !u?.lifecycle?.leaveDate;
+
   const out = {
     asOf: today.toISOString(),
     totalUsers: users.length,
@@ -190,21 +200,24 @@ export async function runAudit({ forceRefresh = false } = {}) {
   for (const u of users) {
     const eid = readEmployeeId(u);
     if (!eid) continue;
-    eidMap.set(eid, [...(eidMap.get(eid) || []), { userId: u.userId, name: u.displayName, status: u.accountStatus }]);
+    eidMap.set(eid, [...(eidMap.get(eid) || []), { userId: u.userId, name: u.displayName, status: u.accountStatus, live: isLive(u) }]);
   }
+  // Groups are built over ALL users (ID reuse between a leaver and a live
+  // person must still surface) but only reported when at least one member is
+  // live — purely-dead duplicate groups are history, not actionable hygiene.
   out.checks.duplicateEmployeeIds = [...eidMap.entries()]
-    .filter(([, list]) => list.length > 1)
-    .map(([eid, list]) => ({ employeeId: eid, count: list.length, users: list }));
+    .filter(([, list]) => list.length > 1 && list.some(m => m.live))
+    .map(([eid, list]) => ({ employeeId: eid, count: list.length, users: list.map(({ live, ...m }) => m) }));
 
   // 4. Missing employeeId
   out.checks.missingEmployeeId = users
-    .filter(u => !readEmployeeId(u) && u.accountStatus !== 'Deactivated')
+    .filter(u => isLive(u) && !readEmployeeId(u))
     .map(u => ({ userId: u.userId, name: u.displayName, status: u.accountStatus }));
 
   // 5. Duplicate display names
   const nameMap = new Map();
   for (const u of users) {
-    if (u.accountStatus === 'Deactivated') continue;
+    if (!isLive(u)) continue;
     if (!u.displayName) continue;
     const k = u.displayName.toLowerCase().trim();
     nameMap.set(k, [...(nameMap.get(k) || []), { userId: u.userId, employeeId: readEmployeeId(u), status: u.accountStatus }]);
@@ -213,20 +226,18 @@ export async function runAudit({ forceRefresh = false } = {}) {
     .filter(([, list]) => list.length > 1)
     .map(([name, list]) => ({ name: name.replace(/\b\w/g, c => c.toUpperCase()), count: list.length, users: list }));
 
-  // 6. Missing required fields (active or onboarding)
-  const onboardingStatuses = ['Active', 'Invited', 'Invited to Onboard', 'Created'];
-  const isOnboarding = u => onboardingStatuses.includes(u.accountStatus);
+  // 6. Missing required fields (live population)
   out.checks.missingEntity = users
-    .filter(u => isOnboarding(u) && !readEntity(u))
+    .filter(u => isLive(u) && !readEntity(u))
     .map(u => ({ userId: u.userId, name: u.displayName, status: u.accountStatus }));
   out.checks.missingSite = users
-    .filter(u => isOnboarding(u) && !u?.role?.site?.name)
+    .filter(u => isLive(u) && !u?.role?.site?.name)
     .map(u => ({ userId: u.userId, name: u.displayName, status: u.accountStatus }));
   out.checks.missingDepartment = users
-    .filter(u => isOnboarding(u) && !u?.role?.department?.name)
+    .filter(u => isLive(u) && !u?.role?.department?.name)
     .map(u => ({ userId: u.userId, name: u.displayName, status: u.accountStatus }));
   out.checks.missingManager = users
-    .filter(u => isOnboarding(u) && !u?.role?.managerId)
+    .filter(u => isLive(u) && !u?.role?.managerId)
     .map(u => ({ userId: u.userId, name: u.displayName, status: u.accountStatus }));
 
   // 7. Future-dated joiners (>90 days out)
@@ -249,9 +260,9 @@ export async function runAudit({ forceRefresh = false } = {}) {
     .map(u => ({ userId: u.userId, employeeId: readEmployeeId(u), name: u.displayName, startDate: u.startDate }))
     .slice(0, STALE_CREATED_SAMPLE_CAP); // cap — there are hundreds, surface a sample
 
-  // 9. Test users on Active status
+  // 9. Test users in the live population
   out.checks.testUsers = users
-    .filter(u => u.accountStatus === 'Active' && /test|support/i.test(u.displayName || ''))
+    .filter(u => isLive(u) && /test|support/i.test(u.displayName || ''))
     .map(u => ({ userId: u.userId, name: u.displayName, employeeId: readEmployeeId(u) }));
 
   // 10. Per-country active count (replaces the old KSA-only stat)
@@ -270,14 +281,14 @@ export async function runAudit({ forceRefresh = false } = {}) {
 
   // Users where we couldn't classify country or organization → flag for review
   out.checks.unclassifiedCountry = users
-    .filter(u => u.accountStatus === 'Active' && !u.leaveDate && classifyCountry(u) === 'Unclassified')
+    .filter(u => isLive(u) && classifyCountry(u) === 'Unclassified')
     .map(u => ({
       userId: u.userId, employeeId: readEmployeeId(u), name: u.displayName,
       entity: readEntity(u), site: u?.role?.site?.name,
       suggestion: 'Country can\'t be derived from entity or site. Add Country as a standalone field, or normalize the entity/site name.',
     }));
   out.checks.unclassifiedOrganization = users
-    .filter(u => u.accountStatus === 'Active' && !u.leaveDate && classifyOrg(u) === 'Unclassified')
+    .filter(u => isLive(u) && classifyOrg(u) === 'Unclassified')
     .map(u => ({
       userId: u.userId, employeeId: readEmployeeId(u), name: u.displayName,
       entity: readEntity(u),
@@ -288,7 +299,7 @@ export async function runAudit({ forceRefresh = false } = {}) {
 
   // 11. Entity not in approved CR list (data-hygiene-guide §3)
   out.checks.unapprovedEntity = users
-    .filter(u => u.accountStatus === 'Active' && !u.leaveDate)
+    .filter(u => isLive(u))
     .map(u => ({ user: u, entity: readEntity(u) }))
     .filter(({ entity }) => entity && !APPROVED_ENTITIES.has(entity.toLowerCase()))
     .map(({ user, entity }) => ({
@@ -301,7 +312,7 @@ export async function runAudit({ forceRefresh = false } = {}) {
   // 12a. Retired department still in use — the fix ships with the flag:
   // `replacement` is the canon's designated successor.
   out.checks.retiredDepartment = users
-    .filter(u => u.accountStatus === 'Active' && !u.leaveDate)
+    .filter(u => isLive(u))
     .map(u => ({ user: u, dept: u?.role?.department?.name }))
     .filter(({ dept }) => dept && retiredDeptReplacement(dept))
     .map(({ user, dept }) => ({
@@ -313,7 +324,7 @@ export async function runAudit({ forceRefresh = false } = {}) {
 
   // 12b. Department neither approved (canon 21, &/and-insensitive) nor retired.
   out.checks.unapprovedDepartment = users
-    .filter(u => u.accountStatus === 'Active' && !u.leaveDate)
+    .filter(u => isLive(u))
     .map(u => ({ user: u, dept: u?.role?.department?.name }))
     .filter(({ dept }) => dept && !isApprovedDept(dept) && !retiredDeptReplacement(dept))
     .map(({ user, dept }) => ({
@@ -324,12 +335,13 @@ export async function runAudit({ forceRefresh = false } = {}) {
 
   // 13. Legacy site — "[Not in use]" with active users still assigned
   out.checks.legacySiteAssigned = users
-    .filter(u => u.accountStatus === 'Active' && !u.leaveDate && /not in use/i.test(u?.role?.site?.name || ''))
+    .filter(u => isLive(u) && /not in use/i.test(u?.role?.site?.name || ''))
     .map(u => ({ userId: u.userId, employeeId: readEmployeeId(u), name: u.displayName, site: u.role.site.name }));
 
   // 14. Currency/country mismatch on entity
   const entitiesSeen = new Map();
   for (const u of users) {
+    if (!isLive(u)) continue;
     const e = u?.userContract?.entity;
     if (!e?.legalName) continue;
     if (!entitiesSeen.has(e.legalName)) entitiesSeen.set(e.legalName, e);
@@ -371,7 +383,7 @@ export async function runAudit({ forceRefresh = false } = {}) {
   // 15. Single-occurrence job titles — likely typos / not in mastersheet
   const titleCounts = new Map();
   for (const u of users) {
-    if (u.accountStatus !== 'Active') continue;
+    if (!isLive(u)) continue;
     const t = u?.role?.jobPosition?.title;
     if (!t) continue;
     titleCounts.set(t, (titleCounts.get(t) || 0) + 1);
@@ -403,7 +415,7 @@ export async function runAudit({ forceRefresh = false } = {}) {
   // Conservative by design — inference only fires on the canon's
   // high-precision rules; a missed inference is fine, a false flag is not.
   out.checks.titleDeptMismatch = users
-    .filter(u => u.accountStatus === 'Active' && !u.leaveDate)
+    .filter(u => isLive(u))
     .map(u => ({
       user: u,
       dept: u?.role?.department?.name,
@@ -428,7 +440,7 @@ export async function runAudit({ forceRefresh = false } = {}) {
   // spelling. Skips self-suggestions (the canon's variant regexes can match
   // the canonical spelling itself, e.g. "Commis 1").
   out.checks.nonCanonicalTitle = users
-    .filter(u => u.accountStatus === 'Active' && !u.leaveDate)
+    .filter(u => isLive(u))
     .map(u => ({ user: u, title: u?.role?.jobPosition?.title || u?.role?.jobTitle || null }))
     .filter(({ title }) => title)
     .map(({ user, title }) => {
@@ -442,9 +454,9 @@ export async function runAudit({ forceRefresh = false } = {}) {
     })
     .filter(Boolean);
 
-  // 17. Active users with placeholder emails
+  // 17. Live users with placeholder emails
   out.checks.placeholderEmails = users
-    .filter(u => u.accountStatus === 'Active' && !u.leaveDate &&
+    .filter(u => isLive(u) &&
                 /@dummy|@noreply|tbu/i.test(u?.emailAddress || ''))
     .map(u => ({
       userId: u.userId, employeeId: readEmployeeId(u), name: u.displayName,

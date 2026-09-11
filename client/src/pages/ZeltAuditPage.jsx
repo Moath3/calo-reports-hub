@@ -33,6 +33,7 @@ const SEVERITY = {
   placeholderEmails: 'high',
   // Cross-source checks (vs uploaded masterfiles)
   zeltNotInMasterfile: 'high',
+  mfStatusMismatch: 'high',
   masterfileNotInZelt: 'high',
   deptMismatchVsMasterfile: 'medium',
   positionMismatchVsMasterfile: 'low',
@@ -100,6 +101,7 @@ const LABELS = {
   entityList: 'All entities seen — confirm CR vs brand-division',
   // Cross-source checks
   zeltNotInMasterfile: 'Active in Zelt but not in any uploaded masterfile',
+  mfStatusMismatch: 'Active in Zelt but inactive in masterfile',
   masterfileNotInZelt: 'Active in masterfile but not active in Zelt',
   deptMismatchVsMasterfile: 'Department mismatch: Zelt vs masterfile',
   positionMismatchVsMasterfile: 'Position mismatch: Zelt vs masterfile',
@@ -131,6 +133,9 @@ export default function ZeltAuditPage() {
   const [masterfiles, setMasterfiles] = useState(() => loadMasterfilesFromStorage());
   const [mfError, setMfError] = useState(null);
   const [mfBusy, setMfBusy] = useState(false);
+  // Watch state (snapshots) bubbled up from WatcherCard so the health card
+  // can show the flagged-people trend without a second /zelt/watch request.
+  const [watchData, setWatchData] = useState(null);
 
   const load = useCallback((force = false) => {
     setLoading(true);
@@ -152,7 +157,11 @@ export default function ZeltAuditPage() {
   const report = useMemo(() => {
     if (!reportRaw) return null;
     const cross = crossCheckMasterfiles(reportRaw.activeUsers, masterfiles);
-    const mfRows = collectMasterfileRows(masterfiles);
+    // Structure checks operate on ACTIVE masterfile rows only. Inactive rows
+    // (active === false) are kept by the parser for the status cross-check but
+    // must not generate structure noise; rows without the flag (old persisted
+    // data) pass through unchanged.
+    const mfRows = collectMasterfileRows(masterfiles).filter(r => r.active !== false);
     const structure = mfRows.length ? runStructureChecks(mfRows) : null;
     if (!cross && !structure) return reportRaw;
     const checks = { ...reportRaw.checks };
@@ -217,9 +226,9 @@ export default function ZeltAuditPage() {
     <Wrap>
       <Header onRefresh={onRefresh} report={report} />
 
-      <WatcherCard />
+      <WatcherCard onData={setWatchData} />
 
-      <ScoreCard report={report} />
+      <HealthCard report={report} snapshots={watchData?.snapshots} />
 
       <MasterfileUploadPanel
         masterfiles={masterfiles}
@@ -389,7 +398,7 @@ function fmtWhen(x) {
   return isNaN(d.getTime()) ? String(x) : d.toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
 }
 
-function WatcherCard() {
+function WatcherCard({ onData }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [watchErr, setWatchErr] = useState(null);
@@ -400,10 +409,11 @@ function WatcherCard() {
   useEffect(() => {
     let alive = true;
     api.zeltWatch()
-      .then(r => { if (alive) { setData(r); setWatchErr(null); } })
+      .then(r => { if (alive) { setData(r); onData?.(r); setWatchErr(null); } })
       .catch(e => { if (alive) setWatchErr(e?.message || 'Watcher unavailable'); })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const runNow = async () => {
@@ -413,6 +423,7 @@ function WatcherCard() {
       // Takes ~30s — the server walks all Zelt users and re-runs every check.
       const r = await api.zeltWatchRun();
       setData(r);
+      onData?.(r);
     } catch (e) {
       setWatchErr(e?.message || 'Snapshot run failed');
     } finally {
@@ -559,15 +570,15 @@ function WatcherCard() {
   );
 }
 
-// Grouped by check so the check label + owner pill render ONCE per check
-// instead of repeating on every affected employee row.
+// Grouped by check so the check label renders ONCE per check instead of
+// repeating on every affected employee row. Owner names are intentionally not
+// rendered (records may or may not carry an `owner` field — ignore it).
 function WatcherDiffList({ title, color, items }) {
   const byCheck = new Map();
   for (const f of items) {
     const key = f.check || 'unknown';
     let g = byCheck.get(key);
-    if (!g) { g = { check: key, owner: null, records: [] }; byCheck.set(key, g); }
-    if (!g.owner && f.owner) g.owner = f.owner;
+    if (!g) { g = { check: key, records: [] }; byCheck.set(key, g); }
     g.records.push(f);
   }
   const groups = [...byCheck.values()].sort((a, b) => b.records.length - a.records.length);
@@ -588,7 +599,6 @@ function WatcherDiffList({ title, color, items }) {
               <div key={g.check}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                   <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--ink-900)' }}>{LABELS[g.check] || g.check}</span>
-                  {g.owner && <Pill tone="neutral" size="sm">{g.owner}</Pill>}
                   <span style={{
                     fontSize: 11, fontWeight: 800, color,
                     background: 'var(--ink-50, #f6f6f4)', border: '1px solid var(--ink-100)',
@@ -620,13 +630,17 @@ function WatcherDiffList({ title, color, items }) {
 
 // Rows-per-source counts across everything loaded (rows carry a source tag:
 // 'GCC' | 'Luqmat' | '3rd-Party'; legacy files tag their single source).
+// Each source now splits active vs inactive; rows without the normalized
+// `active` flag (old persisted data) count as active.
 function masterfileSourceCounts(masterfiles) {
   const counts = {};
   for (const mf of Object.values(masterfiles || {})) {
     if (!mf || !Array.isArray(mf.rows)) continue;
     for (const r of mf.rows) {
       const s = r.source || mf.source || 'Masterfile';
-      counts[s] = (counts[s] || 0) + 1;
+      if (!counts[s]) counts[s] = { active: 0, inactive: 0 };
+      if (r.active === false) counts[s].inactive += 1;
+      else counts[s].active += 1;
     }
   }
   const order = ['GCC', 'Luqmat', '3rd-Party'];
@@ -674,7 +688,7 @@ function MasterfileUploadPanel({ masterfiles, onUpload, onClear, busy, error }) 
                 padding: '4px 12px', borderRadius: 999,
                 background: 'var(--calo-50, #d9f0e5)', color: 'var(--calo-700, #1e8359)',
                 fontSize: 12, fontWeight: 700,
-              }}>{source} · {n} rows</span>
+              }}>{source} · {n.active} active · {n.inactive} inactive</span>
             ))}
             {fileNames.length > 0 && (
               <span style={{ fontSize: 11, color: 'var(--ink-500)' }}>{fileNames.join(', ')}</span>
@@ -688,29 +702,40 @@ function MasterfileUploadPanel({ masterfiles, onUpload, onClear, busy, error }) 
   );
 }
 
-// ---- Score ----------------------------------------------------------------
+// ---- Data health ------------------------------------------------------------
 //
-// Single 0-100 score combining every flagged item across the audit. Each
-// flagged item costs points based on the check's severity, capped per-check
-// so a single noisy check (e.g. 200 missing managers) can't tank the score
-// past −25 alone — multiple bad checks compound. info-severity checks
-// (departmentList, entityList) are exempt; they're just lists, not violations.
-function computeScore(report) {
-  const PENALTY = { high: 2, medium: 0.75, low: 0.25, info: 0 };
-  const PER_CHECK_CAP = 25;
-  const breakdown = [];
+// One number anyone can read: the % of active employees with ZERO flags.
+// Denominator = report.activeUsers. Numerator = active employees who never
+// appear in any violation check. Deliberately Zelt-only:
+//   - info-severity checks don't count (they're lists, not violations)
+//   - inventory keys (departmentList, entityList) don't count
+//   - mf*/masterfile cross-checks don't count — those are masterfile-side and
+//     render in their own panels below without moving this number.
+function isHealthCheckKey(key) {
+  if (key === 'departmentList' || key === 'entityList') return false;
+  if (key.startsWith('mf')) return false;
+  if (/masterfile/i.test(key)) return false;
+  return (SEVERITY[key] || 'low') !== 'info';
+}
+
+function computeDataHealth(report) {
+  const total = Array.isArray(report.activeUsers) ? report.activeUsers.length : 0;
+  const flagged = new Set();
+  const sevCounts = { high: 0, medium: 0, low: 0 };
   for (const [key, items] of Object.entries(report.checks || {})) {
     if (!Array.isArray(items) || items.length === 0) continue;
+    if (!isHealthCheckKey(key)) continue;
     const sev = SEVERITY[key] || 'low';
-    const perItem = PENALTY[sev] ?? 0;
-    if (perItem === 0) continue;
-    const deduction = Math.min(items.length * perItem, PER_CHECK_CAP);
-    breakdown.push({ key, sev, count: items.length, deduction });
+    sevCounts[sev] = (sevCounts[sev] || 0) + items.length;
+    for (const it of items) {
+      if (it == null || typeof it !== 'object') continue;
+      const id = it.userId ?? it.employeeId ?? it.name;
+      if (id != null && String(id).trim() !== '') flagged.add(String(id).trim().toLowerCase());
+    }
   }
-  breakdown.sort((a, b) => b.deduction - a.deduction);
-  const totalDeduction = breakdown.reduce((s, b) => s + b.deduction, 0);
-  const score = Math.max(0, Math.round(100 - totalDeduction));
-  return { score, breakdown, totalDeduction };
+  const clean = Math.max(0, total - flagged.size);
+  const pct = total > 0 ? Math.max(0, Math.min(100, Math.round((clean / total) * 100))) : null;
+  return { pct, clean, total, sevCounts };
 }
 
 function scoreTier(score) {
@@ -720,33 +745,65 @@ function scoreTier(score) {
   return                  { label: 'Critical',        color: '#c0392b' };
 }
 
-function ScoreCard({ report }) {
-  const { score, breakdown } = computeScore(report);
-  const { label, color } = scoreTier(score);
+// Trend of flagged PEOPLE across watcher snapshots. flaggedEmployees is new
+// server-side and may be null on old rows: compare the latest snapshot to the
+// previous non-null one; hide entirely when either side is unavailable.
+function flaggedPeopleTrend(snapshots) {
+  const list = Array.isArray(snapshots) ? snapshots : [];
+  if (list.length < 2) return null;
+  const latest = list[list.length - 1];
+  if (latest?.flaggedEmployees == null) return null;
+  let prev = null;
+  for (let i = list.length - 2; i >= 0; i--) {
+    if (list[i]?.flaggedEmployees != null) { prev = list[i]; break; }
+  }
+  if (!prev) return null;
+  const delta = latest.flaggedEmployees - prev.flaggedEmployees;
+  if (delta === 0) return null;
+  const n = Math.abs(delta);
+  const noun = n === 1 ? 'person' : 'people';
+  return delta < 0
+    ? { text: `▼ ${n} fewer flagged ${noun} than last snapshot`, color: 'var(--calo-700, #1e8359)' }
+    : { text: `▲ ${n} more flagged ${noun} than last snapshot`, color: '#9A6F0E' };
+}
+
+function HealthCard({ report, snapshots }) {
+  const { pct, clean, total, sevCounts } = computeDataHealth(report);
+  const trend = flaggedPeopleTrend(snapshots);
+  if (pct == null) return null; // no active-user list in the audit response
+  const { label, color } = scoreTier(pct);
+  const chips = [
+    { sev: 'high', count: sevCounts.high },
+    { sev: 'medium', count: sevCounts.medium },
+    { sev: 'low', count: sevCounts.low },
+  ].filter(c => c.count > 0);
   return (
     <div style={{ ...panel, padding: 24, display: 'flex', alignItems: 'center', gap: 24, flexWrap: 'wrap' }}>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, minWidth: 140 }}>
-        <div style={{ fontSize: 64, fontWeight: 900, color, letterSpacing: '-0.04em', lineHeight: 1 }}>{score}</div>
-        <div style={{ fontSize: 18, color: 'var(--ink-500)', fontWeight: 700 }}>/ 100</div>
+      <div style={{ minWidth: 160 }}>
+        <div style={{ fontSize: 64, fontWeight: 900, color, letterSpacing: '-0.04em', lineHeight: 1 }}>{pct}%</div>
       </div>
       <div style={{ flex: 1, minWidth: 240 }}>
         <div style={{ fontSize: 11, fontWeight: 800, color, letterSpacing: '.06em', textTransform: 'uppercase' }}>{label}</div>
-        <div style={{ fontSize: 16, fontWeight: 800, color: 'var(--ink-900)', margin: '4px 0' }}>Data Hygiene Score</div>
-        {breakdown.length === 0 ? (
-          <div style={{ fontSize: 13, color: 'var(--ink-500)' }}>No flagged items. Clean data.</div>
-        ) : (
-          <div style={{ fontSize: 12, color: 'var(--ink-500)' }}>
-            <strong style={{ color: 'var(--ink-700)' }}>Biggest losses:</strong>{' '}
-            {breakdown.slice(0, 3).map((b, i) => (
-              <span key={b.key}>
-                {i > 0 && ' · '}
-                {LABELS[b.key] || b.key} <span style={{ color: '#c0392b', fontWeight: 700 }}>−{b.deduction.toFixed(1)}</span>
-              </span>
+        <div style={{ fontSize: 16, fontWeight: 800, color: 'var(--ink-900)', margin: '4px 0' }}>Data health</div>
+        <div style={{ fontSize: 13, color: 'var(--ink-700)', fontWeight: 700 }}>
+          {clean} of {total} active records fully clean
+        </div>
+        {trend && (
+          <div style={{ fontSize: 13, fontWeight: 800, color: trend.color, marginTop: 6 }}>{trend.text}</div>
+        )}
+        {chips.length > 0 && (
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
+            {chips.map(c => (
+              <span key={c.sev} style={{
+                padding: '3px 10px', borderRadius: 999, fontSize: 12, fontWeight: 700,
+                background: 'var(--ink-50, #f6f6f4)', border: '1px solid var(--ink-100)',
+                color: sevColor(c.sev),
+              }}>{c.sev} · {c.count} flags</span>
             ))}
           </div>
         )}
         <div style={{ fontSize: 11, color: 'var(--ink-400, #999)', marginTop: 6 }}>
-          High-severity flags weigh −2 each (capped at −25/check), medium −0.75, low −0.25. Score updates as Zelt data is fixed.
+          Zelt-only: % of active employees with zero flags. Masterfile checks show in their own panels below and don't move this number.
         </div>
       </div>
     </div>
@@ -868,12 +925,13 @@ function buildHtmlReport(report) {
       <h1 style="margin:4px 0 0;font-size:24px;letter-spacing:-0.02em">Data Hygiene Report</h1>
       <div style="font-size:13px;color:#666;margin-top:6px">${escapeHtml(asOf)} · ${report.totalUsers} total Zelt users</div>
       ${(() => {
-        const { score } = computeScore(report);
-        const tier = scoreTier(score);
-        return `<div style="margin-top:14px;display:flex;align-items:baseline;gap:8px">
-          <span style="font-size:48px;font-weight:900;color:${tier.color};letter-spacing:-0.04em;line-height:1">${score}</span>
-          <span style="font-size:14px;color:#666;font-weight:700">/ 100</span>
+        const { pct, clean, total } = computeDataHealth(report);
+        if (pct == null) return '';
+        const tier = scoreTier(pct);
+        return `<div style="margin-top:14px;display:flex;align-items:baseline;gap:8px;flex-wrap:wrap">
+          <span style="font-size:48px;font-weight:900;color:${tier.color};letter-spacing:-0.04em;line-height:1">${pct}%</span>
           <span style="font-size:11px;font-weight:800;color:${tier.color};letter-spacing:.06em;text-transform:uppercase;margin-left:8px">${tier.label}</span>
+          <span style="font-size:13px;color:#666;font-weight:700">${clean} of ${total} active records fully clean (Zelt-only)</span>
         </div>`;
       })()}
     </header>

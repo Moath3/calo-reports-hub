@@ -439,21 +439,21 @@ RULES:
 }
 
 /**
- * Zelt hygiene watcher digest. Turns CHECK-LEVEL aggregates (counts, owners,
+ * Zelt hygiene watcher digest. Turns CHECK-LEVEL aggregates (counts and
  * fix hints — never employee names) into a short Slack mrkdwn message. Falls
  * back to a deterministic templated digest if the API key is missing or the
  * call fails, so the weekly post is never blocked.
  */
 export function buildHygieneDigestPrompt() {
-  return `You are CALO's HR data-quality bot. You receive aggregate results from the Zelt hygiene audit (check-level counts only — there are never employee names in the data) and write a short Slack digest (plain text, *bold* mrkdwn ok): headline with total violations + trend, top items as '• check — count (Δ) — owner — fix hint', max 12 lines, no employee names.
+  return `You are CALO's HR data-quality bot. You receive aggregate results from the Zelt hygiene audit (check-level counts only — there are never employee names in the data) and write a short Slack digest (plain text, *bold* mrkdwn ok): headline with total violations + trend, top items as '• check — count (Δ) — fix hint', max 12 lines, no employee names.
 
 Return ONLY a JSON object (no markdown, no code fences):
 {"text": "the Slack message"}
 
 RULES:
-- Use ONLY the figures provided. Never invent counts, checks, owners, or names.
+- Use ONLY the figures provided. Never invent counts, checks, or names.
 - Headline first: total flagged records + the week-over-week trend if present.
-- Then the top items, one per line, in the given order: '• check — count (Δ) — owner — fix hint'.
+- Then the top items, one per line, in the given order: '• check — count (Δ) — fix hint'.
 - Include the new/resolved counts on one line if present.
 - Max 12 lines total. No greetings, no sign-off.
 - Output ONLY the JSON object.`;
@@ -470,7 +470,7 @@ function buildHygieneDigestFallback(a) {
   }
   for (const c of (a.topChecks || []).slice(0, 10)) {
     const delta = c.delta ? ` (${c.delta > 0 ? '+' : ''}${c.delta})` : '';
-    lines.push(`• ${c.check} — ${c.count}${delta} — ${c.owner} — ${c.fixHint}`);
+    lines.push(`• ${c.check} — ${c.count}${delta} — ${c.fixHint}`);
   }
   return lines.slice(0, 12).join('\n');
 }

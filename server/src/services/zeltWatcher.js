@@ -55,36 +55,6 @@ export const SEVERITY = {
   entityList: 'info',
 };
 
-// Who chases each check.
-export const OWNERS = {
-  rareJobTitles: 'Pranav',
-  duplicateJobTitleVariants: 'Pranav',
-  nonCanonicalTitle: 'Pranav',
-  unapprovedDepartment: 'Sasha',
-  missingDepartment: 'Sasha',
-  retiredDepartment: 'Sasha',
-  titleDeptMismatch: 'Sasha',
-  unapprovedEntity: 'People Ops',
-  currencyMismatch: 'People Ops',
-  brandDivisionAsEntity: 'People Ops',
-  missingEntity: 'People Ops',
-  legacySiteAssigned: 'People Ops',
-  missingSite: 'People Ops',
-  unclassifiedCountry: 'People Ops',
-  unclassifiedOrganization: 'People Ops',
-  duplicateEmployeeIds: 'P&C Ops (Moath)',
-  missingEmployeeId: 'P&C Ops (Moath)',
-  duplicateNames: 'P&C Ops (Moath)',
-  placeholderEmails: 'P&C Ops (Moath)',
-  activeWithLeaveDate: 'P&C Ops (Moath)',
-  activeButTerminated: 'P&C Ops (Moath)',
-  testUsers: 'P&C Ops (Moath)',
-  staleCreated: 'P&C Ops (Moath)',
-  futureJoiners: 'P&C Ops (Moath)',
-  missingManager: 'P&C Ops (Moath)',
-};
-const DEFAULT_OWNER = 'P&C Ops (Moath)';
-
 // One-line fix hint per check — goes into the digest next to the count.
 export const FIX_HINTS = {
   activeWithLeaveDate: 'Finish the offboarding — deactivate or clear the leave date.',
@@ -124,10 +94,6 @@ function severityOf(check) {
   return SEVERITY[check] || 'medium';
 }
 
-function ownerOf(check) {
-  return OWNERS[check] || DEFAULT_OWNER;
-}
-
 // Stable identity for a flagged record. Most checks carry userId; the
 // aggregate checks fall back to employeeId, name, or the check-specific key.
 function keyOf(record) {
@@ -144,7 +110,6 @@ function flagEntry(check, record) {
   return {
     check,
     severity: severityOf(check),
-    owner: ownerOf(check),
     userId: record?.userId ?? null,
     employeeId: record?.employeeId ?? null,
     name: record?.name ?? null,
@@ -180,7 +145,6 @@ export function diffSnapshots(prevChecks, currChecks) {
         check,
         before: prev.length,
         after: curr.length,
-        owner: ownerOf(check),
         severity: severityOf(check),
       });
     }
@@ -205,6 +169,23 @@ function summarizeChecks(checks) {
   return { summary, bySeverity, totalFlagged };
 }
 
+// Distinct employees across violation checks — the same check set that feeds
+// totalFlagged ('info' checks and inventories excluded). Identity falls back
+// userId → employeeId → name; records carrying none of those (title-level
+// aggregates) are skipped.
+function countFlaggedEmployees(checks) {
+  const ids = new Set();
+  for (const [check, list] of Object.entries(checks || {})) {
+    if (!Array.isArray(list)) continue;
+    if (INVENTORY_CHECKS.has(check) || severityOf(check) === 'info') continue;
+    for (const r of list) {
+      const id = r?.userId ?? r?.employeeId ?? r?.name;
+      if (id != null) ids.add(id);
+    }
+  }
+  return ids.size;
+}
+
 function parseJsonOr(text, fallback) {
   try { return JSON.parse(text); } catch { return fallback; }
 }
@@ -217,6 +198,7 @@ function rowToSnapshot(row) {
     asOf: row.as_of,
     totalUsers: row.total_users,
     totalFlagged: row.total_flagged,
+    flaggedEmployees: row.flagged_employees ?? null, // null for pre-migration rows
     bySeverity: parseJsonOr(row.by_severity, {}),
     summary: parseJsonOr(row.summary, {}),
     checks: parseJsonOr(row.checks, {}),
@@ -225,7 +207,7 @@ function rowToSnapshot(row) {
 
 function lastSnapshots(limit) {
   return getDb().prepare(
-    'SELECT id, captured_at, as_of, total_users, total_flagged, by_severity, summary, checks ' +
+    'SELECT id, captured_at, as_of, total_users, total_flagged, flagged_employees, by_severity, summary, checks ' +
     'FROM zelt_audit_snapshots ORDER BY id DESC LIMIT ?'
   ).all(limit).map(rowToSnapshot);
 }
@@ -247,17 +229,19 @@ export async function runSnapshotAndDiff() {
       if (Array.isArray(list)) storedChecks[check] = list;
     }
     const { summary, bySeverity, totalFlagged } = summarizeChecks(storedChecks);
+    const flaggedEmployees = countFlaggedEmployees(storedChecks);
 
     const prev = lastSnapshots(1)[0] || null;
     const capturedAt = Date.now();
     getDb().prepare(`
-      INSERT INTO zelt_audit_snapshots (captured_at, as_of, total_users, total_flagged, by_severity, summary, checks)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO zelt_audit_snapshots (captured_at, as_of, total_users, total_flagged, flagged_employees, by_severity, summary, checks)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       capturedAt,
       report.asOf,
       report.totalUsers,
       totalFlagged,
+      flaggedEmployees,
       JSON.stringify(bySeverity),
       JSON.stringify(summary),
       JSON.stringify(storedChecks),
@@ -271,6 +255,7 @@ export async function runSnapshotAndDiff() {
         asOf: report.asOf,
         totalUsers: report.totalUsers,
         totalFlagged,
+        flaggedEmployees,
         bySeverity,
         summary,
       },
@@ -295,6 +280,7 @@ export function getWatchState() {
       capturedAt: s.capturedAt,
       asOf: s.asOf,
       totalFlagged: s.totalFlagged,
+      flaggedEmployees: s.flaggedEmployees, // null for pre-migration rows
       bySeverity: s.bySeverity,
     })),
     latest: latest
@@ -303,6 +289,7 @@ export function getWatchState() {
           asOf: latest.asOf,
           totalUsers: latest.totalUsers,
           totalFlagged: latest.totalFlagged,
+          flaggedEmployees: latest.flaggedEmployees,
           bySeverity: latest.bySeverity,
           summary: latest.summary,
         }
@@ -317,7 +304,7 @@ export function getWatchState() {
 // ---- Weekly digest -----------------------------------------------------
 
 // Aggregates from snapshot objects. Pure — testable. NO employee names:
-// only check-level counts, owners, and fix hints.
+// only check-level counts and fix hints.
 export function buildAggregates(latest, prev = null, weekAgo = null) {
   if (!latest) return null;
   const diff = prev ? diffSnapshots(prev.checks, latest.checks) : null;
@@ -330,7 +317,6 @@ export function buildAggregates(latest, prev = null, weekAgo = null) {
       count,
       delta: count - (prev?.summary?.[check] || 0),
       severity: severityOf(check),
-      owner: ownerOf(check),
       fixHint: FIX_HINTS[check] || 'Review and correct in Zelt.',
     }))
     .sort((a, b) => (sevRank[a.severity] - sevRank[b.severity]) || (b.count - a.count))
@@ -366,7 +352,7 @@ export function buildDigestAggregates() {
 
   // Week-over-week trend: newest snapshot at least ~6 days older than latest.
   const weekAgoRow = getDb().prepare(
-    'SELECT id, captured_at, as_of, total_users, total_flagged, by_severity, summary, checks ' +
+    'SELECT id, captured_at, as_of, total_users, total_flagged, flagged_employees, by_severity, summary, checks ' +
     'FROM zelt_audit_snapshots WHERE captured_at <= ? ORDER BY captured_at DESC LIMIT 1'
   ).get(latest.capturedAt - 6 * DAY_MS);
 

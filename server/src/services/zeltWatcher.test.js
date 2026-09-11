@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { diffSnapshots, buildAggregates, SEVERITY, OWNERS } from './zeltWatcher.js';
+import { diffSnapshots, buildAggregates, SEVERITY } from './zeltWatcher.js';
 import { generateHygieneDigest } from './aiService.js';
 
 // ---- diffSnapshots (pure) ----------------------------------------------
@@ -28,7 +28,7 @@ const CURR_CHECKS = {
   departmentList: [{ department: 'Kitchen', activeUsers: 90 }],
 };
 
-test('diffSnapshots: a new flag appears with check, severity and owner attached', () => {
+test('diffSnapshots: a new flag appears with check and severity attached, no owner', () => {
   const { newFlags } = diffSnapshots(PREV_CHECKS, CURR_CHECKS);
   assert.equal(newFlags.length, 1);
   assert.equal(newFlags[0].check, 'placeholderEmails');
@@ -36,7 +36,7 @@ test('diffSnapshots: a new flag appears with check, severity and owner attached'
   assert.equal(newFlags[0].name, 'Dan Dune');
   assert.equal(newFlags[0].entity, 'Mountain Peak KSA');
   assert.equal(newFlags[0].severity, 'high');
-  assert.equal(newFlags[0].owner, 'P&C Ops (Moath)');
+  assert.ok(!('owner' in newFlags[0]), 'flag entries must not carry an owner');
 });
 
 test('diffSnapshots: a fixed record shows up as resolved', () => {
@@ -71,7 +71,7 @@ test('diffSnapshots: records without userId fall back to employeeId/name keys', 
   assert.equal(resolved.length, 0);
 });
 
-test('severity and owner maps cover every audit check', () => {
+test('severity map covers every audit check', () => {
   const checks = [
     'activeWithLeaveDate', 'activeButTerminated', 'duplicateEmployeeIds',
     'missingEmployeeId', 'duplicateNames', 'missingEntity', 'missingSite',
@@ -83,7 +83,6 @@ test('severity and owner maps cover every audit check', () => {
   ];
   for (const c of checks) {
     assert.ok(SEVERITY[c], `SEVERITY missing ${c}`);
-    assert.ok(OWNERS[c], `OWNERS missing ${c}`);
   }
 });
 
@@ -113,7 +112,7 @@ function makeSnapshot(overrides = {}) {
   };
 }
 
-test('digest fallback: names the top check + owner, never an employee', async () => {
+test('digest fallback: names the top check + fix hint, never an employee or owner', async () => {
   const latest = makeSnapshot();
   const prev = makeSnapshot({
     totalFlagged: 4,
@@ -138,7 +137,8 @@ test('digest fallback: names the top check + owner, never an employee', async ()
     const { text, ai } = await generateHygieneDigest(aggregates);
     assert.equal(ai, false);
     assert.ok(text.includes('duplicateEmployeeIds'), 'top check name missing from digest');
-    assert.ok(text.includes('P&C Ops (Moath)'), 'owner missing from digest');
+    assert.ok(text.includes('Reassign a unique employee ID'), 'fix hint missing from digest');
+    assert.ok(!text.includes('Moath'), 'owner name leaked into digest');
     assert.ok(text.includes('6 flagged records'), 'headline total missing');
     for (const name of ['Alice Amber', 'Bob Breeze', 'Eve East', 'Finn Frost']) {
       assert.ok(!text.includes(name), `digest leaked ${name}`);

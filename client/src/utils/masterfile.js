@@ -34,6 +34,26 @@ const STRUCTURE_TABS = [
   { sheet: 'Production Masterfile', source: '3rd-Party' },
 ];
 
+// Inactive/termination tabs. Parsed whenever present (both canonical and
+// legacy paths); every row is tagged active:false so downstream consumers can
+// tell terminated records apart from live headcount.
+const INACTIVE_TABS = [
+  { sheet: 'Luqmat Inactive', source: 'Luqmat' },
+  { sheet: 'Production Inactive', source: '3rd-Party' },
+];
+
+const INACTIVE_TAB_COLUMNS = {
+  iqamaId: ['Iqama No', 'Iqama number', 'National ID'],
+  empId: ['Emp No', 'Empl. ID', 'Emp Number', 'Emp\nNumber', 'EMP ID', 'Emp ID'],
+  name: ['Full Name', 'Name'],
+  dept: ['Dept', 'Department'],
+  position: ['Position', 'Job Title'],
+  status: ['Status'],
+  terminationDate: ['Termination Date', 'Leave Date', 'Last Working Day'],
+  terminationReason: ['Reason', 'Termination Reason'],
+  entity: ['Entity', 'Sponsor', 'Entity/Sponsor', 'Legal Entity'],
+};
+
 // LEGACY source configurations (kept as fallback so old files still work):
 // - KSA Masterfile: only the "Luqmat Active Employees" sheet (skip everything else)
 // - 3rd Party Masterfile: only the "Data-Full Time" sheet (skip Data-Monthly Contractor)
@@ -123,6 +143,34 @@ function mapRow(raw, columns) {
   return out;
 }
 
+// Normalized active flag: Status must equal 'Active' (case-insensitive).
+// Anything else — Inactive / Terminated / blank — is inactive. Rows are no
+// longer dropped at parse time; consumers filter on `active` instead.
+function normalizeActive(status) {
+  return String(status ?? '').trim().toLowerCase() === 'active';
+}
+
+// Parse whatever inactive tabs exist in the workbook into rows tagged with
+// their source and active:false (regardless of any Status cell — these tabs
+// are termination registers by definition).
+function parseInactiveTabs(wb, XLSX) {
+  const rows = [];
+  for (const tab of INACTIVE_TABS) {
+    const sheetName = findSheet(wb, [tab.sheet]);
+    if (!sheetName) continue;
+    const raw = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { defval: null });
+    for (const r of raw) {
+      const out = mapRow(r, INACTIVE_TAB_COLUMNS);
+      if (!(out.iqamaId || out.empId || out.name)) continue;
+      out.source = tab.source;
+      out.legalEntity = out.entity ?? null;
+      out.active = false;
+      rows.push(out);
+    }
+  }
+  return rows;
+}
+
 /**
  * Parse an XLSX File handle into a normalized masterfile snapshot.
  * Returns { source, label, sheet, rows, loadedAt }.
@@ -157,9 +205,11 @@ export async function loadMasterfile(file, sourceKey) {
         out.source = tab.source;
         // Keep the legacy cross-check field populated too.
         out.entity = out.entity ?? out.legalEntity;
+        out.active = normalizeActive(out.status);
         rows.push(out);
       }
     }
+    rows.push(...parseInactiveTabs(wb, XLSX));
     return {
       source: sourceKey,
       label: `New masterfile (${canonicalTabs.map(t => t.sheet).join(' + ')})`,
@@ -184,9 +234,11 @@ export async function loadMasterfile(file, sourceKey) {
       const out = mapRow(r, config.columns);
       out.source = config.rowSource;
       out.legalEntity = out.legalEntity ?? out.entity;
+      out.active = normalizeActive(out.status);
       return out;
     })
     .filter(r => r.iqamaId || r.empId || r.name);
+  rows.push(...parseInactiveTabs(wb, XLSX));
 
   return {
     source: sourceKey,
@@ -250,9 +302,15 @@ function normKey(v) {
 function buildIndex(rows) {
   const byIqama = new Map();
   const byEmp = new Map();
+  // Active rows win over inactive ones for the same id, so a rehire that
+  // appears on both an active tab and an inactive tab resolves to the live row.
+  const put = (map, key, row) => {
+    const prev = map.get(key);
+    if (!prev || (prev.active === false && row.active !== false)) map.set(key, row);
+  };
   for (const r of rows) {
-    if (r.iqamaId) byIqama.set(normKey(r.iqamaId), r);
-    if (r.empId) byEmp.set(normKey(r.empId), r);
+    if (r.iqamaId) put(byIqama, normKey(r.iqamaId), r);
+    if (r.empId) put(byEmp, normKey(r.empId), r);
   }
   return { byIqama, byEmp };
 }
@@ -261,7 +319,10 @@ function lookup(zeltEmployeeId, indexedFiles) {
   if (!zeltEmployeeId) return null;
   const k = normKey(zeltEmployeeId);
   for (const mf of indexedFiles) {
-    const hit = mf.index.byIqama.get(k) || mf.index.byEmp.get(k);
+    const a = mf.index.byIqama.get(k);
+    const b = mf.index.byEmp.get(k);
+    // Prefer an active hit over an inactive one, whichever map it came from.
+    const hit = (a && a.active !== false) ? a : (b && b.active !== false) ? b : (a || b);
     if (hit) return { row: hit, source: mf.source, label: mf.label };
   }
   return null;
@@ -287,6 +348,7 @@ export function crossCheckMasterfiles(activeUsers, masterfiles) {
 
   const seenMasterfileRows = new Set();
   const phantoms = [];
+  const statusMismatches = [];
   const deptMismatches = [];
   const positionMismatches = [];
 
@@ -304,6 +366,26 @@ export function crossCheckMasterfiles(activeUsers, masterfiles) {
       continue;
     }
     seenMasterfileRows.add(match.row);
+
+    // Sharper than the generic phantom check: the person IS in a masterfile,
+    // but on an inactive/terminated row. Goes to mfStatusMismatch only —
+    // never double-flagged as zeltNotInMasterfile, and no dept/position
+    // comparison against a dead record.
+    if (match.row.active === false) {
+      const when = [match.row.terminationDate, match.row.terminationReason]
+        .filter(v => v != null && v !== '')
+        .join(', ');
+      statusMismatches.push({
+        userId: u.userId,
+        employeeId: u.employeeId,
+        name: u.name,
+        entity: u.entity,
+        dept: u.dept,
+        source: match.row.source || match.label,
+        detail: `Active in Zelt, inactive in masterfile${when ? ` (terminated ${when})` : ''}`,
+      });
+      continue;
+    }
 
     const zDept = normKey(u.dept);
     const mDept = normKey(match.row.dept);
@@ -336,10 +418,15 @@ export function crossCheckMasterfiles(activeUsers, masterfiles) {
   const orphans = [];
   for (const mf of indexedFiles) {
     for (const row of mf.rows) {
-      const status = String(row.status || '').toLowerCase();
-      // Only count rows the masterfile considers active — empty status counts
-      // as active (some masterfiles only list active employees on the source sheet).
-      if (status && !status.includes('active')) continue;
+      // Rows carrying the normalized flag: only active rows can be orphans.
+      if (row.active === false) continue;
+      if (row.active == null) {
+        // Legacy rows persisted before the active flag existed — preserve the
+        // old behavior: empty status counts as active (some masterfiles only
+        // list active employees on the source sheet).
+        const status = String(row.status || '').toLowerCase();
+        if (status && !status.includes('active')) continue;
+      }
       if (seenMasterfileRows.has(row)) continue;
       orphans.push({
         employeeId: row.empId || row.iqamaId,
@@ -355,6 +442,7 @@ export function crossCheckMasterfiles(activeUsers, masterfiles) {
 
   return {
     zeltNotInMasterfile: phantoms,
+    mfStatusMismatch: statusMismatches,
     masterfileNotInZelt: orphans,
     deptMismatchVsMasterfile: deptMismatches,
     positionMismatchVsMasterfile: positionMismatches,

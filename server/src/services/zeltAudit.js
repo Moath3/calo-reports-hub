@@ -498,11 +498,14 @@ export async function runAudit({ forceRefresh = false } = {}) {
     totalOrganizations: Object.keys(orgCounts).length,
   };
 
-  // Compact active-user list for client-side cross-checks against uploaded
-  // masterfile sheets (KSA Luqmat, 3rd Party Production, etc.). Only the
-  // join/comparison fields — no PII beyond what the audit page already shows.
+  // Compact LIVE-user list for client-side cross-checks against uploaded
+  // masterfile sheets, and the denominator of the data-health score. "Live"
+  // deliberately includes Created/Invited, not just Active: most 3rd-party
+  // production workers never activate their Zelt accounts (managers run them),
+  // so their accountStatus stays 'Created' while they are fully employed.
+  // Only the join/comparison fields — no PII beyond what the page shows.
   out.activeUsers = users
-    .filter(u => u.accountStatus === 'Active')
+    .filter(isLive)
     .map(u => ({
       userId: u.userId,
       employeeId: readEmployeeId(u),
@@ -512,6 +515,7 @@ export async function runAudit({ forceRefresh = false } = {}) {
       dept: u?.role?.department?.name || null,
       position: u?.role?.jobTitle || null,
       site: u?.role?.site?.name || null,
+      status: u.accountStatus,
     }));
 
   // Headline counts

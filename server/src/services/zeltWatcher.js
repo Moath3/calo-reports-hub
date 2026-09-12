@@ -169,15 +169,16 @@ function summarizeChecks(checks) {
   return { summary, bySeverity, totalFlagged };
 }
 
-// Distinct employees across violation checks — the same check set that feeds
-// totalFlagged ('info' checks and inventories excluded). Identity falls back
-// userId → employeeId → name; records carrying none of those (title-level
-// aggregates) are skipped.
+// Distinct employees with HIGH or MEDIUM flags — matches the page's Data
+// health definition. Low-severity items (rare titles, catalog spellings) are
+// advisories and deliberately don't count a person as unhealthy. Identity
+// falls back userId → employeeId → name; records carrying none are skipped.
 function countFlaggedEmployees(checks) {
   const ids = new Set();
   for (const [check, list] of Object.entries(checks || {})) {
     if (!Array.isArray(list)) continue;
-    if (INVENTORY_CHECKS.has(check) || severityOf(check) === 'info') continue;
+    const sev = severityOf(check);
+    if (INVENTORY_CHECKS.has(check) || sev === 'info' || sev === 'low') continue;
     for (const r of list) {
       const id = r?.userId ?? r?.employeeId ?? r?.name;
       if (id != null) ids.add(id);
@@ -199,6 +200,7 @@ function rowToSnapshot(row) {
     totalUsers: row.total_users,
     totalFlagged: row.total_flagged,
     flaggedEmployees: row.flagged_employees ?? null, // null for pre-migration rows
+    liveUsers: row.live_users ?? null,               // null for pre-migration rows
     bySeverity: parseJsonOr(row.by_severity, {}),
     summary: parseJsonOr(row.summary, {}),
     checks: parseJsonOr(row.checks, {}),
@@ -207,7 +209,7 @@ function rowToSnapshot(row) {
 
 function lastSnapshots(limit) {
   return getDb().prepare(
-    'SELECT id, captured_at, as_of, total_users, total_flagged, flagged_employees, by_severity, summary, checks ' +
+    'SELECT id, captured_at, as_of, total_users, total_flagged, flagged_employees, live_users, by_severity, summary, checks ' +
     'FROM zelt_audit_snapshots ORDER BY id DESC LIMIT ?'
   ).all(limit).map(rowToSnapshot);
 }
@@ -230,18 +232,21 @@ export async function runSnapshotAndDiff() {
     }
     const { summary, bySeverity, totalFlagged } = summarizeChecks(storedChecks);
     const flaggedEmployees = countFlaggedEmployees(storedChecks);
+    // Denominator for the health % — same as the page: the active-user list.
+    const liveUsers = Array.isArray(report.activeUsers) ? report.activeUsers.length : null;
 
     const prev = lastSnapshots(1)[0] || null;
     const capturedAt = Date.now();
     getDb().prepare(`
-      INSERT INTO zelt_audit_snapshots (captured_at, as_of, total_users, total_flagged, flagged_employees, by_severity, summary, checks)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO zelt_audit_snapshots (captured_at, as_of, total_users, total_flagged, flagged_employees, live_users, by_severity, summary, checks)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       capturedAt,
       report.asOf,
       report.totalUsers,
       totalFlagged,
       flaggedEmployees,
+      liveUsers,
       JSON.stringify(bySeverity),
       JSON.stringify(summary),
       JSON.stringify(storedChecks),
@@ -256,6 +261,7 @@ export async function runSnapshotAndDiff() {
         totalUsers: report.totalUsers,
         totalFlagged,
         flaggedEmployees,
+        liveUsers,
         bySeverity,
         summary,
       },
@@ -281,6 +287,7 @@ export function getWatchState() {
       asOf: s.asOf,
       totalFlagged: s.totalFlagged,
       flaggedEmployees: s.flaggedEmployees, // null for pre-migration rows
+      liveUsers: s.liveUsers,
       bySeverity: s.bySeverity,
     })),
     latest: latest
@@ -290,6 +297,7 @@ export function getWatchState() {
           totalUsers: latest.totalUsers,
           totalFlagged: latest.totalFlagged,
           flaggedEmployees: latest.flaggedEmployees,
+          liveUsers: latest.liveUsers,
           bySeverity: latest.bySeverity,
           summary: latest.summary,
         }
@@ -322,11 +330,23 @@ export function buildAggregates(latest, prev = null, weekAgo = null) {
     .sort((a, b) => (sevRank[a.severity] - sevRank[b.severity]) || (b.count - a.count))
     .slice(0, TOP_CHECKS_LIMIT);
 
+  // Data health % — same definition as the page: share of active employees
+  // with no high/medium flags. Null when a snapshot predates the counters.
+  const healthPct = (s) => (s && s.liveUsers > 0 && s.flaggedEmployees != null)
+    ? Math.max(0, Math.min(100, Math.round(100 * (1 - s.flaggedEmployees / s.liveUsers))))
+    : null;
+
   return {
     asOf: latest.asOf,
     totalUsers: latest.totalUsers,
     totalFlagged: latest.totalFlagged,
     bySeverity: latest.bySeverity,
+    health: {
+      pct: healthPct(latest),
+      prevPct: healthPct(weekAgo) ?? healthPct(prev),
+      flaggedEmployees: latest.flaggedEmployees ?? null,
+      liveUsers: latest.liveUsers ?? null,
+    },
     trend: weekAgo
       ? {
           prevTotalFlagged: weekAgo.totalFlagged,
@@ -352,7 +372,7 @@ export function buildDigestAggregates() {
 
   // Week-over-week trend: newest snapshot at least ~6 days older than latest.
   const weekAgoRow = getDb().prepare(
-    'SELECT id, captured_at, as_of, total_users, total_flagged, flagged_employees, by_severity, summary, checks ' +
+    'SELECT id, captured_at, as_of, total_users, total_flagged, flagged_employees, live_users, by_severity, summary, checks ' +
     'FROM zelt_audit_snapshots WHERE captured_at <= ? ORDER BY captured_at DESC LIMIT 1'
   ).get(latest.capturedAt - 6 * DAY_MS);
 

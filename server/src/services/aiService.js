@@ -445,7 +445,7 @@ RULES:
  * call fails, so the weekly post is never blocked.
  */
 export function buildHygieneDigestPrompt() {
-  return `You are CALO's HR data-quality bot. You receive aggregate results from the Zelt hygiene audit (check-level counts only — there are never employee names in the data) and write a short Slack digest (plain text, *bold* mrkdwn ok): headline with total violations + trend, top items as '• check — count (Δ) — fix hint', max 12 lines, no employee names.
+  return `You are CALO's HR data-quality bot. You receive aggregate results from the Zelt hygiene audit (check-level counts only — there are never employee names in the data) and write a short Slack digest (plain text, *bold* mrkdwn ok): headline leading with the data health % when provided (health.pct = share of active employees with no high/medium issues; mention health.prevPct as "was X%" when it differs) plus total violations + trend, top items as '• check — count (Δ) — fix hint', max 12 lines, no employee names.
 
 Return ONLY a JSON object (no markdown, no code fences):
 {"text": "the Slack message"}
@@ -464,7 +464,10 @@ function buildHygieneDigestFallback(a) {
   const trend = a.trend
     ? ` (${a.trend.delta >= 0 ? '+' : ''}${a.trend.delta} vs ~a week ago)`
     : '';
-  lines.push(`*Zelt hygiene digest* — ${a.totalFlagged || 0} flagged records${trend}`);
+  const health = a.health?.pct != null
+    ? `data health *${a.health.pct}%*${a.health.prevPct != null && a.health.prevPct !== a.health.pct ? ` (was ${a.health.prevPct}%)` : ''} — `
+    : '';
+  lines.push(`*Zelt hygiene digest* — ${health}${a.totalFlagged || 0} flagged records${trend}`);
   if (a.newFlagsCount || a.resolvedCount) {
     lines.push(`New since last snapshot: ${a.newFlagsCount || 0} · Resolved: ${a.resolvedCount || 0}`);
   }

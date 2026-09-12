@@ -720,7 +720,11 @@ function isHealthCheckKey(key) {
 
 function computeDataHealth(report) {
   const total = Array.isArray(report.activeUsers) ? report.activeUsers.length : 0;
+  // Only HIGH + MEDIUM issues make a person "unhealthy" — low-severity items
+  // (rare titles, catalog spellings, missing site) are advisories and shouldn't
+  // tank the score right after a clean import.
   const flagged = new Set();
+  const advisory = new Set();
   const sevCounts = { high: 0, medium: 0, low: 0 };
   for (const [key, items] of Object.entries(report.checks || {})) {
     if (!Array.isArray(items) || items.length === 0) continue;
@@ -730,12 +734,15 @@ function computeDataHealth(report) {
     for (const it of items) {
       if (it == null || typeof it !== 'object') continue;
       const id = it.userId ?? it.employeeId ?? it.name;
-      if (id != null && String(id).trim() !== '') flagged.add(String(id).trim().toLowerCase());
+      if (id == null || String(id).trim() === '') continue;
+      const k = String(id).trim().toLowerCase();
+      if (sev === 'low') advisory.add(k); else flagged.add(k);
     }
   }
+  for (const k of flagged) advisory.delete(k); // advisory = low-only people
   const clean = Math.max(0, total - flagged.size);
   const pct = total > 0 ? Math.max(0, Math.min(100, Math.round((clean / total) * 100))) : null;
-  return { pct, clean, total, sevCounts };
+  return { pct, clean, total, sevCounts, advisoryCount: advisory.size };
 }
 
 function scoreTier(score) {
@@ -768,7 +775,7 @@ function flaggedPeopleTrend(snapshots) {
 }
 
 function HealthCard({ report, snapshots }) {
-  const { pct, clean, total, sevCounts } = computeDataHealth(report);
+  const { pct, clean, total, sevCounts, advisoryCount } = computeDataHealth(report);
   const trend = flaggedPeopleTrend(snapshots);
   if (pct == null) return null; // no active-user list in the audit response
   const { label, color } = scoreTier(pct);
@@ -786,8 +793,13 @@ function HealthCard({ report, snapshots }) {
         <div style={{ fontSize: 11, fontWeight: 800, color, letterSpacing: '.06em', textTransform: 'uppercase' }}>{label}</div>
         <div style={{ fontSize: 16, fontWeight: 800, color: 'var(--ink-900)', margin: '4px 0' }}>Data health</div>
         <div style={{ fontSize: 13, color: 'var(--ink-700)', fontWeight: 700 }}>
-          {clean} of {total} active records fully clean
+          {clean} of {total} active records with no high/medium issues
         </div>
+        {advisoryCount > 0 && (
+          <div style={{ fontSize: 12, color: 'var(--ink-500)', marginTop: 2 }}>
+            {advisoryCount} more have only low-severity advisories (don’t affect the score)
+          </div>
+        )}
         {trend && (
           <div style={{ fontSize: 13, fontWeight: 800, color: trend.color, marginTop: 6 }}>{trend.text}</div>
         )}

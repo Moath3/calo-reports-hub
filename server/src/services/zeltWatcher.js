@@ -43,10 +43,10 @@ export const SEVERITY = {
   unapprovedDepartment: 'low',
   retiredDepartment: 'high',
   titleDeptMismatch: 'medium',
-  nonCanonicalTitle: 'medium',
+  nonCanonicalTitle: 'low', // catalog-spelling cosmetics — advisory, not health-scoring
   unclassifiedCountry: 'medium',
   unclassifiedOrganization: 'medium',
-  duplicateJobTitleVariants: 'medium',
+  duplicateJobTitleVariants: 'low', // casing/whitespace variants — advisory, not health-scoring
   rareJobTitles: 'low',
   futureJoiners: 'low',
   staleCreated: 'info',

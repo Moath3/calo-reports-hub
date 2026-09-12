@@ -53,7 +53,7 @@ const SEVERITY = {
   // Server-side Zelt canon checks (arrive in the audit response)
   retiredDepartment: 'high',
   titleDeptMismatch: 'medium',
-  nonCanonicalTitle: 'medium',
+  nonCanonicalTitle: 'low', // catalog-spelling cosmetics — advisory, not health-scoring
   missingEmployeeId: 'medium',
   duplicateNames: 'medium',
   missingEntity: 'medium',
@@ -64,7 +64,7 @@ const SEVERITY = {
   unapprovedDepartment: 'low',
   unclassifiedCountry: 'medium',
   unclassifiedOrganization: 'medium',
-  duplicateJobTitleVariants: 'medium',
+  duplicateJobTitleVariants: 'low', // casing/whitespace variants — advisory, not health-scoring
   rareJobTitles: 'low',
   futureJoiners: 'low',
   staleCreated: 'info',
@@ -725,6 +725,7 @@ function computeDataHealth(report) {
   // tank the score right after a clean import.
   const flagged = new Set();
   const advisory = new Set();
+  const perCheck = new Map(); // check key -> distinct people (high+medium only)
   const sevCounts = { high: 0, medium: 0, low: 0 };
   for (const [key, items] of Object.entries(report.checks || {})) {
     if (!Array.isArray(items) || items.length === 0) continue;
@@ -736,13 +737,21 @@ function computeDataHealth(report) {
       const id = it.userId ?? it.employeeId ?? it.name;
       if (id == null || String(id).trim() === '') continue;
       const k = String(id).trim().toLowerCase();
-      if (sev === 'low') advisory.add(k); else flagged.add(k);
+      if (sev === 'low') { advisory.add(k); continue; }
+      flagged.add(k);
+      if (!perCheck.has(key)) perCheck.set(key, new Set());
+      perCheck.get(key).add(k);
     }
   }
   for (const k of flagged) advisory.delete(k); // advisory = low-only people
   const clean = Math.max(0, total - flagged.size);
   const pct = total > 0 ? Math.max(0, Math.min(100, Math.round((clean / total) * 100))) : null;
-  return { pct, clean, total, sevCounts, advisoryCount: advisory.size };
+  // The checks costing the most people — so a surprising score explains itself.
+  const topDrivers = [...perCheck.entries()]
+    .map(([key, set]) => ({ key, count: set.size }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 5);
+  return { pct, clean, total, sevCounts, advisoryCount: advisory.size, topDrivers };
 }
 
 function scoreTier(score) {
@@ -775,7 +784,7 @@ function flaggedPeopleTrend(snapshots) {
 }
 
 function HealthCard({ report, snapshots }) {
-  const { pct, clean, total, sevCounts, advisoryCount } = computeDataHealth(report);
+  const { pct, clean, total, sevCounts, advisoryCount, topDrivers } = computeDataHealth(report);
   const trend = flaggedPeopleTrend(snapshots);
   if (pct == null) return null; // no active-user list in the audit response
   const { label, color } = scoreTier(pct);
@@ -802,6 +811,18 @@ function HealthCard({ report, snapshots }) {
         )}
         {trend && (
           <div style={{ fontSize: 13, fontWeight: 800, color: trend.color, marginTop: 6 }}>{trend.text}</div>
+        )}
+        {topDrivers && topDrivers.length > 0 && (
+          <div style={{ marginTop: 10 }}>
+            <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--ink-500)', letterSpacing: '.06em', textTransform: 'uppercase' }}>
+              What’s costing the score
+            </div>
+            {topDrivers.map(d => (
+              <div key={d.key} style={{ fontSize: 12.5, color: 'var(--ink-700)', marginTop: 3 }}>
+                {LABELS[d.key] || d.key} · <b>{d.count}</b> {d.count === 1 ? 'person' : 'people'}
+              </div>
+            ))}
+          </div>
         )}
         {chips.length > 0 && (
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>

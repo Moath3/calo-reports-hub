@@ -1,4 +1,4 @@
-import { computeEmployeePeriod } from './otEngine.js';
+import { computeEmployeePeriod, bucketPunchesByShiftDay } from './otEngine.js';
 import { getOtConfig } from './otConfig.js';
 import { importRoster } from './rosterImporter.js';
 import { resolveIdentities } from './identity/resolver.js';
@@ -37,9 +37,12 @@ export function runTnaPeriod({ period, bioEmployees, punches, rosterAoa, normali
     const id = normalizeId(m.empCode);
     const empPunches = punchesByEmp.get(id) || [];
     const sched = rosterByEmp.get(id) || new Map();
+    // Sessions are paired across the whole period and attributed to their
+    // shift-START date, so overnight shifts count as one day, not two.
+    const buckets = bucketPunchesByShiftDay(empPunches);
     const days = dates.map(date => ({
       date,
-      punches: empPunches.filter(p => String(p.punchTime).slice(0, 10) === date),
+      paired: buckets.get(date) || { workedMinutes: 0, incomplete: false },
       schedule: sched.get(date) || { status: 'off' }, // no roster entry = treat as off (flagged if worked)
     }));
     const entity = m.masterfile?.entity || m.zelt?.entity || m.bio.entity;

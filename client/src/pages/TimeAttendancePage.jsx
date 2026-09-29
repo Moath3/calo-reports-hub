@@ -138,6 +138,8 @@ export default function TimeAttendancePage() {
               <div><b>In scope</b> — blue-collar production staff counted for OT: matched to a master, with a non-manager/admin position. Only these feed the cards and totals.</div>
               <div><b>Excluded / No position / Unmatched</b> — managers &amp; admins; matched but blank position; or not found in any master.</div>
               <div><b>Days / Nights</b> — click a row for a per-person calendar (hours + check-in/out). <b>Nights</b> = shifts crossing midnight.</div>
+              <div><b>Overnight shifts</b> — exports split a night shift (in 20:00 → out 04:00 next day) into two broken rows. The tool re-joins them into <b>one working day on the shift-start date</b>, with the real hours (shown as 🌙, "stitched" in the Daily Log). Shifts are sanity-capped at 16h — longer means a missed punch, flagged instead of counted.</div>
+              <div><b>Avg h/day</b> — typical shift length per person (normal range 8–12h); days under 4h or over 12h are counted per employee in the Excel so odd punches stand out.</div>
               <div><b>Absent (inferred)</b> — no roster, so a work day = most of the team badged in; absence = a work day in the person's span with no badge. On 7-day sites this includes rest days — a review list, not final.</div>
               <div><b>Downloads</b> — Excel &amp; CSV follow the "In-scope only" toggle.</div>
             </div>
@@ -285,6 +287,7 @@ export default function TimeAttendancePage() {
                   <Stat label="off-days" value={data.daily.offDays.length} note="inferred" />
                   <Stat label="absences" value={data.daily.totalAbsences} />
                   <Stat label="overnight" value={data.daily.totalOvernight} />
+                  <Stat label="avg h/day" value={data.aggregates?.workRate?.avgHoursPerDay ?? '—'} />
                 </div>
                 {data.daily.offDays.length === 0 && (
                   <div style={{ marginTop: 14, fontSize: 12.5, color: '#7A4F12', background: '#FEF5E4', border: '1px solid #F6E0B6', borderRadius: 'var(--r-md)', padding: '10px 14px', lineHeight: 1.5 }}>

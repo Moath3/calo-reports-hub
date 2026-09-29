@@ -10,6 +10,7 @@ import { resolveCountry, canonicalEntity } from './entityAliases.js';
 import { normalizeId, normalizeName } from './identity/normalize.js';
 import { diceCoefficient } from './identity/similarity.js';
 import { loadAttendance, loadMaster, parseMinutes, toYMD, EXCLUDE_POSITION } from './fileLib.js';
+import { stitchOvernightDays } from './overnight.js';
 
 // A matched master name agrees with the attendance name if they share a token
 // (handles first-name-only attendance) or are similar overall; used only as a
@@ -81,6 +82,13 @@ export function runPeriod({ attendancePath, masters = [], rosterRecords = [], mo
     throw e;
   }
 
+  // ── Overnight stitching ────────────────────────────────────────────
+  // Per-calendar-day exports split a night shift (in 20:00 → out 04:00 next
+  // day) across two rows. Rejoin them into ONE working day attributed to the
+  // shift-start date, so present-days, hours and OT are counted once.
+  let stitchedSessions = 0;
+  for (const e of emp.values()) stitchedSessions += stitchOvernightDays(e.days).stitched;
+
   // ── Masters (optional): collision-safe direct ID join ─────────────
   const scopeBy = new Map(); // empCode -> { position, source, entity, nameMismatch }
   const mastersMeta = [];
@@ -138,8 +146,15 @@ export function runPeriod({ attendancePath, masters = [], rosterRecords = [], mo
         if ((c.overtime || 0) > 0) { otDays += 1; otMin += c.overtime; ot = true; dayOtMin = c.overtime; }
         if (d.minutes > 540) otDays9 += 1; // illustrative flat-9h comparison
       }
-      return { date: d.date, weekday: weekdayOf(d.date), hours: d.minutes != null ? +(d.minutes / 60).toFixed(2) : null, checkIn: d.checkIn || '', checkOut: d.checkOut || '', overnight, ot, otMin: dayOtMin };
+      return { date: d.date, weekday: weekdayOf(d.date), hours: d.minutes != null ? +(d.minutes / 60).toFixed(2) : null, checkIn: d.checkIn || '', checkOut: d.checkOut || '', overnight, stitched: !!d.stitched, ot, otMin: dayOtMin };
     });
+    // Work rate: how long this person's typical day runs (8–12h is normal for
+    // production; <4h or >12h days are flagged so odd punches stand out).
+    const hoursDays = days.filter((d) => d.hours != null);
+    const totalHours = +hoursDays.reduce((a, d) => a + d.hours, 0).toFixed(1);
+    const avgHours = hoursDays.length ? +(totalHours / hoursDays.length).toFixed(2) : null;
+    const shortDays = hoursDays.filter((d) => d.hours < 4).length;
+    const longDays = hoursDays.filter((d) => d.hours > 12).length;
     const position = sc.position || '';
     const matched = scopeBy.has(e.empCode);
     const isExcluded = !!position && EXCLUDE_POSITION.test(position);
@@ -150,6 +165,8 @@ export function runPeriod({ attendancePath, masters = [], rosterRecords = [], mo
       present: e.days.size, otDays, otHours: +(otMin / 60).toFixed(2), otDays9,
       source: sc.source || '', position, matched, noPosition, isExcluded, inScope, nameMismatch: !!sc.nameMismatch,
       daysWorked: e.days.size, overnightDays: days.filter((d) => d.overnight).length,
+      stitchedDays: days.filter((d) => d.stitched).length,
+      totalHours, avgHours, shortDays, longDays, daysWithHours: hoursDays.length,
       firstSeen: days.length ? days[0].date : null, lastSeen: days.length ? days[days.length - 1].date : null,
       days, absences: [], absentDays: 0,
     });
@@ -278,6 +295,16 @@ export function runPeriod({ attendancePath, masters = [], rosterRecords = [], mo
     absencesTotal: daily.totalAbsences,
     overnightTotal: daily.totalOvernight,
     missingHoursDays: missingHours.length,
+    workRate: (() => {
+      const h = inScopeRows.reduce((a, e) => a + (e.totalHours || 0), 0);
+      const n = inScopeRows.reduce((a, e) => a + (e.daysWithHours || 0), 0);
+      return {
+        avgHoursPerDay: n ? +(h / n).toFixed(2) : null,
+        shortDaysTotal: inScopeRows.reduce((a, e) => a + e.shortDays, 0),
+        longDaysTotal: inScopeRows.reduce((a, e) => a + e.longDays, 0),
+        stitchedOvernight: stitchedSessions,
+      };
+    })(),
   };
 
   return {
@@ -319,6 +346,8 @@ export function buildWorkbook(result) {
   const detail = result.rows.map((r) => ({
     'Emp Code': r.empCode, Name: r.name, Country: r.country, Department: r.dept,
     'Present-days': r.present, 'OT-days': r.otDays, 'OT-hours': r.otHours, 'OT-days @ 9h': r.otDays9,
+    'Avg h/day': r.avgHours ?? '', 'Overnight days': r.overnightDays || 0,
+    'Short days (<4h)': r.shortDays || 0, 'Long days (>12h)': r.longDays || 0,
     Source: r.source, Position: r.position, 'In scope': r.inScope ? 'yes' : 'no', 'Name mismatch': r.nameMismatch ? 'yes' : '',
   }));
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(detail), 'Detail');

@@ -142,8 +142,8 @@ export function buildBrandedWorkbook(ExcelJS, data, { inScopeOnly = true, month 
   tableSheet(wb, 'Employee Detail', [
     { header: 'Emp Code', width: 14 }, { header: 'Name', width: 24 }, { header: 'Country', width: 10 }, { header: 'Department', width: 22 }, { header: 'Position', width: 20 },
     { header: 'Days', width: 8, align: 'right' }, { header: 'Absent', width: 8, align: 'right' }, { header: 'Nights', width: 8, align: 'right' },
-    { header: 'OT-days', width: 9, align: 'right' }, { header: 'OT-hours', width: 10, align: 'right' }, { header: 'In scope', width: 9 }, { header: 'Flag', width: 16 },
-  ], exportRows.map((e) => [e.empCode, e.name || '', e.country, e.dept || '', e.position || '', e.daysWorked, e.absentDays, e.overnightDays, e.otDays, e.otHours, yn(e.inScope), e.nameMismatch ? 'name mismatch' : '']));
+    { header: 'Avg h/day', width: 10, align: 'right' }, { header: 'OT-days', width: 9, align: 'right' }, { header: 'OT-hours', width: 10, align: 'right' }, { header: 'In scope', width: 9 }, { header: 'Flag', width: 16 },
+  ], exportRows.map((e) => [e.empCode, e.name || '', e.country, e.dept || '', e.position || '', e.daysWorked, e.absentDays, e.overnightDays, e.avgHours ?? '', e.otDays, e.otHours, yn(e.inScope), e.nameMismatch ? 'name mismatch' : '']));
 
   // ── 5. Daily Tracking ───────────────────────────────────────────────
   tableSheet(wb, 'Daily Tracking', [
@@ -153,7 +153,7 @@ export function buildBrandedWorkbook(ExcelJS, data, { inScopeOnly = true, month 
 
   // ── 6. Daily Log ────────────────────────────────────────────────────
   const log = [];
-  exportRows.forEach((e) => (e.days || []).forEach((day) => log.push([e.empCode, e.name || '', e.country, e.dept || '', day.date, day.weekday, day.hours, day.checkIn || '', day.checkOut || '', day.overnight ? 'yes' : ''])));
+  exportRows.forEach((e) => (e.days || []).forEach((day) => log.push([e.empCode, e.name || '', e.country, e.dept || '', day.date, day.weekday, day.hours, day.checkIn || '', day.checkOut || '', day.overnight ? (day.stitched ? 'yes · stitched' : 'yes') : ''])));
   tableSheet(wb, 'Daily Log', [
     { header: 'Emp Code', width: 14 }, { header: 'Name', width: 22 }, { header: 'Country', width: 9 }, { header: 'Department', width: 20 }, { header: 'Date', width: 12 },
     { header: 'Weekday', width: 10 }, { header: 'Hours', width: 9, align: 'right' }, { header: 'Check In', width: 10 }, { header: 'Check Out', width: 10 }, { header: 'Overnight', width: 10 },

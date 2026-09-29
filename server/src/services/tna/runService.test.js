@@ -137,3 +137,66 @@ test('duplicate / split-shift rows for one employee-day merge into a single day'
     assert.equal(r.rows[0].otDays, 1);         // 11h > 10h (UAE) counted once
   } finally { rmSync(p, { force: true }); }
 });
+
+test('overnight split rows: in 20:00 Sep 8 / out 04:00 Sep 9 is ONE working day', () => {
+  const p = tmpCsv([
+    'Employee ID,First Name,Department,Date,First Check In,Last Check Out,Total Time',
+    'N,Nidal,CALO RIYADH,2026-09-08,20:00,20:00,0:00',
+    'N,Nidal,CALO RIYADH,2026-09-09,04:00,04:00,0:00',
+  ].join('\n') + '\n');
+  try {
+    const r = runPeriod({ attendancePath: p });
+    const n = r.rows[0];
+    assert.equal(n.present, 1);                // NOT 2
+    assert.equal(n.days.length, 1);
+    assert.equal(n.days[0].date, '2026-09-08'); // attributed to the shift start
+    assert.equal(n.days[0].hours, 8);
+    assert.equal(n.days[0].overnight, true);
+    assert.equal(n.days[0].stitched, true);
+    assert.equal(n.overnightDays, 1);
+    assert.equal(n.otDays, 0);                 // 8h < 9h KSA threshold
+    assert.equal(n.avgHours, 8);
+    assert.equal(r.aggregates.workRate.stitchedOvernight, 1);
+    assert.ok(Buffer.isBuffer(buildWorkbook(r)));
+  } finally { rmSync(p, { force: true }); }
+});
+
+test('night-shift chain crossing midnight: correct hours and OT per shift, counted once', () => {
+  // 19:00 → 05:00 = 10h shifts on Sep 8 and Sep 9. The export reports the
+  // middle day as a bogus 05:00–19:00 14h span (prev out + next in).
+  const p = tmpCsv([
+    'Employee ID,First Name,Department,Date,First Check In,Last Check Out,Total Time',
+    'N,Nidal,CALO RIYADH,2026-09-08,19:00,19:00,0:00',
+    'N,Nidal,CALO RIYADH,2026-09-09,05:00,19:00,14:00',
+    'N,Nidal,CALO RIYADH,2026-09-10,05:00,05:00,0:00',
+  ].join('\n') + '\n');
+  try {
+    const r = runPeriod({ attendancePath: p });
+    const n = r.rows[0];
+    assert.equal(n.present, 2);                       // two 10h shifts, not 3 days
+    assert.deepEqual(n.days.map((d) => d.date), ['2026-09-08', '2026-09-09']);
+    assert.deepEqual(n.days.map((d) => d.hours), [10, 10]);
+    assert.equal(n.otDays, 2);                        // 10h > 9h KSA — 1h OT each
+    assert.equal(n.otHours, 2);
+    assert.equal(n.overnightDays, 2);
+  } finally { rmSync(p, { force: true }); }
+});
+
+test('work rate: avg hours and short/long day flags surface odd punches', () => {
+  const p = tmpCsv([
+    'Employee ID,First Name,Department,Date,First Check In,Last Check Out,Total Time',
+    'A,Ann,CALO UAE,2026-06-01,08:00,17:00,9:00',
+    'A,Ann,CALO UAE,2026-06-02,08:00,10:00,2:00',   // short day (<4h)
+    'A,Ann,CALO UAE,2026-06-03,06:00,19:30,13:30',  // long day (>12h)
+  ].join('\n') + '\n');
+  try {
+    const r = runPeriod({ attendancePath: p });
+    const a = r.rows[0];
+    assert.equal(a.shortDays, 1);
+    assert.equal(a.longDays, 1);
+    assert.equal(a.avgHours, +((9 + 2 + 13.5) / 3).toFixed(2));
+    assert.equal(r.aggregates.workRate.shortDaysTotal, 1);
+    assert.equal(r.aggregates.workRate.longDaysTotal, 1);
+    assert.equal(r.aggregates.workRate.avgHoursPerDay, +((9 + 2 + 13.5) / 3).toFixed(2));
+  } finally { rmSync(p, { force: true }); }
+});

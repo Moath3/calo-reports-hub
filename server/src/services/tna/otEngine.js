@@ -26,6 +26,47 @@ export function pairPunches(punches) {
   return { workedMinutes: Math.round(workedMinutes), incomplete };
 }
 
+// A single in→out session longer than this means a missed punch, not a real
+// shift (people work 8–12h; 16h is the plausibility ceiling) — flag, don't score.
+export const MAX_SESSION_MINUTES = 16 * 60;
+
+// Pair punches across the WHOLE period (not per calendar day) and bucket each
+// session's minutes under its shift-START date — so a night shift in 20:00
+// Sep 8 → out 04:00 Sep 9 is one 8h day on Sep 8, never two broken days.
+// Orphan punches mark their own calendar date incomplete.
+// Returns Map<ymd, { workedMinutes, incomplete }>.
+export function bucketPunchesByShiftDay(punches) {
+  const dateOf = (p) => String(p.punchTime).slice(0, 10);
+  const sorted = [...punches].sort(
+    (a, b) => new Date(a.punchTime) - new Date(b.punchTime)
+  );
+  const buckets = new Map();
+  const touch = (ymd) => {
+    if (!buckets.has(ymd)) buckets.set(ymd, { workedMinutes: 0, incomplete: false });
+    return buckets.get(ymd);
+  };
+  let openIn = null;
+  for (const p of sorted) {
+    if (p.state === 'in') {
+      if (openIn) touch(dateOf(openIn)).incomplete = true; // in-after-in
+      openIn = p;
+    } else if (p.state === 'out') {
+      if (!openIn) { touch(dateOf(p)).incomplete = true; continue; } // out-without-in
+      const mins = (new Date(p.punchTime) - new Date(openIn.punchTime)) / MINUTES;
+      if (mins > MAX_SESSION_MINUTES) {
+        touch(dateOf(openIn)).incomplete = true;
+        touch(dateOf(p)).incomplete = true;
+      } else {
+        touch(dateOf(openIn)).workedMinutes += mins;
+      }
+      openIn = null;
+    }
+  }
+  if (openIn) touch(dateOf(openIn)).incomplete = true; // dangling in
+  for (const b of buckets.values()) b.workedMinutes = Math.round(b.workedMinutes);
+  return buckets;
+}
+
 // Classify one employee-day. schedule: { status:'work'|'off'|'leave', scheduledMinutes? }
 // The roster is the source of truth for off-days; work on a confirmed day off is
 // flagged for review and never counted as overtime.
@@ -54,13 +95,14 @@ export function classifyDay({ workedMinutes, incomplete }, schedule, config) {
 }
 
 // Aggregate an employee's days into period totals + a per-day flag list.
-// days: [{ date, punches[], schedule }]
+// days: [{ date, punches[], schedule }] or [{ date, paired, schedule }] where
+// paired = { workedMinutes, incomplete } pre-bucketed by shift-start date.
 export function computeEmployeePeriod(days, config) {
   let regularMinutes = 0, overtimeMinutes = 0, undertimeMinutes = 0;
   let absentDays = 0, incompleteDays = 0;
   const flags = [];
   for (const day of days) {
-    const paired = pairPunches(day.punches || []);
+    const paired = day.paired || pairPunches(day.punches || []);
     const c = classifyDay(paired, day.schedule, config);
     regularMinutes += c.regular || 0;
     overtimeMinutes += c.overtime || 0;

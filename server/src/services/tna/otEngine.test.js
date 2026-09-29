@@ -109,3 +109,40 @@ test('aggregates a period into totals', () => {
   assert.equal(r.absentDays, 1);
   assert.equal(r.flags.length, 1); // the absence
 });
+
+import { bucketPunchesByShiftDay } from './otEngine.js';
+
+test('overnight raw punches: in 20:00 → out 04:00 next day is ONE day on the start date', () => {
+  const buckets = bucketPunchesByShiftDay([
+    { punchTime: '2026-09-08 20:00:00', state: 'in' },
+    { punchTime: '2026-09-09 04:00:00', state: 'out' },
+  ]);
+  assert.equal(buckets.size, 1);
+  assert.deepEqual(buckets.get('2026-09-08'), { workedMinutes: 480, incomplete: false });
+});
+
+test('overnight raw punches feed the period as one worked day, not two incomplete days', () => {
+  const buckets = bucketPunchesByShiftDay([
+    { punchTime: '2026-09-08 20:00:00', state: 'in' },
+    { punchTime: '2026-09-09 04:00:00', state: 'out' },
+  ]);
+  const days = ['2026-09-08', '2026-09-09'].map((date) => ({
+    date,
+    paired: buckets.get(date) || { workedMinutes: 0, incomplete: false },
+    schedule: work,
+  }));
+  const r = computeEmployeePeriod(days, CFG);
+  assert.equal(r.incompleteDays, 0);      // the old per-day slicing produced 2
+  assert.equal(r.regularMinutes, 480);    // 8h scored once, on Sep 8
+  assert.equal(r.absentDays, 1);          // Sep 9 has no shift of its OWN start
+});
+
+test('a session over 16h is a missed punch: both days flagged, nothing scored', () => {
+  const buckets = bucketPunchesByShiftDay([
+    { punchTime: '2026-09-08 20:00:00', state: 'in' },
+    { punchTime: '2026-09-09 20:00:00', state: 'out' },  // 24h later
+  ]);
+  assert.equal(buckets.get('2026-09-08').incomplete, true);
+  assert.equal(buckets.get('2026-09-09').incomplete, true);
+  assert.equal(buckets.get('2026-09-08').workedMinutes, 0);
+});

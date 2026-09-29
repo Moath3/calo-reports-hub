@@ -486,7 +486,7 @@ function EmployeeCalendar({ row }) {
   return (
     <div style={{ padding: '16px 20px', display: 'grid', gap: 16, background: 'var(--ink-50)' }}>
       <div>
-        <div style={legendHd}>Days worked — {present.length}{row.overnightDays ? ` · ${row.overnightDays} overnight 🌙` : ''}</div>
+        <div style={legendHd}>Days worked — {present.length}{row.overnightDays ? ` · ${row.overnightDays} overnight 🌙` : ''}{row.masterDept ? ` · Zelt: ${row.masterDept}${row.position ? ` / ${row.position}` : ''}` : ''}{row.deptMismatch ? ' · ⚠ dept mismatch' : ''}</div>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
           {present.length === 0 ? <span style={{ fontSize: 12, color: 'var(--ink-500)' }}>No attendance recorded.</span> :
             present.map((d) => (
@@ -519,6 +519,9 @@ function EmployeeCalendar({ row }) {
 
 function buildFlagLines(data) {
   const f = data.flags || {}, s = data.scope || {}, out = [];
+  if (data.zeltAuto) out.push(`No master uploaded — compared against the LIVE Zelt roster automatically (${s.matched} matched). Zelt dept/title are in the Employee Detail sheet.`);
+  if (data.zeltAutoError) out.push(`No master uploaded and the automatic Zelt comparison failed (${data.zeltAutoError}) — everyone is unscoped. Upload a master or connect Zelt.`);
+  if (f.deptMismatches) out.push(`${f.deptMismatches} employees badge in a department that disagrees with their Zelt/master department — check the Dept (Zelt) column in Employee Detail.`);
   if (f.mastersMatchedNone) out.push(`Master file(s) were uploaded but matched 0 employees — check the file or pin the right sheet. Everyone shows as unmatched and the totals are zero.`);
   if (f.unknownCountry) out.push(`${f.unknownCountry} in-scope employees have an UNKNOWN country (scored at the 9h default) — fix their Department/entity; their OT may be wrong.`);
   if (s.noPosition) out.push(`${s.noPosition} matched employees have a blank position and were NOT counted — fix the master or include them manually.`);

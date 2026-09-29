@@ -218,6 +218,44 @@ test('month-first dates (9/8/2026) are detected from the file, not misread as Au
   } finally { rmSync(p, { force: true }); }
 });
 
+test('Zelt roster dept/title surface per employee; disagreeing departments are flagged', () => {
+  const p = tmpCsv([
+    'Employee ID,First Name,Department,Date,First Check In,Last Check Out,Total Time',
+    'A,Ann,CALO UAE - Kitchen,2026-06-01,08:00,17:00,9:00',
+    'B,Bob,CALO UAE - Kitchen,2026-06-01,08:00,17:00,9:00',
+  ].join('\n') + '\n');
+  const rosterRecords = [
+    { empId: 'A', name: 'Ann', position: 'Cook I', entity: 'CALO UAE', department: 'Kitchen', source: 'Zelt' },
+    { empId: 'B', name: 'Bob', position: 'Driver', entity: 'CALO UAE', department: 'Delivery', source: 'Zelt' },
+  ];
+  try {
+    const r = runPeriod({ attendancePath: p, rosterRecords });
+    const a = r.rows.find((x) => x.empCode === 'A'), b = r.rows.find((x) => x.empCode === 'B');
+    assert.equal(a.masterDept, 'Kitchen');
+    assert.equal(a.deptMismatch, false);   // "CALO UAE - Kitchen" agrees with "Kitchen"
+    assert.equal(b.masterDept, 'Delivery');
+    assert.equal(b.deptMismatch, true);    // badges in Kitchen, Zelt says Delivery
+    assert.equal(r.flags.deptMismatches, 1);
+  } finally { rmSync(p, { force: true }); }
+});
+
+test('a single row claiming over 16h is a missing punch, not phantom OT', () => {
+  const p = tmpCsv([
+    'Employee ID,First Name,Department,Date,First Check In,Last Check Out,Total Time',
+    'A,Ann,CALO UAE,2026-06-01,05:00,23:30,18:30',
+    'A,Ann,CALO UAE,2026-06-02,08:00,17:00,9:00',
+  ].join('\n') + '\n');
+  try {
+    const r = runPeriod({ attendancePath: p });
+    const a = r.rows[0];
+    assert.equal(a.days[0].hours, null);   // 18h30 discarded for review
+    assert.equal(a.otDays, 0);
+    assert.ok(r.missingHours.some((m) => m.date === '2026-06-01'));
+    const d2 = r.byDate.find((x) => x.date === '2026-06-02');
+    assert.equal(d2.hours, 9);             // per-day total worked hours
+  } finally { rmSync(p, { force: true }); }
+});
+
 test('work rate: avg hours and short/long day flags surface odd punches', () => {
   const p = tmpCsv([
     'Employee ID,First Name,Department,Date,First Check In,Last Check Out,Total Time',

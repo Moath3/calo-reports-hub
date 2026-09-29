@@ -140,16 +140,18 @@ export function buildBrandedWorkbook(ExcelJS, data, { inScopeOnly = true, month 
 
   // ── 4. Employee Detail ──────────────────────────────────────────────
   tableSheet(wb, 'Employee Detail', [
-    { header: 'Emp Code', width: 14 }, { header: 'Name', width: 24 }, { header: 'Country', width: 10 }, { header: 'Department', width: 22 }, { header: 'Position', width: 20 },
+    { header: 'Emp Code', width: 14 }, { header: 'Name', width: 24 }, { header: 'Country', width: 10 }, { header: 'Department', width: 22 },
+    { header: 'Dept (Zelt)', width: 16 }, { header: 'Title (Zelt)', width: 20 },
     { header: 'Days', width: 8, align: 'right' }, { header: 'Absent', width: 8, align: 'right' }, { header: 'Nights', width: 8, align: 'right' },
-    { header: 'Avg h/day', width: 10, align: 'right' }, { header: 'OT-days', width: 9, align: 'right' }, { header: 'OT-hours', width: 10, align: 'right' }, { header: 'In scope', width: 9 }, { header: 'Flag', width: 16 },
-  ], exportRows.map((e) => [e.empCode, e.name || '', e.country, e.dept || '', e.position || '', e.daysWorked, e.absentDays, e.overnightDays, e.avgHours ?? '', e.otDays, e.otHours, yn(e.inScope), e.nameMismatch ? 'name mismatch' : '']));
+    { header: 'Total h', width: 9, align: 'right' }, { header: 'Avg h/day', width: 10, align: 'right' }, { header: 'OT-days', width: 9, align: 'right' }, { header: 'OT-hours', width: 10, align: 'right' }, { header: 'In scope', width: 9 }, { header: 'Flag', width: 20 },
+  ], exportRows.map((e) => [e.empCode, e.name || '', e.country, e.dept || '', e.masterDept || '', e.position || '', e.daysWorked, e.absentDays, e.overnightDays, e.totalHours ?? '', e.avgHours ?? '', e.otDays, e.otHours, yn(e.inScope),
+    [e.nameMismatch ? 'name mismatch' : '', e.deptMismatch ? 'dept mismatch' : ''].filter(Boolean).join(' · ')]));
 
   // ── 5. Daily Tracking ───────────────────────────────────────────────
   tableSheet(wb, 'Daily Tracking', [
     { header: 'Date', width: 12 }, { header: 'Weekday', width: 10 }, { header: 'Present', width: 9, align: 'right' }, { header: 'Absent', width: 9, align: 'right' },
-    { header: 'On OT', width: 9, align: 'right' }, { header: 'OT-hours', width: 10, align: 'right' }, { header: 'Work day', width: 10 },
-  ], (data.byDate || []).map((g) => [g.date, g.weekday, g.present, g.absent, g.onOt, g.otHours, yn(g.isWorkDay)]));
+    { header: 'Worked hours', width: 13, align: 'right' }, { header: 'On OT', width: 9, align: 'right' }, { header: 'OT-hours', width: 10, align: 'right' }, { header: 'Work day', width: 10 },
+  ], (data.byDate || []).map((g) => [g.date, g.weekday, g.present, g.absent, g.hours ?? '', g.onOt, g.otHours, yn(g.isWorkDay)]));
 
   // ── 6. Daily Log ────────────────────────────────────────────────────
   const log = [];

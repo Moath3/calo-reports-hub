@@ -122,11 +122,12 @@ export function loadMaster({ path, label, sheet }, attIdSet) {
   const name = pick(headers, [/full.*name/i, /name.*passport/i, /employee\s*name/i, /^name$/i, /name/i]);
   const pos = pick(headers, [/position/i, /job.*title/i, /designation/i, /\brole\b/i, /title/i]);
   const ent = pick(headers, [/legal\s*entity/i, /entity/i, /sponsor/i, /company/i, /location/i, /country/i]);
+  const dep = pick(headers, [/department/i, /^dept\.?$/i, /\bdept\b/i]);
   const idCands = headers.filter((x) => /emp.*(no|number|id)|empl\.?\s*id|national.*id|iqama|staff.*no|badge|^id$|^no\.?$/i.test(norm(x)));
   let bestId = idCands[0] || null, bestOverlap = -1;
   for (const c of idCands) { const ov = rows.reduce((n, r) => n + (attIdSet.has(normalizeId(r[c])) ? 1 : 0), 0); if (ov > bestOverlap) { bestOverlap = ov; bestId = c; } }
   const records = rows
-    .map((r) => ({ empId: String(r[bestId] ?? '').trim(), name: String(r[name] ?? '').trim(), position: pos ? String(r[pos] ?? '').trim() : '', entity: ent ? String(r[ent] ?? '').trim() : null, source: label }))
+    .map((r) => ({ empId: String(r[bestId] ?? '').trim(), name: String(r[name] ?? '').trim(), position: pos ? String(r[pos] ?? '').trim() : '', entity: ent ? String(r[ent] ?? '').trim() : null, department: dep ? String(r[dep] ?? '').trim() : '', source: label }))
     .filter((p) => p.empId || p.name);
   return { records, meta: { sheetName, rows: rows.length, idCol: norm(bestId), overlap: bestOverlap, candidates: idCands.map(norm) } };
 }

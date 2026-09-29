@@ -72,11 +72,23 @@ router.post("/run", requireAuth, (req, res, next) => {
       try { const p = JSON.parse(req.body.entities); entities = Array.isArray(p) ? p.filter(Boolean) : []; } catch { entities = []; }
     }
     let rosterRecords = [];
+    let zeltAuto = false, zeltAutoError = null;
     if (entities.length) {
       try {
         rosterRecords = await getRosterForEntities(entities);
       } catch (err) {
         throw new HttpError(502, "Couldn't load the Zelt roster — is Zelt connected? (" + err.message + ")");
+      }
+    } else if (masters.length === 0) {
+      // No master files and no entity selection: fall back to the WHOLE Zelt
+      // roster so the run still gets scoping + dept/title accuracy checks.
+      // Soft-fail (the user didn't ask for Zelt explicitly) — the run proceeds
+      // unmatched and the UI says why.
+      try {
+        rosterRecords = await getRosterForEntities('*');
+        zeltAuto = rosterRecords.length > 0;
+      } catch (err) {
+        zeltAutoError = err.message;
       }
     }
 
@@ -87,7 +99,7 @@ router.post("/run", requireAuth, (req, res, next) => {
     // The Excel/CSV are built client-side from this result so they honor the
     // user's in-scope toggle; the AI-only `aggregates` bundle isn't needed there.
     const { aggregates, ...rest } = result;
-    res.json({ ...rest, narrative, attendanceName: attendance.originalname });
+    res.json({ ...rest, narrative, attendanceName: attendance.originalname, zeltAuto, zeltAutoError });
   } catch (err) {
     if (err instanceof HttpError) throw err;        // explicit 400s pass through
     if (err.userError) throw new HttpError(400, err.message); // expected input problems

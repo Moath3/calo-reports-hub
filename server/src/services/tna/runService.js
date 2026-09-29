@@ -10,7 +10,7 @@ import { resolveCountry, canonicalEntity } from './entityAliases.js';
 import { normalizeId, normalizeName } from './identity/normalize.js';
 import { diceCoefficient } from './identity/similarity.js';
 import { loadAttendance, loadMaster, parseMinutes, toYMD, detectDateOrder, EXCLUDE_POSITION } from './fileLib.js';
-import { fixOvernightDays } from './overnight.js';
+import { fixOvernightDays, MAX_SHIFT_MINUTES } from './overnight.js';
 
 // A matched master name agrees with the attendance name if they share a token
 // (handles first-name-only attendance) or are similar overall; used only as a
@@ -128,9 +128,20 @@ export function runPeriod({ attendancePath, masters = [], rosterRecords = [], mo
       if (!rec) continue;
       const mismatch = !nameAgrees(e.name, rec.name);
       if (mismatch) nameMismatches += 1;
-      scopeBy.set(e.empCode, { position: rec.position || '', source: rec.source || '', entity: rec.entity || null, nameMismatch: mismatch });
+      scopeBy.set(e.empCode, { position: rec.position || '', source: rec.source || '', entity: rec.entity || null, dept: rec.department || '', nameMismatch: mismatch });
     }
   }
+
+  // A matched master/Zelt department agrees with the attendance department if
+  // either contains the other or they share a real word (attendance depts look
+  // like "CALO UAE - Kitchen" vs Zelt's "Kitchen").
+  const deptAgrees = (attDept, mDept) => {
+    if (!attDept || !mDept) return true;
+    const a = attDept.toLowerCase(), b = mDept.toLowerCase();
+    if (a.includes(b) || b.includes(a)) return true;
+    const toks = new Set(a.split(/[^a-z]+/).filter((t) => t.length > 2));
+    return b.split(/[^a-z]+/).some((t) => t.length > 2 && toks.has(t));
+  };
 
   // ── Pass 2: per-country OT per employee ───────────────────────────
   const outRows = [];
@@ -143,13 +154,16 @@ export function runPeriod({ attendancePath, masters = [], rosterRecords = [], mo
     const days = [...e.days.values()].sort((a, b) => (a.date < b.date ? -1 : 1)).map((d) => {
       const ci = parseMinutes(d.checkIn), co = parseMinutes(d.checkOut);
       const overnight = ci != null && co != null && co < ci; // out clock strictly before in -> crossed midnight
+      // Over 16h on one day means a missed punch, never a real shift — treat
+      // as missing hours (review) instead of scoring phantom overtime.
+      const minutes = d.minutes != null && d.minutes > MAX_SHIFT_MINUTES ? null : d.minutes;
       let ot = false, dayOtMin = 0;
-      if (d.minutes != null) {
-        const c = classifyDay({ workedMinutes: d.minutes, incomplete: false }, { status: 'work', scheduledMinutes: cfgMin }, cfg);
+      if (minutes != null) {
+        const c = classifyDay({ workedMinutes: minutes, incomplete: false }, { status: 'work', scheduledMinutes: cfgMin }, cfg);
         if ((c.overtime || 0) > 0) { otDays += 1; otMin += c.overtime; ot = true; dayOtMin = c.overtime; }
-        if (d.minutes > 540) otDays9 += 1; // illustrative flat-9h comparison
+        if (minutes > 540) otDays9 += 1; // illustrative flat-9h comparison
       }
-      return { date: d.date, weekday: weekdayOf(d.date), hours: d.minutes != null ? +(d.minutes / 60).toFixed(2) : null, checkIn: d.checkIn || '', checkOut: d.checkOut || '', overnight, stitched: !!d.stitched, ot, otMin: dayOtMin };
+      return { date: d.date, weekday: weekdayOf(d.date), hours: minutes != null ? +(minutes / 60).toFixed(2) : null, checkIn: d.checkIn || '', checkOut: d.checkOut || '', overnight, stitched: !!d.stitched, ot, otMin: dayOtMin };
     });
     // Work rate: how long this person's typical day runs (8–12h is normal for
     // production; <4h or >12h days are flagged so odd punches stand out).
@@ -167,6 +181,7 @@ export function runPeriod({ attendancePath, masters = [], rosterRecords = [], mo
       empCode: e.empCode, name: e.name, country: country || 'UNKNOWN', dept: e.dept,
       present: e.days.size, otDays, otHours: +(otMin / 60).toFixed(2), otDays9,
       source: sc.source || '', position, matched, noPosition, isExcluded, inScope, nameMismatch: !!sc.nameMismatch,
+      masterDept: sc.dept || '', deptMismatch: matched && !deptAgrees(e.dept, sc.dept),
       daysWorked: e.days.size, overnightDays: days.filter((d) => d.overnight).length,
       stitchedDays: days.filter((d) => d.stitched).length,
       totalHours, avgHours, shortDays, longDays, daysWithHours: hoursDays.length,
@@ -248,6 +263,7 @@ export function runPeriod({ attendancePath, masters = [], rosterRecords = [], mo
   };
   const flags = {
     ambiguousIds, nameMismatches,
+    deptMismatches: outRows.filter((e) => e.deptMismatch).length,
     unknownCountry: inScopeRows.filter((e) => e.country === 'UNKNOWN').length,
     // master(s) supplied but nothing joined -> everyone is unmatched and the
     // totals read as a misleading zero; surface it loudly instead.
@@ -258,13 +274,13 @@ export function runPeriod({ attendancePath, masters = [], rosterRecords = [], mo
   const workDaySet = new Set(daily.workDays);
   // Per-date roll-up: who's present/absent/on-OT each day.
   const byDateMap = new Map();
-  const touchDate = (date, weekday) => { let g = byDateMap.get(date); if (!g) { g = { date, weekday, present: 0, absent: 0, onOt: 0, otHours: 0 }; byDateMap.set(date, g); } return g; };
+  const touchDate = (date, weekday) => { let g = byDateMap.get(date); if (!g) { g = { date, weekday, present: 0, absent: 0, hours: 0, onOt: 0, otHours: 0 }; byDateMap.set(date, g); } return g; };
   for (const e of inScopeRows) {
-    for (const d of e.days) { const g = touchDate(d.date, d.weekday); g.present += 1; if (d.ot) { g.onOt += 1; g.otHours += d.otMin / 60; } }
+    for (const d of e.days) { const g = touchDate(d.date, d.weekday); g.present += 1; g.hours += d.hours || 0; if (d.ot) { g.onOt += 1; g.otHours += d.otMin / 60; } }
     for (const a of e.absences) { touchDate(a.date, a.weekday).absent += 1; }
   }
   const byDate = [...byDateMap.values()].sort((a, b) => (a.date < b.date ? -1 : 1))
-    .map((g) => ({ ...g, otHours: +g.otHours.toFixed(1), isWorkDay: workDaySet.has(g.date) }));
+    .map((g) => ({ ...g, hours: +g.hours.toFixed(1), otHours: +g.otHours.toFixed(1), isWorkDay: workDaySet.has(g.date) }));
 
   // Per-department (with country) roll-up.
   const byDeptMap = new Map();
@@ -348,10 +364,11 @@ export function buildWorkbook(result) {
 
   const detail = result.rows.map((r) => ({
     'Emp Code': r.empCode, Name: r.name, Country: r.country, Department: r.dept,
-    'Present-days': r.present, 'OT-days': r.otDays, 'OT-hours': r.otHours, 'OT-days @ 9h': r.otDays9,
+    'Dept (Zelt/master)': r.masterDept || '', 'Dept mismatch': r.deptMismatch ? 'yes' : '',
+    'Present-days': r.present, 'Total hours': r.totalHours ?? '', 'OT-days': r.otDays, 'OT-hours': r.otHours, 'OT-days @ 9h': r.otDays9,
     'Avg h/day': r.avgHours ?? '', 'Overnight days': r.overnightDays || 0,
     'Short days (<4h)': r.shortDays || 0, 'Long days (>12h)': r.longDays || 0,
-    Source: r.source, Position: r.position, 'In scope': r.inScope ? 'yes' : 'no', 'Name mismatch': r.nameMismatch ? 'yes' : '',
+    Source: r.source, 'Title (Zelt/master)': r.position, 'In scope': r.inScope ? 'yes' : 'no', 'Name mismatch': r.nameMismatch ? 'yes' : '',
   }));
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(detail), 'Detail');
 

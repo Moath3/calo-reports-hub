@@ -174,14 +174,17 @@ export async function getBalancesForEntity(entityName, asOfDate = null, departme
 }
 
 /**
- * Roster for one or more entities — id / name / position, shaped as T&A master
- * records ({ empId, name, position, entity, source }). Reuses the cached user
- * list and the same "currently employed" filter as the balances path, and
- * fetches employeeId via the per-user basics endpoint when the user list omits it.
+ * Roster for one or more entities — id / name / position / department, shaped
+ * as T&A master records ({ empId, name, position, entity, department, source }).
+ * Reuses the cached user list and the same "currently employed" filter as the
+ * balances path, and fetches employeeId via the per-user basics endpoint when
+ * the user list omits it. Pass '*' for the WHOLE roster (the automatic
+ * fallback when a T&A run has no master files and no entity selection).
  */
 export async function getRosterForEntities(entityNames) {
-  const wanted = (entityNames || []).map((e) => String(e).toLowerCase().trim()).filter(Boolean);
-  if (!wanted.length) return [];
+  const all = entityNames === '*' || (Array.isArray(entityNames) && entityNames.includes('*'));
+  const wanted = all ? [] : (entityNames || []).map((e) => String(e).toLowerCase().trim()).filter(Boolean);
+  if (!all && !wanted.length) return [];
   const users = await fetchAllUsers();
 
   const seen = new Map();
@@ -196,6 +199,7 @@ export async function getRosterForEntities(entityNames) {
     if (eventStatus === 'Terminated' || eventStatus === 'Resigned' || eventStatus === 'Offboarded') return false;
     if (u?.leaveDate || u?.lifecycle?.leaveDate) return false;
     const e = readEntity(u);
+    if (all) return true; // whole-roster mode: entity not required for ID joins
     if (!e) return false;
     const eNorm = e.toLowerCase().trim();
     return wanted.some((w) => eNorm === w || eNorm.includes(w) || w.includes(eNorm));
@@ -217,6 +221,7 @@ export async function getRosterForEntities(entityNames) {
         name: readName(u),
         position: u?.role?.jobPosition?.title || u?.jobTitle || u?.position || '',
         entity: readEntity(u),
+        department: u?.role?.department?.name || u?.department?.name || '',
         source: 'Zelt',
       };
     })

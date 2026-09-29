@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { stitchOvernightDays } from './overnight.js';
+import { stitchOvernightDays, fixOvernightDays, isMispairedFormat } from './overnight.js';
+import { parseMinutes } from './fileLib.js';
 
 const daysMap = (recs) => new Map(recs.map((r) => [r.date, { ...r }]));
 const rec = (date, checkIn, checkOut, minutes = null) => ({ date, minutes, checkIn, checkOut });
@@ -113,4 +114,81 @@ test('an afternoon-ending next day row is not consumed as a morning out', () => 
     rec('2026-09-09', '13:00', '13:00', 0),  // 13:00 is past the morning cutoff
   ]);
   assert.equal(stitchOvernightDays(days).stitched, 0);
+});
+
+// ── Mispaired (UAE) flavor ──────────────────────────────────────────────────
+
+test('mispaired export re-paired: off day cleared, every shift on its punch-in day', () => {
+  // Real UAE pattern: each row = tonight's IN + THIS morning's OUT (which
+  // belongs to yesterday's shift). Off day (Sep 10) holds only a lone out.
+  const days = daysMap([
+    rec('2026-09-08', '21:14', '8:04', 649),   // 8:04 closes a pre-window shift
+    rec('2026-09-09', '20:50', '8:07', 676),   // 8:07 actually closes Sep 8
+    rec('2026-09-10', '', '8:01', null),        // off day: lone out closes Sep 9
+    rec('2026-09-11', '22:16', '', null),       // resume: in-only
+    rec('2026-09-12', '21:08', '8:01', 653),
+    rec('2026-09-13', '', '7:54', null),
+  ]);
+  const r = fixOvernightDays(days);
+  assert.equal(r.repaired, true);
+  assert.deepEqual([...days.keys()].sort(), ['2026-09-08', '2026-09-09', '2026-09-11', '2026-09-12']);
+  assert.equal(days.get('2026-09-08').minutes, 653);   // 21:14 → 8:07 = 10h53
+  assert.equal(days.get('2026-09-09').minutes, 671);   // 20:50 → 8:01 = 11h11
+  assert.equal(days.get('2026-09-11').minutes, 585);   // 22:16 → 8:01 = 9h45
+  assert.equal(days.get('2026-09-12').minutes, 646);   // 21:08 → 7:54 = 10h46
+  assert.equal(days.get('2026-09-08').checkOut, '8:07');
+  assert.equal(days.get('2026-09-08').stitched, true);
+});
+
+test('mispaired export: inflated total replaced by the true shift length (fake OT killed)', () => {
+  const days = daysMap([
+    rec('2026-09-23', '20:49', '8:00', 671),
+    rec('2026-09-24', '19:51', '8:13', 741),   // export claims 12:21 — fake OT
+    rec('2026-09-25', '', '5:31', null),        // the REAL out: 19:51 → 5:31
+    rec('2026-09-26', '19:00', '', null),
+    rec('2026-09-27', '', '5:00', null),
+  ]);
+  fixOvernightDays(days);
+  assert.equal(days.get('2026-09-24').minutes, 580);   // 9h40, not 12h21
+});
+
+test('mispaired export: same-day day-shift rows pass through untouched', () => {
+  const days = daysMap([
+    rec('2026-09-24', '19:51', '8:13', 741),
+    rec('2026-09-25', '', '5:31', null),
+    rec('2026-09-26', '6:54', '17:26', 632),   // moved to day shift
+    rec('2026-09-27', '21:00', '', null),       // back to nights
+    rec('2026-09-28', '', '5:00', null),
+  ]);
+  const r = fixOvernightDays(days);
+  assert.equal(r.repaired, true);
+  assert.equal(days.get('2026-09-26').minutes, 632);
+  assert.equal(days.get('2026-09-26').stitched, undefined);
+  assert.equal(days.get('2026-09-27').minutes, 480);   // 21:00 → 5:00
+});
+
+test('KSA split rows are NOT mistaken for the mispaired format', () => {
+  const days = daysMap([
+    rec('2026-09-08', '20:00', '20:00', 0),
+    rec('2026-09-09', '04:00', '04:00', 0),
+  ]);
+  assert.equal(isMispairedFormat(days), false);
+  const r = fixOvernightDays(days);           // falls through to the stitcher
+  assert.ok(!r.repaired);
+  assert.equal(days.get('2026-09-08').minutes, 480);
+});
+
+test('normal day workers are NOT detected as mispaired', () => {
+  const days = daysMap([
+    rec('2026-09-08', '08:00', '17:00', 540),
+    rec('2026-09-09', '08:00', '17:00', 540),
+  ]);
+  assert.equal(isMispairedFormat(days), false);
+});
+
+test('parseMinutes reads raw Excel time fractions', () => {
+  assert.equal(parseMinutes(0.70972222222222), 1022);  // 17:02
+  assert.equal(parseMinutes('0.5'), 720);
+  assert.equal(parseMinutes('8:30'), 510);
+  assert.equal(parseMinutes(''), null);
 });

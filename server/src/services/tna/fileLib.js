@@ -10,9 +10,12 @@ export const pick = (headers, pats) => { for (const p of pats) { const h = heade
 export const wbOf = (p) => XLSX.read(readFileSync(p), { type: 'buffer' });
 
 // "9:00" / "10:56" -> minutes; blank or non-HH:MM -> null (mirrors the recon).
+// Raw Excel time cells arrive as day fractions (0.70972 = 17:02) — accept those.
 export const parseMinutes = (t) => {
   if (t == null || t === '') return null;
-  const a = String(t).trim().split(':');
+  const s = String(t).trim();
+  if (/^0?\.\d+$/.test(s)) return Math.round(parseFloat(s) * 1440);
+  const a = s.split(':');
   if (a.length < 2) return null;
   const h = parseInt(a[0], 10), m = parseInt(a[1], 10);
   return (Number.isNaN(h) || Number.isNaN(m)) ? null : h * 60 + m;
@@ -23,7 +26,7 @@ export const parseMinutes = (t) => {
 // string — so parse the common string formats too. Unparseable -> '' so callers
 // can skip/flag rather than silently mis-filter.
 const MONTHS = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
-export const toYMD = (v) => {
+export const toYMD = (v, order = 'DMY') => {
   if (typeof v === 'number') return new Date(Math.round((v - 25569) * 86400000)).toISOString().slice(0, 10);
   if (v instanceof Date) return Number.isNaN(v.getTime()) ? '' : v.toISOString().slice(0, 10);
   const s = String(v ?? '').trim();
@@ -36,6 +39,7 @@ export const toYMD = (v) => {
     let day, mon;
     if (a > 12 && b <= 12) { day = a; mon = b; }       // first must be the day
     else if (b > 12 && a <= 12) { day = b; mon = a; }  // second must be the day
+    else if (order === 'MDY') { mon = a; day = b; }     // ambiguous -> caller-detected order
     else { day = a; mon = b; }                          // ambiguous -> day-first (GCC default)
     if (mon >= 1 && mon <= 12 && day >= 1 && day <= 31) return `${y}-${String(mon).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
   }
@@ -46,6 +50,21 @@ export const toYMD = (v) => {
   }
   return '';
 };
+
+// Decide a file's numeric-date convention from its UNAMBIGUOUS rows (a day
+// over 12 can't be a month). One export never mixes conventions, so the
+// majority verdict applies to the ambiguous rows too. Default: day-first (GCC).
+export function detectDateOrder(values) {
+  let dayFirst = 0, monthFirst = 0;
+  for (const v of values) {
+    const m = String(v ?? '').trim().match(/^(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{2,4})$/);
+    if (!m) continue;
+    const a = +m[1], b = +m[2];
+    if (a > 12 && b <= 12) dayFirst += 1;
+    else if (b > 12 && a <= 12) monthFirst += 1;
+  }
+  return monthFirst > dayFirst ? 'MDY' : 'DMY';
+}
 
 // "Label=path#Sheet;path;..." -> [{label, path, sheet}]  (label and #Sheet optional)
 export function parseMastersSpec(spec) {

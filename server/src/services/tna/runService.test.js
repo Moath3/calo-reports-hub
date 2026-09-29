@@ -182,6 +182,42 @@ test('night-shift chain crossing midnight: correct hours and OT per shift, count
   } finally { rmSync(p, { force: true }); }
 });
 
+test('mispaired UAE export end-to-end: off day clean, fake OT gone, true OT kept', () => {
+  // Direction-aware export: each row = tonight's in + this morning's out
+  // (yesterday's shift). Off day Sep 10 shows only a lone morning out.
+  const p = tmpCsv([
+    'Employee ID,First Name,Department,Date,First Check In,Last Check Out,Total Time',
+    'R,Ravi,CALO UAE,2026-09-08,21:14,8:04,10:49',
+    'R,Ravi,CALO UAE,2026-09-09,20:50,8:07,11:16',
+    'R,Ravi,CALO UAE,2026-09-10,,8:01,',
+    'R,Ravi,CALO UAE,2026-09-11,22:16,,',
+    'R,Ravi,CALO UAE,2026-09-12,21:08,8:01,10:53',
+    'R,Ravi,CALO UAE,2026-09-13,,7:54,',
+  ].join('\n') + '\n');
+  try {
+    const r = runPeriod({ attendancePath: p });
+    const n = r.rows[0];
+    assert.equal(n.present, 4);                        // NOT 6 — off day + tail cleared
+    assert.deepEqual(n.days.map((d) => d.date), ['2026-09-08', '2026-09-09', '2026-09-11', '2026-09-12']);
+    assert.deepEqual(n.days.map((d) => d.hours), [10.88, 11.18, 9.75, 10.77]);
+    assert.equal(n.otDays, 3);                         // UAE >10h: three of the four
+    assert.equal(n.overnightDays, 4);
+    assert.ok(n.days.every((d) => d.overnight && d.stitched));
+  } finally { rmSync(p, { force: true }); }
+});
+
+test('month-first dates (9/8/2026) are detected from the file, not misread as Aug 9', () => {
+  const p = tmpCsv([
+    'Employee ID,First Name,Department,Date,First Check In,Last Check Out,Total Time',
+    'A,Ann,CALO UAE,9/8/2026,08:00,17:00,9:00',    // ambiguous on its own
+    'A,Ann,CALO UAE,9/27/2026,08:00,17:00,9:00',   // 27 can't be a month -> MDY file
+  ].join('\n') + '\n');
+  try {
+    const r = runPeriod({ attendancePath: p });
+    assert.deepEqual(r.rows[0].days.map((d) => d.date), ['2026-09-08', '2026-09-27']);
+  } finally { rmSync(p, { force: true }); }
+});
+
 test('work rate: avg hours and short/long day flags surface odd punches', () => {
   const p = tmpCsv([
     'Employee ID,First Name,Department,Date,First Check In,Last Check Out,Total Time',

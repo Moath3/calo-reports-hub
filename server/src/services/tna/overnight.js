@@ -22,11 +22,15 @@ export const MAX_SHIFT_MINUTES = 16 * 60;
 // (out-of-previous-shift + in-of-next), never as one real 13h+ shift.
 const SUSPICIOUS_SPAN = 13 * 60;
 
-const nextDay = (ymd) => {
+const shiftDay = (ymd, n) => {
   const d = new Date(ymd + 'T00:00:00Z');
-  d.setUTCDate(d.getUTCDate() + 1);
+  d.setUTCDate(d.getUTCDate() + n);
   return d.toISOString().slice(0, 10);
 };
+const nextDay = (ymd) => shiftDay(ymd, 1);
+const dayDiff = (a, b) =>
+  Math.round((Date.parse(b + 'T00:00:00Z') - Date.parse(a + 'T00:00:00Z')) / 86400000);
+const fmtHM = (m) => `${Math.floor(m / 60)}:${String(m % 60).padStart(2, '0')}`;
 
 // A row is a dangling evening shift-start when its latest punch is in the
 // evening and the row carries no real same-day work: a single effective punch
@@ -115,4 +119,92 @@ export function stitchOvernightDays(days) {
   // stays evening-only; drop the marker so it reads as a normal dangling row.
   for (const rec of days.values()) delete rec._eveningOnly;
   return { stitched, removed };
+}
+
+// ── Mispaired (direction-aware) exports — the UAE flavor ─────────────────────
+// Some BioTime exports pair each row as [first check-IN of day D] + [last
+// check-OUT of day D]. For night staff, this morning's out actually closes
+// YESTERDAY's shift, so "Total Time" quietly mixes two different shifts, and
+// around off days the previous shift's out shows up as a lone punch that makes
+// the off day look worked.
+//
+// The giveaway, per employee: lone MORNING-OUT rows right after a night row
+// AND lone EVENING-IN rows right before a morning-out-bearing row — both
+// appear at every off-day boundary in this flavor. The split (min/max) flavor
+// never produces them: its dangling rows keep first == last punch instead.
+export function isMispairedFormat(days) {
+  let outOnly = 0, inOnly = 0;
+  for (const rec of days.values()) {
+    const fi = parseMinutes(rec.checkIn), lo = parseMinutes(rec.checkOut);
+    if (fi == null && lo != null && lo <= MORNING_MAX) {
+      const prev = days.get(shiftDay(rec.date, -1));
+      const pfi = prev ? parseMinutes(prev.checkIn) : null;
+      if (pfi != null && pfi >= EVENING_MIN) outOnly += 1;
+    }
+    if (fi != null && fi >= EVENING_MIN && lo == null && !rec.minutes) {
+      const next = days.get(nextDay(rec.date));
+      const nlo = next ? parseMinutes(next.checkOut) : null;
+      if (nlo != null && nlo <= MORNING_MAX) inOnly += 1;
+    }
+  }
+  return outOnly >= 1 && inOnly >= 1;
+}
+
+/**
+ * Re-pair a mispaired employee in place: every check-in is closed by the NEXT
+ * morning's check-out, and the working day is the PUNCH-IN date. Lone
+ * morning-out rows (shift tails on off days) are deleted — no shift started
+ * there. Unclosed check-ins stay as incomplete days for review.
+ */
+export function repairMispairedDays(days) {
+  let stitched = 0, removed = 0;
+  let open = null; // { rec, min } — a check-in waiting for its morning out
+  const markIncomplete = (rec) => { rec.minutes = null; rec.checkOut = ''; };
+  for (const date of [...days.keys()].sort()) {
+    const rec = days.get(date);
+    const fi = parseMinutes(rec.checkIn), lo = parseMinutes(rec.checkOut);
+    if (fi != null) rec.checkIn = fmtHM(fi); // canonicalize fraction cells
+
+    const closesPrev = lo != null && (fi == null || fi > lo);
+    if (closesPrev) {
+      if (open) {
+        const span = dayDiff(open.rec.date, date) * 1440 - open.min + lo;
+        if (span >= MIN_SHIFT_MINUTES && span <= MAX_SHIFT_MINUTES) {
+          open.rec.minutes = span;
+          open.rec.checkOut = fmtHM(lo);
+          open.rec.stitched = true;
+          stitched += 1;
+        } else {
+          markIncomplete(open.rec); // implausible pairing — missed punch
+        }
+        open = null;
+      }
+      if (fi == null) {
+        // Only the morning out: the tail of a shift (or an orphan) — the day
+        // itself was not worked. Off days stay clean.
+        days.delete(date);
+        removed += 1;
+        continue;
+      }
+      markIncomplete(rec); // the out is consumed; tonight's in opens below
+    } else if (fi != null && lo != null && fi < lo) {
+      // Same-day complete row (day shift) — trust it as-is.
+      if (open) markIncomplete(open.rec);
+      open = null;
+      rec.checkOut = fmtHM(lo);
+      if (rec.minutes == null) rec.minutes = lo - fi;
+      continue;
+    }
+    if (fi != null && (lo == null || fi > lo)) {
+      if (open) markIncomplete(open.rec); // two ins in a row — first never closed
+      open = { rec, min: fi };
+    }
+  }
+  if (open) markIncomplete(open.rec); // shift may end after the export window
+  return { stitched, removed, repaired: true };
+}
+
+// Entry point for the run service: pick the right treatment per employee.
+export function fixOvernightDays(days) {
+  return isMispairedFormat(days) ? repairMispairedDays(days) : stitchOvernightDays(days);
 }

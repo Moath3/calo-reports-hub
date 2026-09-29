@@ -9,8 +9,8 @@ import { getOtConfig } from './otConfig.js';
 import { resolveCountry, canonicalEntity } from './entityAliases.js';
 import { normalizeId, normalizeName } from './identity/normalize.js';
 import { diceCoefficient } from './identity/similarity.js';
-import { loadAttendance, loadMaster, parseMinutes, toYMD, EXCLUDE_POSITION } from './fileLib.js';
-import { stitchOvernightDays } from './overnight.js';
+import { loadAttendance, loadMaster, parseMinutes, toYMD, detectDateOrder, EXCLUDE_POSITION } from './fileLib.js';
+import { fixOvernightDays } from './overnight.js';
 
 // A matched master name agrees with the attendance name if they share a token
 // (handles first-name-only attendance) or are similar overall; used only as a
@@ -54,8 +54,9 @@ export function runPeriod({ attendancePath, masters = [], rosterRecords = [], mo
     throw e;
   }
   const emp = new Map(); // id -> { empCode, name, dept, days: Map<ymd, {date, minutes, checkIn, checkOut}> }
+  const dateOrder = detectDateOrder(rows.map((r) => r[cols.date]));
   for (const r of rows) {
-    const ymd = toYMD(r[cols.date]);
+    const ymd = toYMD(r[cols.date], dateOrder);
     if (!ymd) continue;                            // unparseable date -> skip
     if (month && !ymd.startsWith(month)) continue;
     const id = String(r[cols.id] ?? '').trim();
@@ -82,12 +83,14 @@ export function runPeriod({ attendancePath, masters = [], rosterRecords = [], mo
     throw e;
   }
 
-  // ── Overnight stitching ────────────────────────────────────────────
-  // Per-calendar-day exports split a night shift (in 20:00 → out 04:00 next
-  // day) across two rows. Rejoin them into ONE working day attributed to the
-  // shift-start date, so present-days, hours and OT are counted once.
+  // ── Overnight repair ───────────────────────────────────────────────
+  // Exports mangle night shifts two ways: the split flavor breaks one shift
+  // across two calendar-day rows; the mispaired flavor (UAE) pairs tonight's
+  // in with THIS morning's out, which belongs to yesterday's shift. Both are
+  // normalized to ONE working day attributed to the PUNCH-IN date, so
+  // present-days, hours and OT are counted once — and off days stay clean.
   let stitchedSessions = 0;
-  for (const e of emp.values()) stitchedSessions += stitchOvernightDays(e.days).stitched;
+  for (const e of emp.values()) stitchedSessions += fixOvernightDays(e.days).stitched;
 
   // ── Masters (optional): collision-safe direct ID join ─────────────
   const scopeBy = new Map(); // empCode -> { position, source, entity, nameMismatch }

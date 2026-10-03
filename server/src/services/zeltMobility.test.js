@@ -171,3 +171,30 @@ test('user missing startDate never appears in the monthly headcount series', () 
   );
   assert.equal(withoutNadia.coverage.activesNoStart, 0);
 });
+
+test('coverage reports leaversTotal / activeTotal and flags no-leaver-visibility', () => {
+  // Active-only source (what a permission-scoped Zelt account returns): leavers
+  // must read 0 and leaversTotal must be 0 so the page can explain the gap.
+  const activeOnly = computeMobilityFromUsers([
+    { userId: 'a', displayName: 'A', accountStatus: 'Active', startDate: '2026-01-01',
+      userContract: { entity: { legalName: 'MP KSA' } }, role: { department: { name: 'Kitchen' } } },
+    { userId: 'b', displayName: 'B', accountStatus: 'Created', startDate: '2026-02-01',
+      userContract: { entity: { legalName: 'MP KSA' } }, role: { department: { name: 'Kitchen' } } },
+  ], NOW);
+  assert.equal(activeOnly.coverage.leaversTotal, 0);
+  assert.equal(activeOnly.coverage.activeTotal, 2);
+  assert.equal(activeOnly.totals.leavers12m, 0);
+  assert.equal(activeOnly.leavers.length, 0);
+
+  // Source that DOES include offboarded people: leaversTotal counts them.
+  const withLeavers = computeMobilityFromUsers([
+    { userId: 'a', displayName: 'A', accountStatus: 'Active', startDate: '2026-01-01',
+      userContract: { entity: { legalName: 'MP KSA' } }, role: { department: { name: 'Kitchen' } } },
+    { userId: 'c', displayName: 'C', accountStatus: 'Deactivated', startDate: '2025-09-01',
+      leaveDate: '2026-03-20', userEvent: { status: 'Resigned' },
+      userContract: { entity: { legalName: 'MP KSA' } }, role: { department: { name: 'Kitchen' } } },
+  ], NOW);
+  assert.equal(withLeavers.coverage.leaversTotal, 1);
+  assert.equal(withLeavers.totals.leavers12m, 1);
+  assert.equal(withLeavers.leavers.length, 1);
+});

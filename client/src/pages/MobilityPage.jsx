@@ -123,7 +123,10 @@ export default function MobilityPage() {
   const maxHeadcount = Math.max(...months.map(m => m.headcount || 0), 1);
   const tenure = data.tenure || [];
   const maxTenure = Math.max(...tenure.map(t => t.count || 0), 1);
-  const showCoverage = (coverage.leaversNoDate > 0) || (coverage.activesNoStart > 0);
+  // The source returned users but flagged none as leavers → the connected Zelt
+  // account almost certainly can't see offboarded employees (permissions gap).
+  const noLeaverVisibility = (coverage.totalUsers > 0) && (coverage.leaversTotal === 0);
+  const showCoverage = noLeaverVisibility || (coverage.leaversNoDate > 0) || (coverage.activesNoStart > 0);
 
   return (
     <div style={{ maxWidth: 1180, margin: '0 auto' }}>
@@ -277,7 +280,15 @@ export default function MobilityPage() {
           <div style={{ background: '#FEF5E4', border: '1px solid #F6E0B6', borderRadius: 'var(--r-lg)', padding: '12px 18px', display: 'flex', gap: 10, alignItems: 'flex-start' }}>
             <Icon name="TriangleAlert" size={16} color="#8A5A1A" style={{ marginTop: 1, flexShrink: 0 }} />
             <p style={{ margin: 0, fontSize: 12.5, color: '#7A4F12', lineHeight: 1.5 }}>
-              {coverage.leaversNoDate || 0} leavers missing leave date and {coverage.activesNoStart || 0} actives missing start date are excluded from the time series.
+              {noLeaverVisibility ? (
+                <>
+                  <b>No leavers found.</b> Zelt returned {fmtInt(coverage.totalUsers)} people but <b>none flagged as offboarded</b>, so joiners/headcount work but leavers and turnover read zero. The connected Zelt account can see active staff but not offboarded employees — grant it access to offboarded/deactivated people in Zelt (same as the salary permission), then hit Refresh.
+                </>
+              ) : (
+                <>
+                  {coverage.leaversNoDate || 0} leavers missing leave date and {coverage.activesNoStart || 0} actives missing start date are excluded from the time series. Source returned {fmtInt(coverage.totalUsers)} people ({fmtInt(coverage.leaversTotal)} offboarded).
+                </>
+              )}
             </p>
           </div>
         )}

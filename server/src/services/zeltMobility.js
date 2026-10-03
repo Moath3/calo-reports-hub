@@ -273,8 +273,15 @@ export function computeMobilityFromUsers(users, now = new Date()) {
     leavers,
     coverage: {
       totalUsers: records.length,
+      activeTotal: records.filter(r => r.isActive).length,
+      // Every record the source flags as a leaver, regardless of whether we can
+      // date the exit. If this is 0 while the company clearly has leavers, the
+      // connected Zelt account can't see offboarded employees (a permissions
+      // gap, not a data bug) — surfaced on the page so it's diagnosable.
+      leaversTotal: records.filter(r => r.isLeaver).length,
       leaversNoDate,
       activesNoStart,
+      statusCounts: records.reduce((m, r) => { const k = r.status || '(none)'; m[k] = (m[k] || 0) + 1; return m; }, {}),
     },
   };
 }

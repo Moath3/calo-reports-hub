@@ -9,8 +9,8 @@ const DEFAULT_MAX_TOKENS = 16000;     // output budget for /chat and /refine
 // Model IDs. Override via env if needed.
 // Opus is the strongest reasoning model and the right choice for the /analyze
 // path; Sonnet stays as the fast iteration model for /chat and /refine.
-const SONNET_MODEL = process.env.CLAUDE_SONNET_MODEL || "claude-sonnet-4-6";
-const OPUS_MODEL   = process.env.CLAUDE_OPUS_MODEL   || "claude-opus-4-7";
+const SONNET_MODEL = process.env.CLAUDE_SONNET_MODEL || "claude-sonnet-5-5";
+const OPUS_MODEL   = process.env.CLAUDE_OPUS_MODEL   || "claude-opus-5-5";
 
 /**
  * Smart routing: pick the right Claude model for the job.
@@ -32,8 +32,8 @@ export function getAvailableProviders() {
   const hasKey = Boolean(process.env.CLAUDE_API_KEY);
   if (!hasKey) return [];
   return [
-    { id: "claude-sonnet", name: "Claude Sonnet 4.6 — fast & smart",      model: SONNET_MODEL, available: true },
-    { id: "claude-opus",   name: "Claude Opus 4.7 — heavy-duty reasoning", model: OPUS_MODEL,   available: true },
+    { id: "claude-sonnet", name: "Claude Sonnet 5.5 — fast & smart",      model: SONNET_MODEL, available: true },
+    { id: "claude-opus",   name: "Claude Opus 5.5 — heavy-duty reasoning", model: OPUS_MODEL,   available: true },
   ];
 }
 
@@ -84,10 +84,11 @@ export function describeClaudeFailure(status, bodyText, model) {
  * report state changes — previously the two were concatenated and any
  * change to the report invalidated the whole system prompt.
  *
- * Thinking: pass `thinking: true` to enable adaptive thinking on Opus 4.7
- * (heavy /analyze path). Adaptive thinking automatically interleaves with
- * tool calls and decides depth per request. Sonnet 4.6 chat/refine paths
- * stay non-thinking for fast iteration.
+ * Thinking: pass `thinking: true` to enable adaptive thinking on the Opus
+ * model (heavy /analyze path). Adaptive thinking automatically interleaves
+ * with tool calls and decides depth per request. The Sonnet chat/refine
+ * paths omit the thinking param (on current 5.x models thinking is always
+ * on and runs adaptively at the low effort we set).
  *
  * Effort: pass `effort: "low" | "medium" | "high" | "xhigh" | "max"` to
  * control thinking depth + overall token spend. Higher = more thorough,
@@ -157,8 +158,8 @@ async function callClaude({
 
     const data = await res.json();
     // Scan content blocks for the first text block. When thinking is enabled,
-    // content[0] is a `thinking` block (empty text on Opus 4.7 by default) and
-    // the actual response is the next `text` block.
+    // content[0] is a `thinking` block (empty text by default on current
+    // models) and the actual response is the next `text` block.
     const textBlock = (data?.content || []).find(b => b?.type === "text");
     const text = textBlock?.text || "";
     const usage = data?.usage || {};

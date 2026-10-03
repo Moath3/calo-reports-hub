@@ -841,8 +841,8 @@ export default function ReportEditorPage() {
               {aiProviders.length > 0 ? aiProviders.map(p => (
                 <option key={p.id} value={p.id}>{p.name}</option>
               )) : <>
-                <option value="claude-sonnet">Claude Sonnet 4.6</option>
-                <option value="claude-opus">Claude Opus 4.7</option>
+                <option value="claude-sonnet">Claude Sonnet 5.5</option>
+                <option value="claude-opus">Claude Opus 5.5</option>
               </>}
             </select>
           </div>

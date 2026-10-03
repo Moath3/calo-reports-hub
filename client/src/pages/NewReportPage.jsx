@@ -855,8 +855,8 @@ export default function NewReportPage() {
                   <option key={p.id} value={p.id}>{p.name}</option>
                 )) : (
                   <>
-                    <option value="claude-sonnet">Claude Sonnet 4.6 — fast & smart</option>
-                    <option value="claude-opus">Claude Opus 4.7 — heavy-duty reasoning</option>
+                    <option value="claude-sonnet">Claude Sonnet 5.5 — fast & smart</option>
+                    <option value="claude-opus">Claude Opus 5.5 — heavy-duty reasoning</option>
                   </>
                 )}
               </select>

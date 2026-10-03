@@ -647,17 +647,22 @@ async function tryFetchBalances(userIds, asOfDate = null) {
       const workdayMinutes = policyData.currentAverageWorkDayLength || WORKDAY_MINUTES_FALLBACK;
       // For PAST as-of-date queries: prefer Zelt's currentBalanceInDaysAsOfDate
       // — it's the exact balance on that day. Fall back to live formula otherwise.
+      // Zelt counts PENDING requests INSIDE unitsTaken.upcoming/history, with
+      // *Pending as the awaiting-approval SUBSET (verified live: one 31-day
+      // pending request shows upcoming=14880 AND upcomingPending=14880, while
+      // totalRegularUnits counts it once). Upcoming here = APPROVED only;
+      // pending is reported separately.
+      const upcApprovedMin = Math.max(0, (policyData.unitsTaken?.upcoming || 0) - (policyData.unitsTaken?.upcomingPending || 0));
       let accrued;
       if (asOfDate && policyData.currentBalanceInDaysAsOfDate != null) {
         accrued = policyData.currentBalanceInDaysAsOfDate;
       } else {
-        // Live "Available now" = holidayAccruedToBookNow + upcoming bookings
-        // (don't subtract future bookings — locked rule from leave-recon).
-        accrued = ((policyData.holidayAccruedToBookNow || 0) + (policyData.unitsTaken?.upcoming || 0)) / workdayMinutes;
+        // Live "Available now" = holidayAccruedToBookNow + APPROVED upcoming
+        // bookings (don't subtract future bookings — locked rule from
+        // leave-recon; unapproved requests must not inflate it).
+        accrued = ((policyData.holidayAccruedToBookNow || 0) + upcApprovedMin) / workdayMinutes;
       }
-      const upcoming = (policyData.unitsTaken?.upcoming || 0) / workdayMinutes;
-      // Pending requests (awaiting approval) are split out by Zelt since the
-      // 2026 update — they are NOT inside unitsTaken.upcoming.
+      const upcoming = upcApprovedMin / workdayMinutes;
       const pending = ((policyData.unitsTaken?.historyPending || 0) + (policyData.unitsTaken?.upcomingPending || 0)) / workdayMinutes;
       // Zelt's headline number (what its own UI shows): full-cycle balance
       // today, in days. Kept verbatim so the page can be eyeballed against Zelt.

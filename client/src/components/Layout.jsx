@@ -8,15 +8,23 @@ import { Menu, X, LogOut, Settings as SettingsIcon } from 'lucide-react';
 const SIDEBAR_WIDTH = 240;
 const SIDEBAR_WIDTH_COLLAPSED = 76;
 
-const mainNav = [
-  { to: '/',              icon: 'Home',            label: 'Home' },
-  { to: '/new',           icon: 'Plus',            label: 'New Report', accent: true },
-  { to: '/reports',       icon: 'FolderOpen',      label: 'My Reports' },
-  { to: '/templates',     icon: 'LayoutTemplate',  label: 'Templates' },
-  { to: '/leave-balances', icon: 'CalendarCheck',  label: 'Leave Balances' },
-  { to: '/time-attendance', icon: 'Clock',          label: 'Time & Attendance' },
-  { to: '/data-hygiene',   icon: 'ShieldCheck',     label: 'Data Hygiene', adminOnly: true },
-  { to: '/mobility',       icon: 'TrendingUp',      label: 'Mobility', adminOnly: true },
+// Grouped nav: the people tools lead (that's what the hub is now); the report
+// builder + templates live under their own Reports group.
+const navGroups = [
+  { label: null, items: [
+    { to: '/',               icon: 'Home',           label: 'Home' },
+  ]},
+  { label: 'People tools', items: [
+    { to: '/leave-balances',  icon: 'CalendarCheck',  label: 'Leave Balances' },
+    { to: '/time-attendance', icon: 'Clock',          label: 'Time & Attendance' },
+    { to: '/data-hygiene',    icon: 'ShieldCheck',    label: 'Data Hygiene', adminOnly: true, beta: true },
+    { to: '/mobility',        icon: 'TrendingUp',     label: 'Mobility', adminOnly: true, beta: true },
+  ]},
+  { label: 'Reports', items: [
+    { to: '/new',             icon: 'Plus',           label: 'New Report', accent: true },
+    { to: '/reports',         icon: 'FolderOpen',     label: 'My Reports' },
+    { to: '/templates',       icon: 'LayoutTemplate', label: 'Templates' },
+  ]},
 ];
 
 const footerNav = [
@@ -24,7 +32,7 @@ const footerNav = [
   { to: '/settings', icon: 'Settings', label: 'Settings' },
 ];
 
-function NavItem({ to, icon, label, active, accent, collapsed, onClick }) {
+function NavItem({ to, icon, label, active, accent, beta, collapsed, onClick }) {
   const [hovered, setHovered] = useState(false);
   let bg = 'transparent', fg = 'var(--ink-700)';
   if (accent && !active) { bg = 'var(--calo-500)'; fg = '#fff'; }
@@ -48,6 +56,15 @@ function NavItem({ to, icon, label, active, accent, collapsed, onClick }) {
     >
       <Icon name={icon} size={18} />
       {!collapsed && <span>{label}</span>}
+      {!collapsed && beta && (
+        <span style={{
+          fontSize: 8.5, fontWeight: 900, letterSpacing: '.1em',
+          padding: '2px 6px', borderRadius: 999, lineHeight: 1.3,
+          background: active ? 'rgba(255,255,255,.18)' : 'var(--calo-50)',
+          color: active ? '#fff' : 'var(--calo-700)',
+          border: active ? '1px solid rgba(255,255,255,.3)' : '1px solid var(--calo-200)',
+        }}>BETA</span>
+      )}
     </NavLink>
   );
 }
@@ -131,7 +148,7 @@ export default function Layout() {
         <div style={{ padding: '22px 20px 14px 20px', display: 'flex', alignItems: 'center', gap: 10 }}>
           <CaloLogo size={22} color="var(--calo-500)" />
           {!collapsed && (
-            <span style={{ fontSize: 11, fontWeight: 900, letterSpacing: '.16em', color: 'var(--ink-500)' }}>REPORTS</span>
+            <span style={{ fontSize: 11, fontWeight: 900, letterSpacing: '.16em', color: 'var(--ink-500)' }}>PEOPLE HUB</span>
           )}
           <div style={{ flex: 1 }} />
           {!collapsed && (
@@ -147,15 +164,29 @@ export default function Layout() {
 
         {/* Main nav */}
         <nav style={{ padding: '8px 12px', display: 'flex', flexDirection: 'column', gap: 2 }}>
-          {mainNav.filter(n => !n.adminOnly || user?.role === 'admin').map(n => (
-            <NavItem
-              key={n.to}
-              {...n}
-              active={isActive(n.to)}
-              collapsed={collapsed}
-              onClick={() => setSideOpen(false)}
-            />
-          ))}
+          {navGroups.map((g, gi) => {
+            const items = g.items.filter(n => !n.adminOnly || user?.role === 'admin');
+            if (!items.length) return null;
+            return (
+              <div key={g.label || gi} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                {g.label && !collapsed && (
+                  <div style={{ fontSize: 10, fontWeight: 900, letterSpacing: '.14em', textTransform: 'uppercase', color: 'var(--ink-400)', padding: '12px 12px 4px' }}>
+                    {g.label}
+                  </div>
+                )}
+                {g.label && collapsed && <div style={{ height: 1, background: 'var(--ink-100)', margin: '10px 8px' }} />}
+                {items.map(n => (
+                  <NavItem
+                    key={n.to}
+                    {...n}
+                    active={isActive(n.to)}
+                    collapsed={collapsed}
+                    onClick={() => setSideOpen(false)}
+                  />
+                ))}
+              </div>
+            );
+          })}
         </nav>
 
         <div style={{ flex: 1 }} />
@@ -285,7 +316,7 @@ export default function Layout() {
             onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
           >
             <CaloLogo size={18} color="var(--calo-500)" />
-            <span style={{ fontSize: 11, fontWeight: 900, letterSpacing: '.16em', color: 'var(--ink-500)' }}>REPORTS</span>
+            <span style={{ fontSize: 11, fontWeight: 900, letterSpacing: '.16em', color: 'var(--ink-500)' }}>PEOPLE HUB</span>
           </button>
         </header>
 

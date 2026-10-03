@@ -386,6 +386,9 @@ async function fetchBalancesForEntityFresh(entityName, asOfDate = null, departme
     } else {
       confidence = 'low';
     }
+    // Allowance from the user object is often blank — the balance endpoint's
+    // cycle total (public holidays stripped) is the real annual allowance.
+    const effAllowance = allowance ?? (liveBalance && liveBalance.total > 0 ? round1(liveBalance.total) : null);
 
     return {
       employeeId: readEmployeeId(u) ?? basicsByUser.get(userId) ?? null,
@@ -396,10 +399,12 @@ async function fetchBalancesForEntityFresh(entityName, asOfDate = null, departme
       jobTitle: u?.role?.jobPosition?.title || u?.jobTitle || u?.position || null,
       startDate: u.startDate || u?.lifecycle?.startDate || null,
       policy: liveBalance?.policyName || null,
-      allowance,
+      allowance: effAllowance,
       carryOver,
       history: round1(history),
       upcoming: round1(upcoming),
+      pending: liveBalance ? round1(liveBalance.pending) : null,
+      zeltBalance: liveBalance ? round1(liveBalance.zelt_balance) : null,
       availableNow,
       confidence,
     };
@@ -564,7 +569,12 @@ async function fetchAllUsers() {
 // /apiv2/absences/company/balance. Returns map: userId → balance summary.
 const ANNUAL_POLICY_PROBE_LIMIT = 30;
 const WORKDAY_MINUTES_FALLBACK = 480; // 8h × 60m — Zelt's default workday
+// Zelt adds annual policies per legal entity over time (158 policies as of
+// Oct 2026) — a forever-cached ID list silently skips employees on any policy
+// created after the process started, so re-discover on a TTL.
+const POLICY_IDS_TTL_MS = 6 * 60 * 60 * 1000;
 let resolvedAnnualPolicyIds = null;
+let resolvedAnnualPolicyAt = 0;
 
 async function tryFetchBalances(userIds, asOfDate = null) {
   if (!userIds.length) return new Map();
@@ -578,8 +588,10 @@ async function tryFetchBalances(userIds, asOfDate = null) {
     return balances;
   }
 
-  // Step 1: discover annual-vacation policy IDs once
-  if (resolvedAnnualPolicyIds == null) {
+  // Step 1: discover annual-vacation policy IDs (re-discovered on a TTL; a
+  // failure is NOT cached — the next request retries instead of staying blank
+  // until a restart).
+  if (resolvedAnnualPolicyIds == null || Date.now() - resolvedAnnualPolicyAt > POLICY_IDS_TTL_MS) {
     try {
       const policies = await botGet('/apiv2/absence-policies/extended');
       const arr = Array.isArray(policies) ? policies : (policies?.items || []);
@@ -592,10 +604,11 @@ async function tryFetchBalances(userIds, asOfDate = null) {
         })
         .map(p => p.id)
         .slice(0, ANNUAL_POLICY_PROBE_LIMIT);
+      resolvedAnnualPolicyAt = Date.now();
       console.log(`[zelt-bot] found ${resolvedAnnualPolicyIds.length} paid annual-vacation policies`);
     } catch (err) {
-      console.warn(`[zelt-bot] /absence-policies/extended failed (${err.status || ''} ${err.message}) — Available Now unavailable`);
-      resolvedAnnualPolicyIds = [];
+      console.warn(`[zelt-bot] /absence-policies/extended failed (${err.status || ''} ${err.message}) — Available Now unavailable this run`);
+      if (resolvedAnnualPolicyIds == null) return balances; // nothing cached — retry next request
     }
   }
   if (!resolvedAnnualPolicyIds.length) return balances;
@@ -643,11 +656,25 @@ async function tryFetchBalances(userIds, asOfDate = null) {
         accrued = ((policyData.holidayAccruedToBookNow || 0) + (policyData.unitsTaken?.upcoming || 0)) / workdayMinutes;
       }
       const upcoming = (policyData.unitsTaken?.upcoming || 0) / workdayMinutes;
-      const total = (policyData.totalAllowanceForCycle || 0) / workdayMinutes;
-      const prev = balances.get(uid) || { available_now: 0, upcoming_booked: 0, total: 0, policyName: null };
+      // Pending requests (awaiting approval) are split out by Zelt since the
+      // 2026 update — they are NOT inside unitsTaken.upcoming.
+      const pending = ((policyData.unitsTaken?.historyPending || 0) + (policyData.unitsTaken?.upcomingPending || 0)) / workdayMinutes;
+      // Zelt's headline number (what its own UI shows): full-cycle balance
+      // today, in days. Kept verbatim so the page can be eyeballed against Zelt.
+      const zeltBal = policyData.currentBalanceInDays != null
+        ? policyData.currentBalanceInDays
+        : (policyData.currentBalance || 0) / workdayMinutes;
+      // totalAllowanceForCycle now has public holidays baked in (e.g. 36d shown
+      // for a 21d allowance) — strip them to get the real annual allowance.
+      const total = ((policyData.totalAllowanceForCycle || 0)
+        - (policyData.unitsTaken?.totalPublicHolidays || 0)
+        - (policyData.unitsLeft?.unusedPublicHolidays || 0)) / workdayMinutes;
+      const prev = balances.get(uid) || { available_now: 0, upcoming_booked: 0, pending: 0, zelt_balance: 0, total: 0, policyName: null };
       balances.set(uid, {
         available_now: prev.available_now + accrued,
         upcoming_booked: prev.upcoming_booked + upcoming,
+        pending: prev.pending + pending,
+        zelt_balance: prev.zelt_balance + zeltBal,
         total: prev.total + total,
         policyName: prev.policyName || policyData.policyName || null,
       });

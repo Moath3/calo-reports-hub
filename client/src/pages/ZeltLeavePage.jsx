@@ -406,9 +406,10 @@ export default function ZeltLeavePage() {
       {data && data.count > 0 && data.rows.every(r => r.availableNow == null) && (
         <div style={{ ...panel, background: '#FFF8E5', borderColor: '#F1D785', padding: '14px 18px' }}>
           <p style={{ margin: 0, fontSize: 13, color: '#6B5008', lineHeight: 1.5 }}>
-            <b>Available Now is unavailable.</b> Zelt's partner API doesn't expose user allowance on
-            this scope. Showing <b>leave taken year-to-date</b> and <b>upcoming bookings</b> instead.
-            Contact Zelt CSM to enable the absence-balance scope to compute Available Now.
+            <b>Available Now is unavailable.</b> The Zelt balance endpoint returned nothing for this
+            run — usually the bot session needs reconnecting (Admin → Test connections), or Zelt's
+            policy list changed and the next refresh will pick it up. Showing <b>leave taken
+            year-to-date</b> and <b>upcoming bookings</b> computed from absences instead.
           </p>
         </div>
       )}
@@ -473,12 +474,14 @@ export default function ZeltLeavePage() {
                   {data.multi && <Th onClick={() => handleSort('entity')} active={sort.key === 'entity'} dir={sort.dir}>Entity</Th>}
                   <Th onClick={() => handleSort('policy')} active={sort.key === 'policy'} dir={sort.dir}>Policy</Th>
                   <Th onClick={() => handleSort('upcoming')} active={sort.key === 'upcoming'} dir={sort.dir} align="right">Upcoming</Th>
+                  <Th onClick={() => handleSort('pending')} active={sort.key === 'pending'} dir={sort.dir} align="right">Pending</Th>
                   <Th onClick={() => handleSort('availableNow')} active={sort.key === 'availableNow'} dir={sort.dir} align="right">Available Now</Th>
+                  <Th onClick={() => handleSort('zeltBalance')} active={sort.key === 'zeltBalance'} dir={sort.dir} align="right">Zelt Balance</Th>
                 </tr>
               </thead>
               <tbody>
                 {filtered.length === 0 ? (
-                  <tr><td colSpan={8} style={{ padding: '24px 16px', textAlign: 'center', color: 'var(--ink-500)' }}>
+                  <tr><td colSpan={data.multi ? 11 : 10} style={{ padding: '24px 16px', textAlign: 'center', color: 'var(--ink-500)' }}>
                     No employees match the filter.
                   </td></tr>
                 ) : filtered.map((r, i) => (
@@ -492,10 +495,12 @@ export default function ZeltLeavePage() {
                     {data.multi && <Td>{r.entity || '—'}</Td>}
                     <Td>{r.policy || '—'}</Td>
                     <Td align="right">{r.upcoming > 0 ? `${r.upcoming.toFixed(1)}d` : '0'}</Td>
+                    <Td align="right">{r.pending > 0 ? <span style={{ color: '#B45309', fontWeight: 600 }}>{r.pending.toFixed(1)}d</span> : (r.pending === 0 ? '0' : '—')}</Td>
                     <Td align="right" bold>
                       {r.availableNow != null ? `${r.availableNow.toFixed(1)}d` :
                         <span style={{ color: 'var(--ink-500)', fontWeight: 400 }}>—</span>}
                     </Td>
+                    <Td align="right">{r.zeltBalance != null ? `${r.zeltBalance.toFixed(1)}d` : '—'}</Td>
                   </tr>
                 ))}
               </tbody>
@@ -721,8 +726,8 @@ function formatErr(e, fallback) {
 function buildLeaveCsv(data) {
   const rows = data?.rows || [];
   const cols = data?.multi
-    ? ['employeeId', 'name', 'site', 'department', 'jobTitle', 'entity', 'policy', 'startDate', 'upcoming', 'availableNow']
-    : ['employeeId', 'name', 'site', 'department', 'jobTitle', 'policy', 'startDate', 'upcoming', 'availableNow'];
+    ? ['employeeId', 'name', 'site', 'department', 'jobTitle', 'entity', 'policy', 'startDate', 'allowance', 'upcoming', 'pending', 'availableNow', 'zeltBalance']
+    : ['employeeId', 'name', 'site', 'department', 'jobTitle', 'policy', 'startDate', 'allowance', 'upcoming', 'pending', 'availableNow', 'zeltBalance'];
   const header = cols.join(',');
   const body = rows.map(r => cols.map(c => csvCell(r[c])).join(',')).join('\n');
   return `${header}\n${body}\n`;

@@ -35,6 +35,7 @@ import { listEntities, listDepartments, entitiesForDepartments, getBalancesForEn
 import { runAudit } from '../services/zeltAudit.js';
 import { getMobility } from '../services/zeltMobility.js';
 import { getWatchState, runSnapshotAndDiff, sendWeeklyDigestIfDue } from '../services/zeltWatcher.js';
+import { getDimensions, runReport, warmIndex, getIndexStatus, clearIndex, SENSITIVE_FIELDS } from '../services/zeltReport.js';
 
 const IS_PROD = process.env.NODE_ENV === 'production';
 
@@ -278,6 +279,7 @@ router.get('/balances', dataLimiter, requireAuth, asyncHandler(async (req, res) 
 // Admin-only: clear server-side caches (entities + balances)
 router.post('/cache/clear', oauthLimiter, requireAuth, requireAdmin, (req, res) => {
   clearCaches();
+  clearIndex();
   res.json({ ok: true });
 });
 
@@ -314,6 +316,46 @@ router.post('/watch/digest', dataLimiter, requireAuth, requireAdmin, asyncHandle
   const result = await sendWeeklyDigestIfDue({ force: true });
   logZeltAudit(req.user.id, 'zelt.watch.digest', { sent: result.sent, skipped: result.skipped || null });
   res.json(result);
+}));
+
+// ---- Report builder (generate a filtered people report from live Zelt) ----
+
+// Filter options for the picker. Builds/uses the cached people index; when the
+// index is still warming it returns ready:false + progress so the page waits.
+router.get('/report/dimensions', dataLimiter, requireAuth, asyncHandler(async (req, res) => {
+  res.json(getDimensions());
+}));
+
+// Kick (or force) a rebuild of the people index; returns build status.
+router.post('/report/warm', dataLimiter, requireAuth, asyncHandler(async (req, res) => {
+  res.json(warmIndex(req.body?.force === true));
+}));
+
+router.get('/report/status', statusLimiter, requireAuth, (req, res) => {
+  res.json(getIndexStatus());
+});
+
+// Run a report. Sensitive fields (salary/age/gender) require admin; the service
+// strips them for non-admins and flags sensitiveDenied. Salary never reaches
+// any AI payload — only PII-free aggregates do.
+router.post('/report/run', dataLimiter, requireAuth, asyncHandler(async (req, res) => {
+  const { filters = {}, fields = [] } = req.body || {};
+  if (!Array.isArray(fields)) throw badRequest('fields must be an array');
+  const isAdmin = req.user?.role === 'admin';
+  try {
+    const result = await runReport({ filters, fields, isAdmin });
+    logZeltAudit(req.user.id, 'zelt.report.run', {
+      count: result.count,
+      fields: result.fields,
+      withSalary: result.fields.some(f => SENSITIVE_FIELDS.has(f)),
+    });
+    res.json(result);
+  } catch (err) {
+    if (err.code === 'INDEX_BUILDING') {
+      return res.status(202).json({ building: true, status: err.status, message: err.message });
+    }
+    return zeltUpstream('Report failed')(err);
+  }
 }));
 
 // Admin-only: returns the shape of one user record from Zelt for debugging

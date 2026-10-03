@@ -22,6 +22,7 @@ const navGroups = [
   ]},
   { label: 'Reports', items: [
     { to: '/new',             icon: 'Plus',           label: 'New Report', accent: true },
+    { to: '/zelt-report',     icon: 'Table',          label: 'Report from Zelt', beta: true },
     { to: '/reports',         icon: 'FolderOpen',     label: 'My Reports' },
     { to: '/templates',       icon: 'LayoutTemplate', label: 'Templates' },
   ]},

@@ -249,6 +249,7 @@ export default function DashboardPage() {
             </div>
           </div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <Btn variant="secondary" icon="Table" onClick={() => navigate('/zelt-report')}>From Zelt</Btn>
             <Btn variant="secondary" icon="LayoutTemplate" onClick={() => navigate('/templates')}>Templates</Btn>
             <Btn variant="secondary" icon="FolderOpen" onClick={() => navigate('/reports')}>My reports</Btn>
             <Btn variant="primary" icon="Plus" onClick={() => navigate('/new')}>New report</Btn>

@@ -354,6 +354,16 @@ class ApiClient {
   async zeltWatchDigest() {
     return this.request('/zelt/watch/digest', { method: 'POST' });
   }
+  // Zelt report builder
+  async zeltReportDimensions() {
+    return this.request('/zelt/report/dimensions');
+  }
+  async zeltReportWarm(force = false) {
+    return this.request('/zelt/report/warm', { method: 'POST', body: JSON.stringify({ force }) });
+  }
+  async zeltReportRun(filters, fields) {
+    return this.request('/zelt/report/run', { method: 'POST', body: JSON.stringify({ filters, fields }) });
+  }
 
   // Logout
   logout() {

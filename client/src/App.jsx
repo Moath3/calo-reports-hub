@@ -14,6 +14,7 @@ import ZeltLeavePage from "./pages/ZeltLeavePage";
 import ZeltAuditPage from "./pages/ZeltAuditPage";
 import TimeAttendancePage from "./pages/TimeAttendancePage";
 import MobilityPage from "./pages/MobilityPage";
+import ZeltReportPage from "./pages/ZeltReportPage";
 
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth();
@@ -63,6 +64,7 @@ export default function App() {
         <Route path="reports/:id" element={<ReportEditorPage />} />
         <Route path="reports/:id/preview" element={<ReportPreviewPage />} />
         <Route path="templates" element={<TemplatesPage />} />
+        <Route path="zelt-report" element={<ZeltReportPage />} />
         <Route path="settings" element={<SettingsPage />} />
         <Route path="guide" element={<GuidePage />} />
         <Route path="leave-balances" element={<ZeltLeavePage />} />

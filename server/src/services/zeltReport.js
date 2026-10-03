@@ -21,6 +21,7 @@ import { fetchAllUsersForAudit } from './zeltCompute.js';
 const INDEX_TTL_MS = 6 * 60 * 60 * 1000;   // 6h — role/BL/org barely change intraday
 const ROLE_CONCURRENCY = 5;                 // stay well under Zelt's Akamai WAF threshold
 const SENSITIVE_CONCURRENCY = 4;
+const PAGE_SIZE = 100;
 
 // Currently-employed, INCLUSIVE definition (matches the hygiene audit): keep
 // Created/Invited because 3rd-party production workers never activate their
@@ -162,6 +163,7 @@ export function warmIndex(force = false) {
 export function clearIndex() {
   index.rows = null; index.builtAt = 0; index.progress = { done: 0, total: 0 }; index.error = null;
   formMapCache = { value: null, expiresAt: 0 };
+  leaveCache = { value: null, expiresAt: 0 };
 }
 
 // ---- Dimensions (filter options) ------------------------------------------
@@ -218,8 +220,54 @@ function ageFromDob(dob) {
 async function fetchPersonal(userId) {
   try {
     const p = await botGet(`/apiv2/users/${userId}/personal`);
-    return { age: ageFromDob(p?.dob), gender: p?.gender || null };
+    return { age: ageFromDob(p?.dob), gender: p?.gender || null, nationality: p?.nationality || null };
   } catch { return {}; }
+}
+
+// ---- Leave balances (annual + compensatory) -------------------------------
+// Company-wide per-policy balance (same endpoint the leave page uses), summed
+// per user. Each user sits on one annual + one comp policy, so summing across
+// the policy set gives their balance. Cached 10m, fetched only when requested.
+let leaveCache = { value: null, expiresAt: 0 };
+const LEAVE_TTL_MS = 10 * 60 * 1000;
+async function fetchLeaveBalanceMap() {
+  if (leaveCache.value && leaveCache.expiresAt > Date.now()) return leaveCache.value;
+  const pols = await botGet('/apiv2/absence-policies/extended');
+  const arr = Array.isArray(pols) ? pols : (pols?.items || []);
+  const nameOf = (p) => p.name || p.policyName || '';
+  const annualIds = arr.filter(p => /annual|vacation/i.test(nameOf(p)) && !/unpaid/i.test(nameOf(p))).map(p => p.id).slice(0, 40);
+  const compIds = arr.filter(p => /compensator/i.test(nameOf(p))).map(p => p.id).slice(0, 40);
+  const map = new Map(); // userId -> { annualBalance, compensatoryBalance }
+  const pull = async (ids, key) => {
+    for (const pid of ids) {
+      let page = 1;
+      while (true) {
+        let data;
+        try { data = await botGet('/apiv2/absences/company/balance', { policyId: pid, Calendar: 'current', page, pageSize: PAGE_SIZE }); }
+        catch { break; }
+        for (const item of (data.items || [])) {
+          const d = item[pid];
+          if (!d) continue;
+          const days = d.currentBalanceInDays != null
+            ? d.currentBalanceInDays
+            : (d.currentBalance || 0) / (d.currentAverageWorkDayLength || 480);
+          const cur = map.get(item.userId) || {};
+          cur[key] = (cur[key] || 0) + (Number(days) || 0);
+          map.set(item.userId, cur);
+        }
+        if (page >= (data.totalPages || 1)) break;
+        page++;
+      }
+    }
+  };
+  await pull(annualIds, 'annualBalance');
+  await pull(compIds, 'compensatoryBalance');
+  for (const v of map.values()) {
+    if (v.annualBalance != null) v.annualBalance = Math.round(v.annualBalance * 10) / 10;
+    if (v.compensatoryBalance != null) v.compensatoryBalance = Math.round(v.compensatoryBalance * 10) / 10;
+  }
+  leaveCache = { value: map, expiresAt: Date.now() + LEAVE_TTL_MS };
+  return map;
 }
 
 async function enrichSensitive(rows, needSalary, needPersonal) {
@@ -238,12 +286,16 @@ async function enrichSensitive(rows, needSalary, needPersonal) {
 }
 
 // ---- Field catalogue ------------------------------------------------------
-export const SENSITIVE_FIELDS = new Set(['salaryMonthly', 'salaryAnnual', 'basicSalary', 'currency', 'age', 'gender']);
+// Admin-only, never sent to any AI payload. (Leave balances are NOT here —
+// they're shown to all approved users, same as the leave page.)
+export const SENSITIVE_FIELDS = new Set(['salaryMonthly', 'salaryAnnual', 'basicSalary', 'currency', 'age', 'gender', 'nationality']);
+const BALANCE_FIELDS = ['annualBalance', 'compensatoryBalance'];
 export const ALL_FIELDS = [
   'employeeId', 'name', 'department', 'jobTitle', 'site', 'entity',          // core identity
-  'businessLine', 'org', 'jobFamily', 'workCountry', 'teamBranch',           // canon structure
+  'businessLine', 'org', 'jobFamily', 'workCountry', 'teamBranch', 'locationBranch', 'cityWork', // canon structure
   'startDate', 'accountStatus', 'lengthOfServiceYears',                      // dates & status
-  'salaryMonthly', 'salaryAnnual', 'basicSalary', 'currency', 'age', 'gender', // sensitive
+  'annualBalance', 'compensatoryBalance',                                    // leave balances (all users)
+  'salaryMonthly', 'salaryAnnual', 'basicSalary', 'currency', 'age', 'gender', 'nationality', // sensitive (admin)
 ];
 
 const normTag = (s) => String(s ?? '').toLowerCase().replace(/&/g, ' and ').replace(/[^a-z0-9]+/g, ' ').trim();
@@ -297,8 +349,20 @@ export async function runReport({ filters = {}, fields = [], isAdmin = false }) 
   rows = rows.map(r => ({ ...r, lengthOfServiceYears: lengthOfServiceYears(r.startDate) }));
 
   const needSalary = outFields.some(x => ['salaryMonthly', 'salaryAnnual', 'basicSalary', 'currency'].includes(x));
-  const needPersonal = outFields.some(x => ['age', 'gender'].includes(x));
+  const needPersonal = outFields.some(x => ['age', 'gender', 'nationality'].includes(x));
   if ((needSalary || needPersonal) && isAdmin) await enrichSensitive(rows, needSalary, needPersonal);
+
+  // Leave balances (all users) — join from the company-wide balance map.
+  if (outFields.some(x => BALANCE_FIELDS.includes(x))) {
+    try {
+      const lm = await fetchLeaveBalanceMap();
+      for (const r of rows) {
+        const b = lm.get(r.userId) || {};
+        r.annualBalance = b.annualBalance ?? null;
+        r.compensatoryBalance = b.compensatoryBalance ?? null;
+      }
+    } catch { /* leave the columns null if the balance endpoint is unavailable */ }
+  }
 
   // Project to requested fields only (+ always carry name/employeeId for the table).
   const projected = rows.map(r => {
@@ -352,6 +416,23 @@ function buildAggregates(rows, outFields, isAdmin) {
       avgMonthly: s.count ? Math.round(s.totalMonthly / s.count) : 0,
     }));
     agg.salaryCoverage = `${withSalary.length}/${rows.length}`;
+  }
+  // Leave-balance summary (not PII — averages/totals across the group).
+  if (outFields.includes('annualBalance')) {
+    const vals = rows.map(r => r.annualBalance).filter(v => v != null);
+    if (vals.length) agg.annualBalance = {
+      employees: vals.length,
+      avgDays: +(vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(1),
+      totalDays: +vals.reduce((a, b) => a + b, 0).toFixed(1),
+    };
+  }
+  if (outFields.includes('compensatoryBalance')) {
+    const vals = rows.map(r => r.compensatoryBalance).filter(v => v != null);
+    if (vals.length) agg.compensatoryBalance = {
+      employees: vals.length,
+      avgDays: +(vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(1),
+      totalDays: +vals.reduce((a, b) => a + b, 0).toFixed(1),
+    };
   }
   return agg;
 }

@@ -5,7 +5,8 @@ import api from '../utils/api';
 import toast from 'react-hot-toast';
 import { Card, Pill, Eyebrow, Btn, Icon, PageHeader } from '../components/ui';
 
-// Field catalogue — mirrors server ALL_FIELDS. `sensitive` = admin-only, never to AI.
+// Field catalogue — mirrors server ALL_FIELDS.
+//   sensitive = admin-only, never sent to AI.  hidden = defined but not shown yet.
 const FIELD_GROUPS = [
   { group: 'Core identity', fields: [
     ['employeeId', 'Emp ID'], ['name', 'Name'], ['department', 'Department'],
@@ -14,17 +15,24 @@ const FIELD_GROUPS = [
   { group: 'Canon structure', fields: [
     ['businessLine', 'Business Line'], ['org', 'Organization'], ['jobFamily', 'Job Family'],
     ['workCountry', 'Work Country'], ['teamBranch', 'Team / Branch'],
+    ['locationBranch', 'Location / Branch'], ['cityWork', 'City'],
   ]},
   { group: 'Dates & status', fields: [
     ['startDate', 'Start Date'], ['lengthOfServiceYears', 'Years of Service'], ['accountStatus', 'Status'],
   ]},
-  { group: 'Salary, age & gender', sensitive: true, fields: [
+  { group: 'Leave balances', fields: [
+    ['annualBalance', 'Annual Leave (days)'], ['compensatoryBalance', 'Compensatory (days)'],
+  ]},
+  { group: 'Personal', sensitive: true, fields: [
+    ['age', 'Age'], ['gender', 'Gender'], ['nationality', 'Nationality'],
+  ]},
+  { group: 'Salary', sensitive: true, hidden: true, fields: [
     ['salaryMonthly', 'Monthly Salary'], ['basicSalary', 'Basic Salary'], ['currency', 'Currency'],
-    ['age', 'Age'], ['gender', 'Gender'],
   ]},
 ];
 const LABELS = Object.fromEntries(FIELD_GROUPS.flatMap(g => g.fields));
-const SENSITIVE = new Set(['salaryMonthly', 'basicSalary', 'currency', 'age', 'gender']);
+const SENSITIVE = new Set(['salaryMonthly', 'basicSalary', 'currency', 'age', 'gender', 'nationality']);
+const NUMERIC = new Set(['salaryMonthly', 'basicSalary', 'age', 'lengthOfServiceYears', 'annualBalance', 'compensatoryBalance']);
 
 const FILTERS = [
   ['businessLines', 'Business Line', 'businessLines'],
@@ -39,6 +47,7 @@ const FILTERS = [
 function fmtVal(key, v) {
   if (v == null || v === '') return '—';
   if (key === 'salaryMonthly' || key === 'basicSalary') return Number(v).toLocaleString();
+  if (key === 'annualBalance' || key === 'compensatoryBalance') return `${v}d`;
   if (key === 'lengthOfServiceYears') return `${v}y`;
   if (key === 'startDate') return String(v).slice(0, 10);
   return String(v);
@@ -129,6 +138,8 @@ export default function ZeltReportPage() {
     if (dep.length) bullets.push(`Top department: ${dep[0].key} (${dep[0].count}). ${dep.length} departments represented.`);
     if (ent.length > 1) bullets.push(`Spread across ${ent.length} entities; ${ent[0].key} is the biggest (${ent[0].count}).`);
     if (bl.length && pct(bl[0].count) >= 60) bullets.push(`Concentration: ${pct(bl[0].count)}% sit in a single business line.`);
+    if (agg.annualBalance) bullets.push(`Average annual-leave balance: ${agg.annualBalance.avgDays} days (${agg.annualBalance.totalDays} days of liability across ${agg.annualBalance.employees} people).`);
+    if (agg.compensatoryBalance) bullets.push(`Compensatory days outstanding: ${agg.compensatoryBalance.totalDays} across ${agg.compensatoryBalance.employees} people.`);
 
     const kpiStrip = [
       { label: 'Headcount', value: String(total) },
@@ -157,6 +168,12 @@ export default function ZeltReportPage() {
     if (dep.length) sections.push({ title: 'By department', icon: 'Building', blocks: [breakdownTable(dep.slice(0, 15))] });
     if (ent.length > 1) sections.push({ title: 'By entity', icon: 'MapPin', blocks: [breakdownTable(ent)] });
     if (org.length > 1) sections.push({ title: 'By organization', icon: 'Network', blocks: [breakdownTable(org)] });
+    if (agg.annualBalance || agg.compensatoryBalance) {
+      const items = [];
+      if (agg.annualBalance) items.push({ label: 'Avg annual leave', value: `${agg.annualBalance.avgDays}d` }, { label: 'Total annual liability', value: `${agg.annualBalance.totalDays}d` });
+      if (agg.compensatoryBalance) items.push({ label: 'Compensatory outstanding', value: `${agg.compensatoryBalance.totalDays}d` });
+      sections.push({ title: 'Leave balances', icon: 'CalendarCheck', blocks: [{ type: 'metrics', items }] });
+    }
 
     try {
       const res = await api.createReport({
@@ -237,9 +254,8 @@ export default function ZeltReportPage() {
             <Eyebrow>Columns</Eyebrow>
             <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 12 }}>
               {FIELD_GROUPS.map(g => {
-                // Salary/age/gender are hidden for now — the Zelt bot account
-                // lacks payroll permission, so those columns come back empty.
-                if (g.sensitive) return null;
+                if (g.hidden) return null;            // Salary hidden until the bot gets payroll access
+                if (g.sensitive && !isAdmin) return null;
                 return (
                   <div key={g.group}>
                     <div style={{ fontSize: 11, fontWeight: 900, letterSpacing: '.08em', textTransform: 'uppercase', color: g.sensitive ? '#B45309' : 'var(--ink-400)', marginBottom: 6 }}>
@@ -297,6 +313,16 @@ export default function ZeltReportPage() {
                       {b.key}: <b>{b.count}</b>
                     </span>
                   ))}
+                  {result.aggregates?.annualBalance && (
+                    <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--calo-700)', background: 'var(--calo-50)', border: '1px solid var(--calo-200)', padding: '4px 10px', borderRadius: 999 }}>
+                      avg annual leave: <b>{result.aggregates.annualBalance.avgDays}d</b>
+                    </span>
+                  )}
+                  {result.aggregates?.compensatoryBalance && (
+                    <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--calo-700)', background: 'var(--calo-50)', border: '1px solid var(--calo-200)', padding: '4px 10px', borderRadius: 999 }}>
+                      comp outstanding: <b>{result.aggregates.compensatoryBalance.totalDays}d</b>
+                    </span>
+                  )}
                 </div>
               )}
 
@@ -304,7 +330,7 @@ export default function ZeltReportPage() {
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
                   <thead style={{ position: 'sticky', top: 0, background: 'var(--ink-900)', color: '#fff', zIndex: 1 }}>
                     <tr>{result.fields.map(c => (
-                      <th key={c} style={{ textAlign: SENSITIVE.has(c) && c !== 'currency' && c !== 'gender' ? 'right' : 'left', padding: '10px 14px', fontSize: 11, fontWeight: 800, letterSpacing: '.04em', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>{LABELS[c] || c}</th>
+                      <th key={c} style={{ textAlign: NUMERIC.has(c) ? 'right' : 'left', padding: '10px 14px', fontSize: 11, fontWeight: 800, letterSpacing: '.04em', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>{LABELS[c] || c}</th>
                     ))}</tr>
                   </thead>
                   <tbody>
@@ -313,7 +339,7 @@ export default function ZeltReportPage() {
                     ) : result.rows.map((row, i) => (
                       <tr key={i} style={{ background: i % 2 ? 'var(--ink-50)' : '#fff' }}>
                         {result.fields.map(c => (
-                          <td key={c} style={{ padding: '9px 14px', whiteSpace: 'nowrap', textAlign: (c === 'salaryMonthly' || c === 'basicSalary' || c === 'age' || c === 'lengthOfServiceYears') ? 'right' : 'left', fontWeight: c === 'name' ? 700 : 400 }}>
+                          <td key={c} style={{ padding: '9px 14px', whiteSpace: 'nowrap', textAlign: NUMERIC.has(c) ? 'right' : 'left', fontWeight: c === 'name' ? 700 : 400 }}>
                             {fmtVal(c, row[c])}
                           </td>
                         ))}

@@ -61,6 +61,29 @@ test('field catalogue: every sensitive field is a known field', () => {
   for (const f of SENSITIVE_FIELDS) assert.ok(ALL_FIELDS.includes(f), `${f} missing from ALL_FIELDS`);
 });
 
+test('leave balances are NOT sensitive (available to all users)', () => {
+  assert.ok(ALL_FIELDS.includes('annualBalance') && ALL_FIELDS.includes('compensatoryBalance'));
+  assert.ok(!SENSITIVE_FIELDS.has('annualBalance'));
+  assert.ok(!SENSITIVE_FIELDS.has('compensatoryBalance'));
+});
+
+test('age/gender/nationality are sensitive (admin-only)', () => {
+  for (const f of ['age', 'gender', 'nationality']) assert.ok(SENSITIVE_FIELDS.has(f), `${f} should be sensitive`);
+});
+
+test('leave-balance aggregates are averages/totals, not per-person', () => {
+  const rows = [
+    { businessLine: 'Retail', annualBalance: 10, compensatoryBalance: 2 },
+    { businessLine: 'Retail', annualBalance: 20, compensatoryBalance: 0 },
+    { businessLine: 'Retail', annualBalance: null, compensatoryBalance: null }, // no balance -> excluded
+  ];
+  const agg = buildAggregates(rows, ['annualBalance', 'compensatoryBalance'], false);
+  assert.equal(agg.annualBalance.employees, 2);
+  assert.equal(agg.annualBalance.avgDays, 15);
+  assert.equal(agg.annualBalance.totalDays, 30);
+  assert.equal(agg.compensatoryBalance.totalDays, 2);
+});
+
 test('normTag normalizes case, ampersand and punctuation', () => {
   assert.equal(normTag('Calo Now'), 'calo now');
   assert.equal(normTag('R&D / Ops'), 'r and d ops');

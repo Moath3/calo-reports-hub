@@ -83,7 +83,6 @@ export default function ZeltReportPage() {
   const clearFilters = () => setFilters({});
 
   const activeFilterCount = Object.values(filters).reduce((n, a) => n + (a?.length || 0), 0);
-  const wantsSensitive = fields.some(f => SENSITIVE.has(f));
 
   const run = async () => {
     if (!fields.length) { toast.error('Pick at least one field'); return; }
@@ -110,40 +109,63 @@ export default function ZeltReportPage() {
     document.body.appendChild(a); a.click(); a.remove();
   };
 
-  // Push to the report builder as a private report (table block + PII-free KPI strip).
+  // Push a SMART SUMMARY report (not the raw row list): headline KPIs, a written
+  // overview, and clean breakdown tables by business line / department / entity —
+  // built from PII-free aggregates.
   const pushToReport = async () => {
     if (!result) return;
-    const cols = result.fields;
     const agg = result.aggregates || {};
+    const clean = (arr) => (arr || []).filter(x => x.key && x.key !== '(none)');
+    const bl = clean(agg.byBusinessLine), dep = clean(agg.byDepartment), ent = clean(agg.byEntity), org = clean(agg.byOrg);
+    const total = agg.headcount ?? result.count;
+    const pct = (n) => total ? Math.round((n / total) * 100) : 0;
+
+    const filterText = FILTERS.filter(([k]) => filters[k]?.length).map(([k, label]) => `${label}: ${filters[k].join(' / ')}`).join('  ·  ') || 'All employees';
+    const title = (bl.length === 1 ? `${bl[0].key} — people summary` : `People summary — ${filterText}`).slice(0, 90);
+
+    // Written overview bullets (deterministic, no AI, no PII).
+    const bullets = [`${total} employees in scope (${filterText}).`];
+    if (bl.length) bullets.push(`Largest business line: ${bl[0].key} with ${bl[0].count} people (${pct(bl[0].count)}% of the group).`);
+    if (dep.length) bullets.push(`Top department: ${dep[0].key} (${dep[0].count}). ${dep.length} departments represented.`);
+    if (ent.length > 1) bullets.push(`Spread across ${ent.length} entities; ${ent[0].key} is the biggest (${ent[0].count}).`);
+    if (bl.length && pct(bl[0].count) >= 60) bullets.push(`Concentration: ${pct(bl[0].count)}% sit in a single business line.`);
+
     const kpiStrip = [
-      { label: 'Headcount', value: String(agg.headcount ?? result.count) },
-      ...(agg.byBusinessLine || []).slice(0, 3).map(b => ({ label: b.key, value: String(b.count) })),
-    ];
-    const blocks = [{
-      type: 'table',
-      headers: cols.map(c => LABELS[c] || c),
-      rows: result.rows.map(row => cols.map(c => fmtVal(c, row[c]))),
+      { label: 'Headcount', value: String(total) },
+      bl.length ? { label: 'Business lines', value: String(bl.length) } : null,
+      dep.length ? { label: 'Departments', value: String(dep.length) } : null,
+      ent.length ? { label: 'Entities', value: String(ent.length) } : null,
+    ].filter(Boolean);
+
+    const breakdownTable = (rows) => ({
+      type: 'table', headers: ['', 'Headcount', 'Share'],
+      rows: rows.map(r => [r.key, String(r.count), `${pct(r.count)}%`]),
+    });
+
+    const sections = [{
+      title: 'Overview', icon: 'Users',
+      blocks: [
+        { type: 'callout', title: 'In scope', value: `${total} employees`, bgColor: '#0A1F17' },
+        { type: 'badge', style: 'green', title: filterText, period: `Live from Zelt · ${new Date().toLocaleDateString()}` },
+        { type: 'notes', label: 'Summary', items: bullets },
+      ],
     }];
-    // Headcount-by-BL as a metrics block too (always safe, no PII).
-    if ((agg.byBusinessLine || []).length) {
-      blocks.unshift({
-        type: 'metrics',
-        items: agg.byBusinessLine.slice(0, 8).map(b => ({ label: b.key, value: String(b.count) })),
-      });
-    }
-    const filterText = FILTERS.filter(([k]) => filters[k]?.length).map(([k, label]) => `${label}: ${filters[k].join(', ')}`).join(' · ') || 'All employees';
-    const title = `Zelt report — ${filterText}`.slice(0, 90);
+    if (bl.length) sections.push({ title: 'By business line', icon: 'Layers', blocks: [
+      { type: 'metrics', items: bl.slice(0, 8).map(b => ({ label: b.key, value: String(b.count), change: `${pct(b.count)}%` })) },
+      breakdownTable(bl),
+    ]});
+    if (dep.length) sections.push({ title: 'By department', icon: 'Building', blocks: [breakdownTable(dep.slice(0, 15))] });
+    if (ent.length > 1) sections.push({ title: 'By entity', icon: 'MapPin', blocks: [breakdownTable(ent)] });
+    if (org.length > 1) sections.push({ title: 'By organization', icon: 'Network', blocks: [breakdownTable(org)] });
+
     try {
       const res = await api.createReport({
         title,
-        description: `Generated from live Zelt · ${result.count} employees · ${new Date().toLocaleDateString()}`,
-        reportData: {
-          generalInfo: { title, brandColor: '#02B376', kpiStrip },
-          sections: [{ title: 'People', icon: 'Users', blocks }],
-        },
+        description: `Summary from live Zelt · ${total} employees · ${new Date().toLocaleDateString()}`,
+        reportData: { generalInfo: { title, brandColor: '#02B376', kpiStrip }, sections },
         tags: ['zelt', 'people'],
       });
-      toast.success('Report created');
+      toast.success('Summary report created');
       navigate(`/reports/${res.id}`);
     } catch (err) { toast.error(err.message || 'Failed to create report'); }
   };
@@ -215,7 +237,9 @@ export default function ZeltReportPage() {
             <Eyebrow>Columns</Eyebrow>
             <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 12 }}>
               {FIELD_GROUPS.map(g => {
-                if (g.sensitive && !isAdmin) return null;
+                // Salary/age/gender are hidden for now — the Zelt bot account
+                // lacks payroll permission, so those columns come back empty.
+                if (g.sensitive) return null;
                 return (
                   <div key={g.group}>
                     <div style={{ fontSize: 11, fontWeight: 900, letterSpacing: '.08em', textTransform: 'uppercase', color: g.sensitive ? '#B45309' : 'var(--ink-400)', marginBottom: 6 }}>
@@ -253,17 +277,16 @@ export default function ZeltReportPage() {
               <Icon name="Table" size={32} color="var(--ink-300)" />
               <div style={{ fontSize: 15, fontWeight: 800, marginTop: 12, color: 'var(--ink-700)' }}>No report yet</div>
               <div style={{ fontSize: 13, color: 'var(--ink-500)', marginTop: 4, maxWidth: 420, marginInline: 'auto' }}>
-                Pick your filters and columns on the left, then Generate. Example: Business Line = Retail + Calo Now, column = Monthly Salary.
+                Pick your filters and columns on the left, then Generate. Example: Business Line = Retail + Calo Now, columns = Name, Department, Entity.
               </div>
             </Card>
           ) : (
             <Card padding={0}>
               <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--ink-200)', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
                 <div style={{ fontSize: 15, fontWeight: 900 }}>{result.count} employees</div>
-                {wantsSensitive && isAdmin && <Pill tone="amber" size="sm">contains salary/personal · keep private</Pill>}
                 <div style={{ flex: 1 }} />
                 <Btn variant="secondary" size="sm" icon="Download" onClick={downloadCsv}>CSV</Btn>
-                <Btn variant="primary" size="sm" icon="FileText" onClick={pushToReport}>Create report</Btn>
+                <Btn variant="primary" size="sm" icon="FileText" onClick={pushToReport}>Create summary report</Btn>
               </div>
 
               {/* KPI strip (PII-free) */}
@@ -272,11 +295,6 @@ export default function ZeltReportPage() {
                   {result.aggregates.byBusinessLine.slice(0, 6).map(b => (
                     <span key={b.key} style={{ fontSize: 12, fontWeight: 700, color: 'var(--ink-700)', background: '#fff', border: '1px solid var(--ink-200)', padding: '4px 10px', borderRadius: 999 }}>
                       {b.key}: <b>{b.count}</b>
-                    </span>
-                  ))}
-                  {result.aggregates?.salary?.map(s => (
-                    <span key={s.currency} style={{ fontSize: 12, fontWeight: 700, color: '#7A4F12', background: '#FEF5E4', border: '1px solid #F6E0B6', padding: '4px 10px', borderRadius: 999 }}>
-                      {s.currency}: total {s.totalMonthly.toLocaleString()}/mo · avg {s.avgMonthly.toLocaleString()}
                     </span>
                   ))}
                 </div>

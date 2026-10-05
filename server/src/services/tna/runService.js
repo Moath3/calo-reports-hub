@@ -257,6 +257,18 @@ export function runPeriod({ attendancePath, masters = [], rosterRecords = [], mo
       const varianceH = (minutes != null && schedMin != null) ? +((minutes - schedMin) / 60).toFixed(2) : null;
       return { date: d.date, weekday: weekdayOf(d.date), hours: minutes != null ? +(minutes / 60).toFixed(2) : null, rawHours, longShift, checkIn: d.checkIn || '', checkOut: d.checkOut || '', overnight, stitched: !!d.stitched, ot, otMin: dayOtMin, scheduled, schedType: shift?.type || null, schedOvernight: !!shift?.overnight, varianceH };
     });
+    // Schedule-driven calendar: add a row for every SCHEDULED day the employee
+    // didn't punch (OFF / leave / a no-show work day), carrying the exact
+    // scheduled time or OFF label — so the report shows the roster for each day,
+    // not only the days with attendance. These carry no hours (not scored).
+    if (sched) {
+      const have = new Set(days.map((d) => d.date));
+      for (const [date, shift] of sched) {
+        if (have.has(date)) continue;
+        days.push({ date, weekday: weekdayOf(date), hours: null, rawHours: null, longShift: false, checkIn: '', checkOut: '', overnight: false, stitched: false, ot: false, otMin: 0, scheduled: shiftLabel(shift), schedType: shift.type || null, schedOvernight: !!shift.overnight, varianceH: null });
+      }
+      days.sort((a, b) => (a.date < b.date ? -1 : 1));
+    }
     // Work rate: how long this person's typical day runs (8–12h is normal for
     // production; <4h or >12h days are flagged so odd punches stand out).
     const hoursDays = days.filter((d) => d.hours != null);
@@ -387,6 +399,15 @@ export function runPeriod({ attendancePath, masters = [], rosterRecords = [], mo
   // (e.g. a night worker's weekly rest). Surfaced so the report shows rest,
   // not just worked days.
   for (const e of outRows) {
+    if (e.hasSchedule) {
+      // Scheduled: OFF comes straight from the roster (type 'off', incl. PH);
+      // leave (AL/SL/TIL) is tracked separately.
+      e.restDates = e.days.filter((d) => d.schedType === 'off').map((d) => d.date);
+      e.restDays = e.restDates.length;
+      e.leaveDates = e.days.filter((d) => d.schedType === 'leave').map((d) => d.date);
+      e.leaveDays = e.leaveDates.length;
+      continue;
+    }
     if (!e.firstSeen) { e.restDates = []; e.restDays = 0; continue; }
     const worked = new Set(e.days.map((d) => d.date));
     const absent = new Set((e.absences || []).map((a) => a.date));

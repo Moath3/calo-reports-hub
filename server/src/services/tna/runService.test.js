@@ -329,6 +329,17 @@ test('uploaded schedule drives exact absences + scheduled-vs-actual', () => {
     // Sep 26 was OFF -> not an absence; Sep 28 scheduled work, no punch -> absent.
     assert.deepEqual(n.absences.map((a) => a.date), ['2026-09-28']);
     assert.equal(n.absentDays, 1);
+    // Schedule-driven calendar: every scheduled day is present with its label,
+    // even the no-punch ones.
+    const d26 = n.days.find((d) => d.date === '2026-09-26');
+    assert.equal(d26.scheduled, 'OFF');
+    assert.equal(d26.schedType, 'off');
+    assert.equal(d26.hours, null);
+    const d28 = n.days.find((d) => d.date === '2026-09-28');
+    assert.equal(d28.scheduled, '06:00-15:00');   // exact scheduled time shown on the no-show day
+    assert.equal(d28.hours, null);
+    assert.deepEqual(n.restDates, ['2026-09-26']); // OFF from the roster
+    assert.equal(n.restDays, 1);
     assert.equal(r.schedule.tab, 'Sep26-Oct26');
     assert.equal(r.schedule.unmatchedCount, 1);
     assert.equal(r.schedule.linkedInRun, 1);

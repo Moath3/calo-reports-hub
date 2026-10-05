@@ -161,7 +161,12 @@ export function buildBrandedWorkbook(ExcelJS, data, { inScopeOnly = true, month 
         checkIn = day.checkIn || ''; checkOut = day.checkOut || ''; hours = day.hours;
         overnight = day.overnight ? (day.stitched ? '🌙 stitched' : '🌙 yes') : '';
         longFlag = day.longShift ? `⚠ ${day.rawHours}h` : '';
-        status = day.longShift ? '>16h review' : (day.hours == null ? 'Incomplete' : (day.overnight ? 'Overnight' : 'Worked'));
+        if (day.hours != null) status = day.longShift ? '>16h review' : (day.overnight ? 'Overnight' : 'Worked');
+        else if (day.schedType === 'off') status = 'OFF';
+        else if (day.schedType === 'leave') status = day.scheduled || 'Leave';
+        else if (absentSet.has(date)) status = 'Absent';
+        else if (day.checkIn || day.checkOut) status = 'Incomplete';
+        else status = 'Absent';           // scheduled to work, no punch
       } else if (absentSet.has(date)) {
         status = 'Absent';
       } else {

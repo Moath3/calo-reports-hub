@@ -311,6 +311,7 @@ test('uploaded schedule drives exact absences + scheduled-vs-actual', () => {
       ['2026-09-26', { type: 'off', raw: 'OFF' }],
       ['2026-09-27', { type: 'work', start: 1320, end: 420, overnight: true, raw: '22:00-07:00' }],
       ['2026-09-28', { type: 'work', start: 360, end: 900, overnight: false, raw: '06:00-15:00' }], // no punch -> absent
+      ['2026-10-05', { type: 'work', start: 360, end: 900, overnight: false, raw: '06:00-15:00' }], // BEYOND the attendance window -> ignored
     ])]]),
     meta: { tab: 'Sep26-Oct26', matched: 1, periodStart: '2026-09-25', periodEnd: '2026-09-28' },
     unmatched: [{ name: 'Someone Else', position: 'Cook' }],
@@ -340,6 +341,9 @@ test('uploaded schedule drives exact absences + scheduled-vs-actual', () => {
     assert.equal(d28.hours, null);
     assert.deepEqual(n.restDates, ['2026-09-26']); // OFF from the roster
     assert.equal(n.restDays, 1);
+    // The Oct 5 scheduled day is beyond the attendance file window -> not shown, not absent.
+    assert.equal(n.days.find((d) => d.date === '2026-10-05'), undefined);
+    assert.ok(!n.absences.some((a) => a.date === '2026-10-05'));
     assert.equal(r.schedule.tab, 'Sep26-Oct26');
     assert.equal(r.schedule.unmatchedCount, 1);
     assert.equal(r.schedule.linkedInRun, 1);

@@ -21,7 +21,7 @@ export default function TimeAttendancePage() {
   const [data, setData] = useState(null);
   const [search, setSearch] = useState('');
   const [sort, setSort] = useState({ key: 'otDays', dir: 'desc' });
-  const [inScopeOnly, setInScopeOnly] = useState(true);
+  const [inScopeOnly, setInScopeOnly] = useState(false);
   const [expanded, setExpanded] = useState(() => new Set());
   const toggleExpand = (code) => setExpanded((s) => { const n = new Set(s); n.has(code) ? n.delete(code) : n.add(code); return n; });
 
@@ -135,14 +135,14 @@ export default function TimeAttendancePage() {
               How it works &amp; what the terms mean
             </summary>
             <div style={{ fontSize: 13, color: 'var(--ink-700)', lineHeight: 1.65, marginTop: 12, display: 'grid', gap: 8 }}>
-              <div><b>Overtime rule</b> — OT after <b>10h/day in the UAE</b> and <b>9h/day in KSA, Kuwait &amp; Bahrain</b>. Country is read from each employee's Department (or master entity).</div>
-              <div><b>In scope</b> — blue-collar production staff counted for OT: matched to a master, with a non-manager/admin position. Only these feed the cards and totals.</div>
-              <div><b>Excluded / No position / Unmatched</b> — managers &amp; admins; matched but blank position; or not found in any master.</div>
-              <div><b>Days / Nights</b> — click a row for a per-person calendar (hours + check-in/out). <b>Nights</b> = shifts crossing midnight.</div>
-              <div><b>Overnight shifts</b> — exports mangle night shifts two ways: KSA-style splits one shift across two rows; UAE-style pairs tonight's check-in with this morning's check-out (which belongs to yesterday's shift), so off days look worked and totals mix two shifts. Both are detected and re-paired into <b>one working day on the punch-in date</b> with the real hours (shown as 🌙, "stitched" in the Daily Log). Shifts are sanity-capped at 16h — longer means a missed punch, flagged instead of counted.</div>
-              <div><b>Avg h/day</b> — typical shift length per person (normal range 8–12h); days under 4h or over 12h are counted per employee in the Excel so odd punches stand out.</div>
-              <div><b>Absent (inferred)</b> — no roster, so a work day = most of the team badged in; absence = a work day in the person's span with no badge. On 7-day sites this includes rest days — a review list, not final.</div>
-              <div><b>Downloads</b> — Excel &amp; CSV follow the "In-scope only" toggle.</div>
+              <div><b>Reporting window</b> — the <b>attendance file sets the dates</b>. Everything (including the schedule) is clipped to the days the attendance actually covers.</div>
+              <div><b>Attendance file</b> — upload either the <b>raw punch / Transaction export</b> (one row per punch + a Check In/Out state — most accurate, pairs across midnight) or a First-In/Last-Out summary. Overtime: after <b>10h/day in UAE</b>, <b>9h/day in KSA, Kuwait &amp; Bahrain</b>; country is read from Department or entity.</div>
+              <div><b>Overnight shifts</b> — night shifts that cross midnight are paired into <b>one working day on the punch-in date</b> with real hours (shown as 🌙, "stitched" when rebuilt from split rows). Handles raw punches, the KSA split and the UAE mispaired exports.</div>
+              <div><b>&gt;16h flag</b> — any single day over 16h is treated as a <b>missed punch</b>: flagged for review (⚠ with the raw hours) and left out of overtime, never counted as a real shift.</div>
+              <div><b>Schedule (optional)</b> — upload HR Ops's monthly roster and it becomes the source of truth: the Daily Log shows the <b>exact scheduled time or OFF for every day</b>, plus Scheduled-vs-Actual variance. OFF / AL / PH / SL come from the roster; a scheduled work day with no punch = <b>Absent</b>. Names are matched to Zelt; anything unmatched is listed on a "Schedule — Unmatched" sheet (those fall back to inferred off-days).</div>
+              <div><b>Off days</b> — shown per person: from the roster when scheduled, otherwise inferred from the punch gaps (a no-punch day that isn't an absence). The Daily Log is a complete day-by-day calendar with a Status column (Worked / Overnight / OFF / Absent / Incomplete).</div>
+              <div><b>Scope</b> — the <b>"In-scope only"</b> toggle is <b>off by default</b>, so you see <b>all employees</b>. Turn it on to limit to blue-collar production staff (matched, non-manager/admin). Excel &amp; CSV downloads follow whatever the toggle is set to.</div>
+              <div><b>Avg h/day</b> — typical shift length per person (8–12h is normal); short (&lt;4h) and long (&gt;12h) day counts are in the Excel so odd punches stand out.</div>
             </div>
           </details>
 

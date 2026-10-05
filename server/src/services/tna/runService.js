@@ -147,6 +147,14 @@ export function runPeriod({ attendancePath, masters = [], rosterRecords = [], mo
     throw e;
   }
 
+  // The attendance file defines the reporting window. The schedule only drives
+  // days INSIDE this range — a roster tab that extends past the attendance
+  // (e.g. a Sep–Oct tab against a September file) must not add phantom Oct days
+  // or flag them as absent.
+  let attStart = null, attEnd = null;
+  for (const e of emp.values()) for (const d of e.days.keys()) { if (!attStart || d < attStart) attStart = d; if (!attEnd || d > attEnd) attEnd = d; }
+  const inAttWindow = (d) => d >= attStart && d <= attEnd;
+
   // ── Overnight repair ───────────────────────────────────────────────
   // Exports mangle night shifts two ways: the split flavor breaks one shift
   // across two calendar-day rows; the mispaired flavor (UAE) pairs tonight's
@@ -264,7 +272,7 @@ export function runPeriod({ attendancePath, masters = [], rosterRecords = [], mo
     if (sched) {
       const have = new Set(days.map((d) => d.date));
       for (const [date, shift] of sched) {
-        if (have.has(date)) continue;
+        if (have.has(date) || !inAttWindow(date)) continue; // only within the attendance window
         days.push({ date, weekday: weekdayOf(date), hours: null, rawHours: null, longShift: false, checkIn: '', checkOut: '', overnight: false, stitched: false, ot: false, otMin: 0, scheduled: shiftLabel(shift), schedType: shift.type || null, schedOvernight: !!shift.overnight, varianceH: null });
       }
       days.sort((a, b) => (a.date < b.date ? -1 : 1));
@@ -339,6 +347,7 @@ export function runPeriod({ attendancePath, masters = [], rosterRecords = [], mo
     const workedSet = new Set(e.days.filter((d) => d.hours != null && d.hours > 0).map((d) => d.date));
     const abs = [];
     for (const [date, shift] of sched) {
+      if (!inAttWindow(date)) continue; // no attendance beyond the file window -> can't call it absent
       const isSchedWork = shift.type === 'work' || shift.type === 'absent';
       if (isSchedWork && !workedSet.has(date)) abs.push({ date, weekday: weekdayOf(date) });
     }

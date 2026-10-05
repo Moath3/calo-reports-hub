@@ -46,6 +46,60 @@ function eachDate(start, end) {
  * @param {string|null} [opts.month] - optional 'YYYY-MM' filter on the Date column
  * @returns {object} structured result (see fields below)
  */
+// Parse a Check In/Out state ("Check In", "IN", "I", "C/In", "duty on" …).
+function punchDirection(v) {
+  const s = String(v ?? '').trim().toLowerCase();
+  if (!s) return null;
+  if (/\bout\b|check\s*-?\s*out|duty\s*off|^o$|c\/?\s*out|sign\s*out/.test(s)) return 'out';
+  if (/\bin\b|check\s*-?\s*in|duty\s*on|^i$|c\/?\s*in|sign\s*in/.test(s)) return 'in';
+  return null;
+}
+const HHMM = (min) => `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
+
+// Build per-employee day records from a raw punch log. Pairs IN→OUT across the
+// whole period, attributes each session to its shift-START date (so overnight
+// shifts are one day with real check-in/out), and leaves orphan punches as
+// incomplete days. Mutates `emp`.
+function buildDaysFromTransactions(rows, cols, dateOrder, month, emp) {
+  // Gather punches per employee: absolute minutes = dayIndex*1440 + timeOfDay.
+  const byEmp = new Map();
+  for (const r of rows) {
+    const ymd = toYMD(r[cols.date], dateOrder);
+    const tod = parseMinutes(r[cols.punchTime]);
+    const dir = punchDirection(r[cols.state]);
+    const id = String(r[cols.id] ?? '').trim();
+    if (!ymd || tod == null || !dir || !id) continue;
+    const dayAbs = Math.floor(Date.parse(ymd + 'T00:00:00Z') / 86400000);
+    if (!byEmp.has(id)) byEmp.set(id, { name: cols.name ? String(r[cols.name] ?? '').trim() : '', dept: cols.dept ? String(r[cols.dept] ?? '').trim() : '', punches: [] });
+    byEmp.get(id).punches.push({ ymd, tod, dir, abs: dayAbs * 1440 + tod });
+  }
+  for (const [id, { name, dept, punches }] of byEmp) {
+    punches.sort((a, b) => a.abs - b.abs);
+    const days = new Map();
+    const touch = (ymd) => days.get(ymd) || { date: ymd, minutes: null, checkIn: '', checkOut: '' };
+    let open = null;
+    for (const p of punches) {
+      if (p.dir === 'in') {
+        if (open) { const r0 = touch(open.ymd); r0.checkIn = r0.checkIn || HHMM(open.tod); days.set(open.ymd, r0); } // unclosed IN -> incomplete day
+        open = p;
+      } else { // out
+        if (!open) { const r0 = touch(p.ymd); r0.checkOut = r0.checkOut || HHMM(p.tod); days.set(p.ymd, r0); continue; } // orphan OUT
+        const session = p.abs - open.abs;
+        const rec = touch(open.ymd);
+        rec.checkIn = HHMM(open.tod);
+        rec.checkOut = HHMM(p.tod);
+        rec.minutes = session; // >16h handled downstream (longShift -> flagged, not scored)
+        days.set(open.ymd, rec);
+        open = null;
+      }
+    }
+    if (open) { const r0 = touch(open.ymd); r0.checkIn = r0.checkIn || HHMM(open.tod); days.set(open.ymd, r0); }
+    // Apply the month filter on the shift-start date.
+    for (const [ymd, rec] of [...days]) if (month && !ymd.startsWith(month)) days.delete(ymd);
+    if (days.size) emp.set(id, { empCode: id, name, dept, days });
+  }
+}
+
 export function runPeriod({ attendancePath, masters = [], rosterRecords = [], month = null, schedule = null }) {
   // ── Pass 1: per-employee day minutes from the attendance ──────────
   const { rows, cols } = loadAttendance(attendancePath);
@@ -56,27 +110,36 @@ export function runPeriod({ attendancePath, masters = [], rosterRecords = [], mo
   }
   const emp = new Map(); // id -> { empCode, name, dept, days: Map<ymd, {date, minutes, checkIn, checkOut}> }
   const dateOrder = detectDateOrder(rows.map((r) => r[cols.date]));
-  for (const r of rows) {
-    const ymd = toYMD(r[cols.date], dateOrder);
-    if (!ymd) continue;                            // unparseable date -> skip
-    if (month && !ymd.startsWith(month)) continue;
-    const id = String(r[cols.id] ?? '').trim();
-    if (!id) continue;
-    const dept = cols.dept ? String(r[cols.dept] ?? '').trim() : '';
-    if (!emp.has(id)) emp.set(id, { empCode: id, name: cols.name ? String(r[cols.name] ?? '').trim() : '', dept, days: new Map() });
-    const e = emp.get(id);
-    if (!e.dept && dept) e.dept = dept;
-    const min = parseMinutes(r[cols.time]);
-    const checkIn = cols.checkIn ? String(r[cols.checkIn] ?? '').trim() : '';
-    const checkOut = cols.checkOut ? String(r[cols.checkOut] ?? '').trim() : '';
-    // One record per employee-day. Split-shift / duplicate rows for the same day
-    // are merged: minutes sum, earliest check-in and latest check-out kept — so
-    // the OT path and the calendar path use the same per-day numbers.
-    const rec = e.days.get(ymd) || { date: ymd, minutes: null, checkIn: '', checkOut: '' };
-    if (min != null) rec.minutes = (rec.minutes || 0) + min;
-    if (checkIn && (!rec.checkIn || parseMinutes(checkIn) < parseMinutes(rec.checkIn))) rec.checkIn = checkIn;
-    if (checkOut && (!rec.checkOut || parseMinutes(checkOut) > parseMinutes(rec.checkOut))) rec.checkOut = checkOut;
-    e.days.set(ymd, rec);
+  const fromTransactions = cols.isTransactions;
+  if (fromTransactions) {
+    // Raw punch log (one row per punch + a Check In/Out state) — the accurate
+    // source. Pair IN→OUT across the WHOLE period and attribute each session to
+    // its shift-START date, so night shifts crossing midnight are one correct
+    // day with real check-in/out, not a min/max of the calendar day.
+    buildDaysFromTransactions(rows, cols, dateOrder, month, emp);
+  } else {
+    for (const r of rows) {
+      const ymd = toYMD(r[cols.date], dateOrder);
+      if (!ymd) continue;                            // unparseable date -> skip
+      if (month && !ymd.startsWith(month)) continue;
+      const id = String(r[cols.id] ?? '').trim();
+      if (!id) continue;
+      const dept = cols.dept ? String(r[cols.dept] ?? '').trim() : '';
+      if (!emp.has(id)) emp.set(id, { empCode: id, name: cols.name ? String(r[cols.name] ?? '').trim() : '', dept, days: new Map() });
+      const e = emp.get(id);
+      if (!e.dept && dept) e.dept = dept;
+      const min = parseMinutes(r[cols.time]);
+      const checkIn = cols.checkIn ? String(r[cols.checkIn] ?? '').trim() : '';
+      const checkOut = cols.checkOut ? String(r[cols.checkOut] ?? '').trim() : '';
+      // One record per employee-day. Split-shift / duplicate rows for the same day
+      // are merged: minutes sum, earliest check-in and latest check-out kept — so
+      // the OT path and the calendar path use the same per-day numbers.
+      const rec = e.days.get(ymd) || { date: ymd, minutes: null, checkIn: '', checkOut: '' };
+      if (min != null) rec.minutes = (rec.minutes || 0) + min;
+      if (checkIn && (!rec.checkIn || parseMinutes(checkIn) < parseMinutes(rec.checkIn))) rec.checkIn = checkIn;
+      if (checkOut && (!rec.checkOut || parseMinutes(checkOut) > parseMinutes(rec.checkOut))) rec.checkOut = checkOut;
+      e.days.set(ymd, rec);
+    }
   }
   if (emp.size === 0) {
     const e = new Error(rows.length ? 'No attendance rows matched — check the Date column format (e.g. dd/mm/yyyy) or the month filter.' : 'The attendance file has no data rows.');
@@ -90,8 +153,10 @@ export function runPeriod({ attendancePath, masters = [], rosterRecords = [], mo
   // in with THIS morning's out, which belongs to yesterday's shift. Both are
   // normalized to ONE working day attributed to the PUNCH-IN date, so
   // present-days, hours and OT are counted once — and off days stay clean.
+  // The transaction path already pairs punches correctly (overnight-aware), so
+  // the summary-format stitching would only mis-handle already-correct days.
   let stitchedSessions = 0;
-  for (const e of emp.values()) stitchedSessions += fixOvernightDays(e.days).stitched;
+  if (!fromTransactions) for (const e of emp.values()) stitchedSessions += fixOvernightDays(e.days).stitched;
 
   // ── Masters (optional): collision-safe direct ID join ─────────────
   const scopeBy = new Map(); // empCode -> { position, source, entity, nameMismatch }

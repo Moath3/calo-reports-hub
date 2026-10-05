@@ -148,6 +148,9 @@ export default function TimeAttendancePage() {
 
           <div style={{ display: 'grid', gap: 18 }}>
             <Field label="Attendance export — required (.csv / .xlsx)">
+              <div style={{ fontSize: 12.5, color: 'var(--ink-500)', marginBottom: 8, lineHeight: 1.5 }}>
+                For night-shift accuracy, use the <b>raw punch / Transaction export</b> (one row per punch, with a Check In/Out state) — the tool pairs punches across midnight for exact check-in/out and overnight. A First-In/Last-Out or First/Last-Punch summary also works, but its daily min/max can blur night shifts.
+              </div>
               <FilePicker accept=".csv,.xlsx,.xls" label="Choose attendance file" onPick={(files) => setAttendance(files?.[0] || null)} />
               {attendance && <div style={{ marginTop: 10 }}><FileChip name={attendance.name} onRemove={() => setAttendance(null)} /></div>}
             </Field>

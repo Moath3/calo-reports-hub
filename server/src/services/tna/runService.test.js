@@ -256,6 +256,46 @@ test('a single row claiming over 16h is a missing punch, not phantom OT', () => 
   } finally { rmSync(p, { force: true }); }
 });
 
+test('raw transaction punch log: pairs across midnight with real check-in/out', () => {
+  // Night worker: IN 19:00 Sep 8 → OUT 05:00 Sep 9 = one 10h day on Sep 8.
+  // Also a same-day shift and an orphan OUT (previous shift's tail) at the top.
+  const p = tmpCsv([
+    'Employee ID,First Name,Department,Date,Time,Punch State',
+    'N,Nidal,CALO KUWAIT,2026-09-08,05:00,Check Out',   // orphan (prev shift) -> incomplete, not scored
+    'N,Nidal,CALO KUWAIT,2026-09-08,19:00,Check In',
+    'N,Nidal,CALO KUWAIT,2026-09-09,05:00,Check Out',    // closes the 19:00 IN -> 10h on Sep 8
+    'N,Nidal,CALO KUWAIT,2026-09-09,19:00,Check In',
+    'N,Nidal,CALO KUWAIT,2026-09-10,05:00,Check Out',    // 10h on Sep 9
+  ].join('\n') + '\n');
+  try {
+    const r = runPeriod({ attendancePath: p });
+    const n = r.rows[0];
+    const d8 = n.days.find((d) => d.date === '2026-09-08');
+    assert.equal(d8.checkIn, '19:00');
+    assert.equal(d8.checkOut, '05:00');
+    assert.equal(d8.hours, 10);
+    assert.equal(d8.overnight, true);          // out clock (05:00) < in clock (19:00)
+    const d9 = n.days.find((d) => d.date === '2026-09-09');
+    assert.equal(d9.hours, 10);
+    assert.equal(d9.overnight, true);
+    assert.equal(n.overnightDays, 2);
+    assert.ok(n.otDays >= 2);                   // 10h > 9h KWT threshold
+  } finally { rmSync(p, { force: true }); }
+});
+
+test('"First Punch"/"Last Punch" summary headers populate check-in/out', () => {
+  const p = tmpCsv([
+    'Employee ID,First Name,Department,Date,Weekday,First Punch,Last Punch,Total Time',
+    'A,Ann,CALO KUWAIT,2026-09-01,Tue,08:00,17:00,9:00',
+  ].join('\n') + '\n');
+  try {
+    const r = runPeriod({ attendancePath: p });
+    const d = r.rows[0].days[0];
+    assert.equal(d.checkIn, '08:00');
+    assert.equal(d.checkOut, '17:00');
+  } finally { rmSync(p, { force: true }); }
+});
+
 test('uploaded schedule drives exact absences + scheduled-vs-actual', () => {
   // N works 2 of 3 scheduled days; the OFF day is never an absence; the
   // scheduled work day with no punch IS an absence. Variance = actual − scheduled.

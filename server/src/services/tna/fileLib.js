@@ -90,17 +90,25 @@ export function loadAttendance(path) {
     rows = XLSX.utils.sheet_to_json(sheet, hr ? { defval: '', range: hr } : { defval: '' });
     h = Object.keys(rows[0] || {});
     if (h.some((x) => /employee\s*id|ac.?-?no|emp.*no|^id$/i.test(norm(x))) &&
-        h.some((x) => /date|total\s*time|work.*time|hours/i.test(norm(x)))) break;
+        h.some((x) => /date|total\s*time|work.*time|hours|punch|^time$/i.test(norm(x)))) break;
   }
   const cols = {
     id: pick(h, [/employee\s*id/i, /ac.?-?no/i, /emp.*no/i, /^id$/i]),
     name: pick(h, [/^name$/i, /first.*name/i, /name/i]),
     dept: pick(h, [/department/i, /dept/i]),
     date: pick(h, [/^date$/i, /date/i]),
-    time: pick(h, [/total\s*time/i, /work.*time/i, /hours/i]),
-    checkIn: pick(h, [/first.*check.?in/i, /check.?in/i, /first.*in/i, /clock.?in/i, /time.?in/i]),
-    checkOut: pick(h, [/last.*check.?out/i, /check.?out/i, /last.*out/i, /clock.?out/i, /time.?out/i]),
+    time: pick(h, [/total\s*time/i, /work.*time/i, /^hours$/i, /total\s*hours/i]),
+    // Summary exports: "First Check In"/"Last Check Out" OR "First Punch"/"Last Punch".
+    checkIn: pick(h, [/first.*check.?in/i, /check.?in/i, /first.*in/i, /clock.?in/i, /time.?in/i, /first.*punch/i, /punch.?in/i]),
+    checkOut: pick(h, [/last.*check.?out/i, /check.?out/i, /last.*out/i, /clock.?out/i, /time.?out/i, /last.*punch/i, /punch.?out/i]),
+    // Raw transaction (punch-log) exports: a time-of-day column + a direction/state.
+    punchTime: pick(h, [/^time$/i, /punch\s*time/i, /^time\s*in\/?out$/i]),
+    state: pick(h, [/punch\s*state/i, /^state$/i, /in\s*\/?\s*out/i, /direction/i, /verif/i]),
   };
+  // A transaction log has one row per PUNCH (a time-of-day + a Check In/Out
+  // state) rather than one aggregated row per employee-day. Detect it so the
+  // caller can pair punches across midnight instead of trusting a daily total.
+  cols.isTransactions = !!(cols.punchTime && cols.state && !cols.time);
   return { rows, cols };
 }
 

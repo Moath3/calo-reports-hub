@@ -128,31 +128,53 @@ export function buildBrandedWorkbook(ExcelJS, data, { inScopeOnly = true, month 
   tableSheet(wb, 'Employee Totals', [
     { header: 'Emp Code', width: 13 }, { header: 'Name', width: 24 }, { header: 'Country', width: 9 }, { header: 'Department', width: 20 },
     ...(hasSchedule ? [{ header: 'Dept (Zelt)', width: 15 }, { header: 'Title (Zelt)', width: 18 }] : [{ header: 'Dept (Zelt)', width: 15 }, { header: 'Title (Zelt)', width: 18 }]),
-    { header: 'Days', width: 7, align: 'right' }, { header: 'Absent', width: 8, align: 'right' }, { header: 'Nights', width: 8, align: 'right' }, { header: '>16h', width: 7, align: 'right' },
+    { header: 'Days', width: 7, align: 'right' }, { header: 'Off days', width: 8, align: 'right' }, { header: 'Absent', width: 8, align: 'right' }, { header: 'Nights', width: 8, align: 'right' }, { header: '>16h', width: 7, align: 'right' },
     { header: 'Total h', width: 9, align: 'right' }, { header: 'Avg h/day', width: 10, align: 'right' }, { header: 'OT-days', width: 9, align: 'right' }, { header: 'OT-hours', width: 10, align: 'right' },
     ...(hasSchedule ? [{ header: 'Sched days', width: 10, align: 'right' }, { header: 'Variance h', width: 10, align: 'right' }] : []),
     { header: 'In scope', width: 9 }, { header: 'Flag', width: 22 },
   ], exportRows.map((e) => [
     e.empCode, e.name || '', e.country, e.dept || '', e.masterDept || '', e.position || '',
-    e.daysWorked, e.absentDays, e.overnightDays, e.longShiftDays || 0,
+    e.daysWorked, e.restDays || 0, e.absentDays, e.overnightDays, e.longShiftDays || 0,
     e.totalHours ?? '', e.avgHours ?? '', e.otDays, e.otHours,
     ...(hasSchedule ? [e.scheduledDays ?? '', e.varianceHours ?? ''] : []),
     yn(e.inScope),
     [e.nameMismatch ? 'name mismatch' : '', e.deptMismatch ? 'dept mismatch' : ''].filter(Boolean).join(' · '),
   ]));
 
-  // ── 2. Daily Log — attendance by day ─────────────────────────────────
+  // ── 2. Daily Log — a COMPLETE per-day calendar (worked + off + absent) ─
+  // Every day in each employee's span gets a row with a Status, so rest days
+  // are visible rather than just missing — answering "does this person ever
+  // get an off day?" at a glance.
+  const WDAY = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const weekdayOf = (ymd) => WDAY[new Date(ymd + 'T00:00:00Z').getUTCDay()];
   const log = [];
-  exportRows.forEach((e) => (e.days || []).forEach((day) => {
-    const overnight = day.overnight ? (day.stitched ? '🌙 stitched' : '🌙 yes') : '';
-    const longFlag = day.longShift ? `⚠ ${day.rawHours}h` : '';
-    const base = [e.empCode, e.name || '', e.country, e.dept || '', day.date, day.weekday, day.checkIn || '', day.checkOut || '', day.hours, overnight, longFlag];
-    if (hasSchedule) base.push(day.scheduled || '', day.varianceH ?? '');
-    log.push(base);
-  }));
+  exportRows.forEach((e) => {
+    const byDate = new Map();
+    for (const day of (e.days || [])) byDate.set(day.date, day);
+    const absentSet = new Set((e.absences || []).map((a) => a.date));
+    const restSet = new Set(e.restDates || []);
+    const allDates = [...new Set([...byDate.keys(), ...absentSet, ...restSet])].sort();
+    for (const date of allDates) {
+      const day = byDate.get(date);
+      let status, checkIn = '', checkOut = '', hours = '', overnight = '', longFlag = '';
+      if (day) {
+        checkIn = day.checkIn || ''; checkOut = day.checkOut || ''; hours = day.hours;
+        overnight = day.overnight ? (day.stitched ? '🌙 stitched' : '🌙 yes') : '';
+        longFlag = day.longShift ? `⚠ ${day.rawHours}h` : '';
+        status = day.longShift ? '>16h review' : (day.hours == null ? 'Incomplete' : (day.overnight ? 'Overnight' : 'Worked'));
+      } else if (absentSet.has(date)) {
+        status = 'Absent';
+      } else {
+        status = 'OFF';
+      }
+      const base = [e.empCode, e.name || '', e.country, e.dept || '', date, weekdayOf(date), status, checkIn, checkOut, hours, overnight, longFlag];
+      if (hasSchedule) base.push(day?.scheduled || '', day?.varianceH ?? '');
+      log.push(base);
+    }
+  });
   tableSheet(wb, 'Daily Log', [
     { header: 'Emp Code', width: 13 }, { header: 'Name', width: 22 }, { header: 'Country', width: 9 }, { header: 'Department', width: 18 }, { header: 'Date', width: 12 },
-    { header: 'Weekday', width: 10 }, { header: 'Check In', width: 10 }, { header: 'Check Out', width: 10 }, { header: 'Hours', width: 8, align: 'right' },
+    { header: 'Weekday', width: 10 }, { header: 'Status', width: 12 }, { header: 'Check In', width: 10 }, { header: 'Check Out', width: 10 }, { header: 'Hours', width: 8, align: 'right' },
     { header: 'Overnight', width: 12 }, { header: '>16h flag', width: 11 },
     ...(hasSchedule ? [{ header: 'Scheduled', width: 13 }, { header: 'Variance h', width: 10, align: 'right' }] : []),
   ], log);

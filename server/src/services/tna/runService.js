@@ -381,6 +381,24 @@ export function runPeriod({ attendancePath, masters = [], rosterRecords = [], mo
   daily.totalAbsences = inScopeRows.reduce((a, e) => a + (e.absentDays || 0), 0);
   daily.totalOvernight = inScopeRows.reduce((a, e) => a + (e.overnightDays || 0), 0);
 
+  // Rest / OFF days per employee: a date inside their active span that they
+  // neither worked nor were absent on. For scheduled employees these are the
+  // roster's OFF/leave days; for inferred ones they're the un-flagged gaps
+  // (e.g. a night worker's weekly rest). Surfaced so the report shows rest,
+  // not just worked days.
+  for (const e of outRows) {
+    if (!e.firstSeen) { e.restDates = []; e.restDays = 0; continue; }
+    const worked = new Set(e.days.map((d) => d.date));
+    const absent = new Set((e.absences || []).map((a) => a.date));
+    const rest = [];
+    for (const d of eachDate(e.firstSeen, e.lastSeen)) {
+      if (!worked.has(d) && !absent.has(d)) rest.push(d);
+    }
+    e.restDates = rest;
+    e.restDays = rest.length;
+  }
+  daily.totalRestDays = inScopeRows.reduce((a, e) => a + (e.restDays || 0), 0);
+
   const scope = {
     matched: scopeBy.size,
     inScope: inScopeRows.length,

@@ -494,11 +494,11 @@ const legendHd = { fontSize: 11, fontWeight: 800, color: 'var(--ink-500)', lette
 const dayChip = (bg, bd) => ({ display: 'inline-flex', flexDirection: 'column', gap: 1, padding: '6px 10px', borderRadius: 'var(--r-md)', background: bg, border: `1px solid ${bd}`, fontSize: 12, minWidth: 76, lineHeight: 1.35 });
 
 function EmployeeCalendar({ row }) {
-  const present = row.days || [], absences = row.absences || [];
+  const present = row.days || [], absences = row.absences || [], rest = row.restDates || [];
   return (
     <div style={{ padding: '16px 20px', display: 'grid', gap: 16, background: 'var(--ink-50)' }}>
       <div>
-        <div style={legendHd}>Days worked — {present.length}{row.overnightDays ? ` · ${row.overnightDays} overnight 🌙` : ''}{row.masterDept ? ` · Zelt: ${row.masterDept}${row.position ? ` / ${row.position}` : ''}` : ''}{row.deptMismatch ? ' · ⚠ dept mismatch' : ''}</div>
+        <div style={legendHd}>Days worked — {present.length}{row.restDays ? ` · ${row.restDays} off` : ''}{row.overnightDays ? ` · ${row.overnightDays} overnight 🌙` : ''}{row.masterDept ? ` · Zelt: ${row.masterDept}${row.position ? ` / ${row.position}` : ''}` : ''}{row.deptMismatch ? ' · ⚠ dept mismatch' : ''}</div>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
           {present.length === 0 ? <span style={{ fontSize: 12, color: 'var(--ink-500)' }}>No attendance recorded.</span> :
             present.map((d) => (
@@ -518,6 +518,19 @@ function EmployeeCalendar({ row }) {
               <span key={a.date} style={dayChip('#FEF5E4', '#F6E0B6')}>
                 <span style={{ fontWeight: 700, color: '#6B5008' }}>{fmtDay(a.date)}</span>
                 <span style={{ color: '#6B5008' }}>{a.weekday}</span>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+      {rest.length > 0 && (
+        <div>
+          <div style={legendHd}>Off / rest days — {rest.length}</div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
+            {rest.map((date) => (
+              <span key={date} style={dayChip('var(--ink-100)', 'var(--ink-200)')}>
+                <span style={{ fontWeight: 700, color: 'var(--ink-700)' }}>{fmtDay(date)}</span>
+                <span style={{ color: 'var(--ink-500)' }}>OFF</span>
               </span>
             ))}
           </div>

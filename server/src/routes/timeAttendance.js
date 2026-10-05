@@ -5,6 +5,7 @@ import { fileURLToPath } from "url";
 import { dirname, join, extname, basename } from "path";
 import { unlinkSync, existsSync, mkdirSync } from "fs";
 import { runPeriod } from "../services/tna/runService.js";
+import { buildScheduleIndex } from "../services/tna/scheduleParser.js";
 import { generateTnaNarrative } from "../services/aiService.js";
 import { getRosterForEntities } from "../services/zeltCompute.js";
 import { requireAuth } from "../middleware/auth.js";
@@ -31,7 +32,7 @@ const upload = multer({
     if (ALLOWED.includes(ext)) return cb(null, true);
     cb(new Error("Unsupported file type: " + ext + ". Allowed: " + ALLOWED.join(", ")));
   },
-}).fields([{ name: "attendance", maxCount: 1 }, { name: "masters", maxCount: 8 }]);
+}).fields([{ name: "attendance", maxCount: 1 }, { name: "masters", maxCount: 8 }, { name: "schedule", maxCount: 1 }]);
 
 const router = Router();
 
@@ -47,9 +48,10 @@ router.post("/run", requireAuth, (req, res, next) => {
 }, asyncHandler(async (req, res) => {
   const attendance = req.files?.attendance?.[0];
   const masterFiles = req.files?.masters || [];
+  const scheduleFile = req.files?.schedule?.[0] || null;
   // Build the cleanup list from everything multer wrote to disk, BEFORE any
-  // validation throw, so a missing-attendance request can't orphan master files.
-  const paths = [...(attendance ? [attendance.path] : []), ...masterFiles.map((f) => f.path)];
+  // validation throw, so a missing-attendance request can't orphan files.
+  const paths = [...(attendance ? [attendance.path] : []), ...masterFiles.map((f) => f.path), ...(scheduleFile ? [scheduleFile.path] : [])];
   try {
     if (!attendance) throw badRequest("No attendance file uploaded (field 'attendance')");
 
@@ -92,7 +94,28 @@ router.post("/run", requireAuth, (req, res, next) => {
       }
     }
 
-    const result = runPeriod({ attendancePath: attendance.path, masters, rosterRecords, month });
+    // Optional HR Ops schedule (Kuwait monthly format). Link names to a Zelt
+    // roster; if none was fetched above, pull the whole roster just for linking.
+    let schedule = null;
+    if (scheduleFile) {
+      let linkRoster = rosterRecords;
+      if (!linkRoster.length) {
+        try { linkRoster = await getRosterForEntities('*'); } catch { linkRoster = []; }
+      }
+      let window = {};
+      if (month && /^\d{4}-\d{2}$/.test(month)) {
+        const [y, mo] = month.split('-').map(Number);
+        window = { periodStart: `${month}-01`, periodEnd: `${month}-${String(new Date(Date.UTC(y, mo, 0)).getUTCDate()).padStart(2, '0')}` };
+      }
+      try {
+        schedule = buildScheduleIndex(scheduleFile.path, linkRoster, window);
+      } catch (err) {
+        if (err.userError) throw new HttpError(400, "Schedule file: " + err.message);
+        throw new HttpError(400, "Couldn't read the schedule file — expected the monthly roster format with a Name/Position header and dated day columns. (" + err.message + ")");
+      }
+    }
+
+    const result = runPeriod({ attendancePath: attendance.path, masters, rosterRecords, month, schedule });
     // Claude writes the exec summary + insights from aggregate figures only
     // (no names/PII). Falls back to a templated summary if the API call fails.
     const narrative = await generateTnaNarrative(result.aggregates);

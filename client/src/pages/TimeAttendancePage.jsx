@@ -14,6 +14,7 @@ import { buildBrandedWorkbook } from '../utils/tnaWorkbook';
 export default function TimeAttendancePage() {
   const [attendance, setAttendance] = useState(null);   // File
   const [masters, setMasters] = useState([]);           // [{ file, sheet }]
+  const [schedule, setSchedule] = useState(null);       // File — HR Ops monthly schedule
   const [month, setMonth] = useState('');               // 'YYYY-MM' or ''
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -59,7 +60,7 @@ export default function TimeAttendancePage() {
       const result = await api.runTimeAttendance(
         attendance,
         masters.map((m) => m.file),
-        { month: month || undefined, masterSheets: masters.map((m) => m.sheet || ''), entities }
+        { month: month || undefined, masterSheets: masters.map((m) => m.sheet || ''), entities, scheduleFile: schedule || undefined }
       );
       setData(result);
     } catch (e) {
@@ -68,7 +69,7 @@ export default function TimeAttendancePage() {
     } finally {
       setLoading(false);
     }
-  }, [attendance, masters, month, entities]);
+  }, [attendance, masters, month, entities, schedule]);
 
   const filtered = useMemo(() => {
     if (!data?.rows) return [];
@@ -202,6 +203,14 @@ export default function TimeAttendancePage() {
                   )}
                 </div>
               </div>
+            </Field>
+
+            <Field label="HR Ops schedule — optional (the monthly roster workbook)">
+              <div style={{ fontSize: 12.5, color: 'var(--ink-500)', marginBottom: 8, lineHeight: 1.5 }}>
+                Drop the monthly staff schedule (e.g. the Kuwait roster). The tool reads the shift windows, marks real off-days and leave (OFF / AL / PH / SL), computes exact absences (scheduled to work but no punch), and adds Scheduled vs Actual to the Daily Log. Names are matched to Zelt automatically; anything it can't match is listed on a "Schedule — Unmatched" sheet.
+              </div>
+              <FilePicker accept=".xlsx,.xls" label="Add schedule file" onPick={(files) => setSchedule(files?.[0] || null)} />
+              {schedule && <div style={{ marginTop: 10 }}><FileChip name={schedule.name} onRemove={() => setSchedule(null)} /></div>}
             </Field>
 
             <div style={{ display: 'flex', gap: 18, alignItems: 'flex-end', flexWrap: 'wrap' }}>
@@ -519,6 +528,7 @@ function EmployeeCalendar({ row }) {
 
 function buildFlagLines(data) {
   const f = data.flags || {}, s = data.scope || {}, out = [];
+  if (data.schedule) out.push(`Schedule "${data.schedule.tab}" applied — ${data.schedule.linkedInRun} employees linked, off-days & absences taken from the roster, Scheduled vs Actual in the Daily Log.${data.schedule.unmatchedCount ? ` ${data.schedule.unmatchedCount} schedule names couldn't be matched to Zelt (see the "Schedule — Unmatched" sheet).` : ''}`);
   if (data.zeltAuto) out.push(`No master uploaded — compared against the LIVE Zelt roster automatically (${s.matched} matched). Zelt dept/title are in the Employee Detail sheet.`);
   if (data.zeltAutoError) out.push(`No master uploaded and the automatic Zelt comparison failed (${data.zeltAutoError}) — everyone is unscoped. Upload a master or connect Zelt.`);
   if (f.deptMismatches) out.push(`${f.deptMismatches} employees badge in a department that disagrees with their Zelt/master department — check the Dept (Zelt) column in Employee Detail.`);

@@ -256,6 +256,45 @@ test('a single row claiming over 16h is a missing punch, not phantom OT', () => 
   } finally { rmSync(p, { force: true }); }
 });
 
+test('uploaded schedule drives exact absences + scheduled-vs-actual', () => {
+  // N works 2 of 3 scheduled days; the OFF day is never an absence; the
+  // scheduled work day with no punch IS an absence. Variance = actual − scheduled.
+  const p = tmpCsv([
+    'Employee ID,First Name,Department,Date,First Check In,Last Check Out,Total Time',
+    'N,Nidal,CALO KUWAIT,2026-09-25,06:00,16:00,10:00',   // scheduled 06:00-15:00 (9h) -> +1h
+    'N,Nidal,CALO KUWAIT,2026-09-27,22:00,22:00,0:00',    // overnight start (stitches w/ 09-28)
+    'N,Nidal,CALO KUWAIT,2026-09-28,07:00,07:00,0:00',    // overnight end
+  ].join('\n') + '\n');
+  const schedule = {
+    byEmpId: new Map([['N', new Map([
+      ['2026-09-25', { type: 'work', start: 360, end: 900, overnight: false, raw: '06:00-15:00' }],
+      ['2026-09-26', { type: 'off', raw: 'OFF' }],
+      ['2026-09-27', { type: 'work', start: 1320, end: 420, overnight: true, raw: '22:00-07:00' }],
+      ['2026-09-28', { type: 'work', start: 360, end: 900, overnight: false, raw: '06:00-15:00' }], // no punch -> absent
+    ])]]),
+    meta: { tab: 'Sep26-Oct26', matched: 1, periodStart: '2026-09-25', periodEnd: '2026-09-28' },
+    unmatched: [{ name: 'Someone Else', position: 'Cook' }],
+  };
+  try {
+    const r = runPeriod({ attendancePath: p, schedule });
+    const n = r.rows[0];
+    assert.equal(n.hasSchedule, true);
+    const d25 = n.days.find((d) => d.date === '2026-09-25');
+    assert.equal(d25.scheduled, '06:00-15:00');
+    assert.equal(d25.varianceH, 1);                 // 10h actual − 9h scheduled
+    const d27 = n.days.find((d) => d.date === '2026-09-27');
+    assert.equal(d27.scheduled, '22:00-07:00');
+    assert.equal(d27.schedOvernight, true);
+    assert.equal(d27.hours, 9);                      // stitched 22:00→07:00
+    // Sep 26 was OFF -> not an absence; Sep 28 scheduled work, no punch -> absent.
+    assert.deepEqual(n.absences.map((a) => a.date), ['2026-09-28']);
+    assert.equal(n.absentDays, 1);
+    assert.equal(r.schedule.tab, 'Sep26-Oct26');
+    assert.equal(r.schedule.unmatchedCount, 1);
+    assert.equal(r.schedule.linkedInRun, 1);
+  } finally { rmSync(p, { force: true }); }
+});
+
 test('work rate: avg hours and short/long day flags surface odd punches', () => {
   const p = tmpCsv([
     'Employee ID,First Name,Department,Date,First Check In,Last Check Out,Total Time',

@@ -1,11 +1,17 @@
 // CALO-branded Time & Attendance workbook (exceljs). Pure builder: takes the
 // ExcelJS module (injected so it works in the Vite client AND in Node tooling),
 // the run result (incl. narrative), and options, and returns a populated
-// Workbook with the 9-sheet report. No I/O here — callers write the buffer.
+// Workbook. No I/O here — callers write the buffer.
 //
-// Sheets: 1 One Page Summary · 2 Executive Summary · 3 Overtime Analysis ·
-// 4 Employee Detail · 5 Daily Tracking · 6 Daily Log · 7 Absent Employees ·
-// 8 Location & Dept · 9 Incomplete Punches · 10 Data Anomalies.
+// Streamlined to what HR Ops actually needs:
+//   1 Summary      — KPIs, exec summary, per-country/dept OT, per-employee totals
+//   2 Daily Log    — attendance by day: check-in/out, hours, OT, overnight 🌙,
+//                    >16h flag, and (when a schedule is uploaded) Scheduled +
+//                    Variance
+//   3 Flags        — everything to chase: overnight, >16h, incomplete punches,
+//                    absences, identity/dept anomalies
+//   +  Schedule — Unmatched (only when a schedule was uploaded and some names
+//                 couldn't be linked to Zelt)
 
 const GREEN = 'FF02B376', LIGHT = 'FFE7F7F0', ZEBRA = 'FFF4FBF8', INK = 'FF1A2B23', MUTE = 'FF6B7B74', WHITE = 'FFFFFFFF', AMBER = 'FF9A6F0E';
 const F = (size, opts = {}) => ({ name: 'Calibri', size, color: { argb: INK }, ...opts });
@@ -69,29 +75,33 @@ export function buildBrandedWorkbook(ExcelJS, data, { inScopeOnly = true, month 
   const s = data.scope || {};
   const f = data.flags || {};
   const periodLabel = d.periodStart ? `${d.periodStart} → ${d.periodEnd}` : (month || 'full file');
+  const hasSchedule = !!data.schedule;
 
-  // ── 1. One Page Summary ─────────────────────────────────────────────
-  const one = wb.addWorksheet('One Page Summary', { views: [{ showGridLines: false }], pageSetup: { fitToWidth: 1, orientation: 'portrait', margins: { left: 0.4, right: 0.4, top: 0.5, bottom: 0.5, header: 0.3, footer: 0.3 } } });
-  one.columns = [{ width: 22 }, { width: 14 }, { width: 13 }, { width: 13 }, { width: 13 }, { width: 14 }];
+  // ── 1. Summary ───────────────────────────────────────────────────────
+  const one = wb.addWorksheet('Summary', { views: [{ showGridLines: false }], pageSetup: { fitToWidth: 1, orientation: 'portrait', margins: { left: 0.4, right: 0.4, top: 0.5, bottom: 0.5, header: 0.3, footer: 0.3 } } });
+  one.columns = [{ width: 24 }, { width: 13 }, { width: 12 }, { width: 12 }, { width: 12 }, { width: 13 }];
   const banner = (row, text, font, h) => { one.mergeCells(`A${row}:F${row}`); const c = one.getCell(`A${row}`); c.value = text; c.font = font; c.alignment = { vertical: 'middle', wrapText: true }; if (h) one.getRow(row).height = h; };
   banner(1, 'calo', F(28, { bold: true, color: { argb: GREEN } }), 36);
-  banner(2, 'Time & Attendance — One Page Summary', F(15, { bold: true }));
+  banner(2, 'Time & Attendance — Summary', F(15, { bold: true }));
   banner(3, `Period ${periodLabel}   ·   Rule: UAE 10h · KSA/Kuwait/Bahrain 9h   ·   ${inScopeOnly ? 'in-scope only' : 'all employees'}`, F(9, { color: { argb: MUTE } }));
+  if (hasSchedule) banner(4, `Schedule: ${data.schedule.tab} — ${data.schedule.linkedInRun} linked${data.schedule.unmatchedCount ? `, ${data.schedule.unmatchedCount} unmatched (see last sheet)` : ''}`, F(9, { color: { argb: GREEN } }));
 
-  // KPI strip
+  // KPI strip — the four the report is about + absences/overnight.
+  const longShiftTotal = exportRows.reduce((a, e) => a + (e.longShiftDays || 0), 0);
   const kpis = [
     ['In scope', s.inScope || 0], ['OT-days', t.otDays || 0], ['OT-hours', t.otHours || 0],
     ['Absences', d.totalAbsences || 0], ['Overnight', d.totalOvernight || 0],
-    ['Incomplete', (data.missingHours || []).length],
+    ['>16h flags', longShiftTotal],
   ];
-  const kLabel = one.getRow(5), kVal = one.getRow(6);
+  const kr = hasSchedule ? 6 : 5;
+  const kLabel = one.getRow(kr), kVal = one.getRow(kr + 1);
   kpis.forEach(([label, val], i) => {
     const lc = kLabel.getCell(i + 1); lc.value = label; lc.fill = fill(LIGHT); lc.font = F(9, { bold: true, color: { argb: MUTE } }); lc.alignment = { horizontal: 'center' }; lc.border = box;
-    const vc = kVal.getCell(i + 1); vc.value = val; vc.font = F(15, { bold: true, color: { argb: i === 1 ? GREEN : INK } }); vc.alignment = { horizontal: 'center' }; vc.border = box;
+    const vc = kVal.getCell(i + 1); vc.value = val; vc.font = F(15, { bold: true, color: { argb: i === 1 ? GREEN : (i === 5 && longShiftTotal ? AMBER : INK) } }); vc.alignment = { horizontal: 'center' }; vc.border = box;
   });
 
-  // Executive summary (AI)
-  let r = 8;
+  // Executive summary (AI) + what to watch
+  let r = kr + 3;
   one.mergeCells(`A${r}:F${r}`); const eh = one.getCell(`A${r}`); eh.value = 'EXECUTIVE SUMMARY' + (nar.ai ? '' : ' (auto)'); eh.font = F(10, { bold: true, color: { argb: MUTE } }); r += 1;
   one.mergeCells(`A${r}:F${r + 2}`); const eb = one.getCell(`A${r}`); eb.value = nar.execSummary || '—'; eb.font = F(10); eb.alignment = { vertical: 'top', wrapText: true }; one.getRow(r).height = 48; r += 4;
   (nar.insights || []).slice(0, 5).forEach((ins) => { one.mergeCells(`A${r}:F${r}`); const c = one.getCell(`A${r}`); c.value = '•  ' + ins; c.font = F(9, { color: { argb: INK } }); c.alignment = { wrapText: true }; r += 1; });
@@ -106,95 +116,80 @@ export function buildBrandedWorkbook(ExcelJS, data, { inScopeOnly = true, month 
       return [g.country, `> ${g.rule}`, g.emps, g.otDays, g.otHours, abs];
     }));
 
-  // Top OT + Top absentees (5 each)
-  r = writeTable(one, r, [{ header: 'Top overtime (employee)' }, { header: 'Dept' }, { header: 'OT-days', align: 'right' }, { header: 'OT-hrs', align: 'right' }],
-    (data.topOt || []).slice(0, 5).map((e) => [e.name || e.empCode, e.dept, e.otDays, e.otHours]));
-  r = writeTable(one, r, [{ header: 'Top absences (employee)' }, { header: 'Dept' }, { header: 'Absent', align: 'right' }],
-    (data.topAbsent || []).slice(0, 5).map((e) => [e.name || e.empCode, e.dept, e.absentDays]));
+  // Per-department
+  r = writeTable(one, r, [{ header: 'Department' }, { header: 'Country' }, { header: 'Emp', align: 'right' }, { header: 'OT-days', align: 'right' }, { header: 'OT-hrs', align: 'right' }, { header: 'Absences', align: 'right' }],
+    (data.byDept || []).slice(0, 12).map((g) => [g.dept, g.country, g.employees, g.otDays, g.otHours, g.absences]));
 
-  // ── 2. Executive Summary ────────────────────────────────────────────
-  const ex = wb.addWorksheet('Executive Summary', { views: [{ showGridLines: false }] });
-  ex.columns = [{ width: 26 }, { width: 24 }, { width: 24 }, { width: 24 }];
-  ex.mergeCells('A1:D1'); const ext = ex.getCell('A1'); ext.value = 'Executive Summary'; ext.font = F(16, { bold: true }); ex.getRow(1).height = 28;
-  ex.mergeCells('A2:D2'); const exs = ex.getCell('A2'); exs.value = `Period ${periodLabel}` + (nar.ai ? '' : '  ·  summary auto-generated (AI unavailable)'); exs.font = F(9, { color: { argb: MUTE } });
-  ex.mergeCells('A4:D7'); const exb = ex.getCell('A4'); exb.value = nar.execSummary || '—'; exb.font = F(11); exb.alignment = { vertical: 'top', wrapText: true };
-  let er = 9;
-  ex.getCell(`A${er}`).value = 'What to watch'; ex.getCell(`A${er}`).font = F(11, { bold: true, color: { argb: GREEN } }); er += 1;
-  (nar.insights || []).forEach((ins) => { ex.mergeCells(`A${er}:D${er}`); const c = ex.getCell(`A${er}`); c.value = '•  ' + ins; c.font = F(10); c.alignment = { wrapText: true }; ex.getRow(er).height = 28; er += 1; });
-  er += 1;
-  writeTable(ex, er, [{ header: 'Figure' }, { header: 'Value', align: 'right' }], [
-    ['In-scope employees', s.inScope || 0], ['Total OT-days', t.otDays || 0], ['Total OT-hours', t.otHours || 0],
-    ['Inferred absences', d.totalAbsences || 0], ['Overnight shifts', d.totalOvernight || 0],
-    ['Excluded (mgr/admin)', s.excluded || 0], ['Unmatched', s.unmatched || 0],
-  ]);
+  // Top OT
+  writeTable(one, r, [{ header: 'Top overtime (employee)' }, { header: 'Dept' }, { header: 'OT-days', align: 'right' }, { header: 'OT-hrs', align: 'right' }],
+    (data.topOt || []).slice(0, 8).map((e) => [e.name || e.empCode, e.dept, e.otDays, e.otHours]));
 
-  // ── 3. Overtime Analysis ────────────────────────────────────────────
-  const ot = wb.addWorksheet('Overtime Analysis', { views: [{ showGridLines: false }] });
-  ot.columns = [{ width: 26 }, { width: 12 }, { width: 12 }, { width: 12 }, { width: 12 }, { width: 14 }];
-  let orow = writeTable(ot, 1, [{ header: 'Country' }, { header: 'Rule' }, { header: 'Employees', align: 'right' }, { header: 'OT-days', align: 'right' }, { header: 'OT-hours', align: 'right' }, { header: 'OT-days @9h', align: 'right' }],
-    (data.byCountry || []).map((g) => [g.country, `> ${g.rule}`, g.emps, g.otDays, g.otHours, g.otDays9]));
-  orow = writeTable(ot, orow, [{ header: 'Department' }, { header: 'Country' }, { header: 'Employees', align: 'right' }, { header: 'OT-days', align: 'right' }, { header: 'OT-hours', align: 'right' }],
-    (data.byDept || []).map((g) => [g.dept, g.country, g.employees, g.otDays, g.otHours]));
-  writeTable(ot, orow, [{ header: 'Top OT — employee' }, { header: 'Country' }, { header: 'Dept' }, { header: 'OT-days', align: 'right' }, { header: 'OT-hours', align: 'right' }],
-    (data.topOt || []).map((e) => [e.name || e.empCode, e.country, e.dept, e.otDays, e.otHours]));
-
-  // ── 4. Employee Detail ──────────────────────────────────────────────
-  tableSheet(wb, 'Employee Detail', [
-    { header: 'Emp Code', width: 14 }, { header: 'Name', width: 24 }, { header: 'Country', width: 10 }, { header: 'Department', width: 22 },
-    { header: 'Dept (Zelt)', width: 16 }, { header: 'Title (Zelt)', width: 20 },
-    { header: 'Days', width: 8, align: 'right' }, { header: 'Absent', width: 8, align: 'right' }, { header: 'Nights', width: 8, align: 'right' },
-    { header: 'Total h', width: 9, align: 'right' }, { header: 'Avg h/day', width: 10, align: 'right' }, { header: 'OT-days', width: 9, align: 'right' }, { header: 'OT-hours', width: 10, align: 'right' }, { header: 'In scope', width: 9 }, { header: 'Flag', width: 20 },
-  ], exportRows.map((e) => [e.empCode, e.name || '', e.country, e.dept || '', e.masterDept || '', e.position || '', e.daysWorked, e.absentDays, e.overnightDays, e.totalHours ?? '', e.avgHours ?? '', e.otDays, e.otHours, yn(e.inScope),
-    [e.nameMismatch ? 'name mismatch' : '', e.deptMismatch ? 'dept mismatch' : ''].filter(Boolean).join(' · ')]));
-
-  // ── 5. Daily Tracking ───────────────────────────────────────────────
-  tableSheet(wb, 'Daily Tracking', [
-    { header: 'Date', width: 12 }, { header: 'Weekday', width: 10 }, { header: 'Present', width: 9, align: 'right' }, { header: 'Absent', width: 9, align: 'right' },
-    { header: 'Worked hours', width: 13, align: 'right' }, { header: 'On OT', width: 9, align: 'right' }, { header: 'OT-hours', width: 10, align: 'right' }, { header: 'Work day', width: 10 },
-  ], (data.byDate || []).map((g) => [g.date, g.weekday, g.present, g.absent, g.hours ?? '', g.onOt, g.otHours, yn(g.isWorkDay)]));
-
-  // ── 6. Daily Log ────────────────────────────────────────────────────
-  const log = [];
-  exportRows.forEach((e) => (e.days || []).forEach((day) => log.push([e.empCode, e.name || '', e.country, e.dept || '', day.date, day.weekday, day.hours, day.checkIn || '', day.checkOut || '', day.overnight ? (day.stitched ? 'yes · stitched' : 'yes') : ''])));
-  tableSheet(wb, 'Daily Log', [
-    { header: 'Emp Code', width: 14 }, { header: 'Name', width: 22 }, { header: 'Country', width: 9 }, { header: 'Department', width: 20 }, { header: 'Date', width: 12 },
-    { header: 'Weekday', width: 10 }, { header: 'Hours', width: 9, align: 'right' }, { header: 'Check In', width: 10 }, { header: 'Check Out', width: 10 }, { header: 'Overnight', width: 10 },
-  ], log);
-
-  // ── 7. Absent Employees ─────────────────────────────────────────────
-  tableSheet(wb, 'Absent Employees', [
-    { header: 'Emp Code', width: 14 }, { header: 'Name', width: 24 }, { header: 'Department', width: 22 }, { header: 'Absent days', width: 11, align: 'right' }, { header: 'Dates', width: 50 }, { header: 'Excuse', width: 24 },
-  ], exportRows.filter((e) => e.absentDays > 0).sort((a, b) => b.absentDays - a.absentDays)
-    .map((e) => [e.empCode, e.name || '', e.dept || '', e.absentDays, (e.absences || []).map((a) => a.date).join(', '), '']));
-
-  // ── 8. Location & Dept ──────────────────────────────────────────────
-  tableSheet(wb, 'Location & Dept', [
-    { header: 'Department', width: 26 }, { header: 'Country', width: 10 }, { header: 'Employees', width: 11, align: 'right' }, { header: 'Present-days', width: 12, align: 'right' },
-    { header: 'OT-days', width: 9, align: 'right' }, { header: 'OT-hours', width: 10, align: 'right' }, { header: 'Absences', width: 10, align: 'right' },
-  ], (data.byDept || []).map((g) => [g.dept, g.country, g.employees, g.presentDays, g.otDays, g.otHours, g.absences]));
-
-  // ── 9. Incomplete Punches ───────────────────────────────────────────
-  // Employee-days with a punch but no Total Time (clocked in but not out, or
-  // vice-versa) — the biometric "incomplete punches" to chase.
-  tableSheet(wb, 'Incomplete Punches', [
-    { header: 'Emp Code', width: 14 }, { header: 'Name', width: 24 }, { header: 'Department', width: 22 }, { header: 'Date', width: 12 },
-    { header: 'Weekday', width: 10 }, { header: 'Check In', width: 10 }, { header: 'Check Out', width: 10 }, { header: 'Issue', width: 16 },
-  ], (data.missingHours || []).map((m) => [
-    m.empCode, m.name || '', m.dept || '', m.date, m.weekday, m.checkIn || '', m.checkOut || '',
-    m.checkIn && !m.checkOut ? 'no check-out' : (!m.checkIn && m.checkOut ? 'no check-in' : 'no total time'),
+  // Per-employee totals (the old Employee Detail, folded in)
+  tableSheet(wb, 'Employee Totals', [
+    { header: 'Emp Code', width: 13 }, { header: 'Name', width: 24 }, { header: 'Country', width: 9 }, { header: 'Department', width: 20 },
+    ...(hasSchedule ? [{ header: 'Dept (Zelt)', width: 15 }, { header: 'Title (Zelt)', width: 18 }] : [{ header: 'Dept (Zelt)', width: 15 }, { header: 'Title (Zelt)', width: 18 }]),
+    { header: 'Days', width: 7, align: 'right' }, { header: 'Absent', width: 8, align: 'right' }, { header: 'Nights', width: 8, align: 'right' }, { header: '>16h', width: 7, align: 'right' },
+    { header: 'Total h', width: 9, align: 'right' }, { header: 'Avg h/day', width: 10, align: 'right' }, { header: 'OT-days', width: 9, align: 'right' }, { header: 'OT-hours', width: 10, align: 'right' },
+    ...(hasSchedule ? [{ header: 'Sched days', width: 10, align: 'right' }, { header: 'Variance h', width: 10, align: 'right' }] : []),
+    { header: 'In scope', width: 9 }, { header: 'Flag', width: 22 },
+  ], exportRows.map((e) => [
+    e.empCode, e.name || '', e.country, e.dept || '', e.masterDept || '', e.position || '',
+    e.daysWorked, e.absentDays, e.overnightDays, e.longShiftDays || 0,
+    e.totalHours ?? '', e.avgHours ?? '', e.otDays, e.otHours,
+    ...(hasSchedule ? [e.scheduledDays ?? '', e.varianceHours ?? ''] : []),
+    yn(e.inScope),
+    [e.nameMismatch ? 'name mismatch' : '', e.deptMismatch ? 'dept mismatch' : ''].filter(Boolean).join(' · '),
   ]));
 
-  // ── 10. Data Anomalies (identity / scope data-quality flags) ─────────
-  const anomalies = [];
-  for (const e of rows) {
-    if (e.country === 'UNKNOWN' && e.inScope) anomalies.push(['Unknown country', e.empCode, e.name || '', e.dept || '', 'Scored at 9h default — fix Department/entity']);
-    if (e.nameMismatch) anomalies.push(['Name mismatch', e.empCode, e.name || '', e.dept || '', 'Attendance name disagrees with master — possible ID collision']);
-    if (e.noPosition) anomalies.push(['No position', e.empCode, e.name || '', e.dept || '', 'Matched but master position is blank — not counted']);
-    if (e.matched === false && data.masters && data.masters.length) anomalies.push(['Unmatched', e.empCode, e.name || '', e.dept || '', 'Not found in any uploaded master']);
+  // ── 2. Daily Log — attendance by day ─────────────────────────────────
+  const log = [];
+  exportRows.forEach((e) => (e.days || []).forEach((day) => {
+    const overnight = day.overnight ? (day.stitched ? '🌙 stitched' : '🌙 yes') : '';
+    const longFlag = day.longShift ? `⚠ ${day.rawHours}h` : '';
+    const base = [e.empCode, e.name || '', e.country, e.dept || '', day.date, day.weekday, day.checkIn || '', day.checkOut || '', day.hours, overnight, longFlag];
+    if (hasSchedule) base.push(day.scheduled || '', day.varianceH ?? '');
+    log.push(base);
+  }));
+  tableSheet(wb, 'Daily Log', [
+    { header: 'Emp Code', width: 13 }, { header: 'Name', width: 22 }, { header: 'Country', width: 9 }, { header: 'Department', width: 18 }, { header: 'Date', width: 12 },
+    { header: 'Weekday', width: 10 }, { header: 'Check In', width: 10 }, { header: 'Check Out', width: 10 }, { header: 'Hours', width: 8, align: 'right' },
+    { header: 'Overnight', width: 12 }, { header: '>16h flag', width: 11 },
+    ...(hasSchedule ? [{ header: 'Scheduled', width: 13 }, { header: 'Variance h', width: 10, align: 'right' }] : []),
+  ], log);
+
+  // ── 3. Flags — everything to chase, in one place ─────────────────────
+  const flagRows = [];
+  for (const e of exportRows) {
+    for (const day of (e.days || [])) {
+      if (day.longShift) flagRows.push(['>16h shift', e.empCode, e.name || '', e.dept || '', day.date, `${day.rawHours}h (${day.checkIn || '?'}–${day.checkOut || '?'}) — likely a missed punch, not scored`]);
+      else if (day.overnight) flagRows.push(['Overnight', e.empCode, e.name || '', e.dept || '', day.date, `${day.checkIn || '?'}–${day.checkOut || '?'}${day.stitched ? ' (stitched from split rows)' : ''}`]);
+    }
   }
-  tableSheet(wb, 'Data Anomalies', [
-    { header: 'Type', width: 18 }, { header: 'Emp Code', width: 14 }, { header: 'Name', width: 24 }, { header: 'Department', width: 22 }, { header: 'Detail', width: 50 },
-  ], anomalies);
+  for (const m of (data.missingHours || [])) {
+    flagRows.push(['Incomplete punch', m.empCode, m.name || '', m.dept || '', m.date, m.checkIn && !m.checkOut ? 'no check-out' : (!m.checkIn && m.checkOut ? 'no check-in' : 'no total time')]);
+  }
+  for (const e of exportRows) {
+    for (const a of (e.absences || [])) flagRows.push(['Absence', e.empCode, e.name || '', e.dept || '', a.date, hasSchedule && e.hasSchedule ? 'scheduled to work, no punch' : 'work day, no punch (inferred)']);
+  }
+  // Identity / scope anomalies (whole roster, not just in-scope)
+  for (const e of rows) {
+    if (e.country === 'UNKNOWN' && e.inScope) flagRows.push(['Unknown country', e.empCode, e.name || '', e.dept || '', '', 'Scored at 9h default — fix Department/entity']);
+    if (e.nameMismatch) flagRows.push(['Name mismatch', e.empCode, e.name || '', e.dept || '', '', 'Attendance name disagrees with Zelt/master']);
+    if (e.deptMismatch) flagRows.push(['Dept mismatch', e.empCode, e.name || '', e.dept || '', '', `Zelt says "${e.masterDept}"`]);
+    if (e.noPosition) flagRows.push(['No position', e.empCode, e.name || '', e.dept || '', '', 'Matched but position blank — not counted']);
+  }
+  const typeOrder = { '>16h shift': 0, Overnight: 1, 'Incomplete punch': 2, Absence: 3 };
+  flagRows.sort((a, b) => (typeOrder[a[0]] ?? 9) - (typeOrder[b[0]] ?? 9) || String(a[4]).localeCompare(String(b[4])));
+  tableSheet(wb, 'Flags', [
+    { header: 'Flag', width: 16 }, { header: 'Emp Code', width: 13 }, { header: 'Name', width: 24 }, { header: 'Department', width: 20 }, { header: 'Date', width: 12 }, { header: 'Detail', width: 52 },
+  ], flagRows);
+
+  // ── Schedule — Unmatched (only when a schedule was uploaded) ──────────
+  if (hasSchedule && (data.schedule.unmatched || []).length) {
+    tableSheet(wb, 'Schedule — Unmatched', [
+      { header: 'Name (in schedule)', width: 30 }, { header: 'Position', width: 28 }, { header: 'Action', width: 44 },
+    ], data.schedule.unmatched.map((u) => [u.name, u.position || '', 'No confident Zelt match — add/fix the Zelt record or correct the name in the schedule']));
+  }
 
   return wb;
 }

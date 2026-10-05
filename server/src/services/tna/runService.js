@@ -11,6 +11,7 @@ import { normalizeId, normalizeName } from './identity/normalize.js';
 import { diceCoefficient } from './identity/similarity.js';
 import { loadAttendance, loadMaster, parseMinutes, toYMD, detectDateOrder, EXCLUDE_POSITION } from './fileLib.js';
 import { fixOvernightDays, MAX_SHIFT_MINUTES } from './overnight.js';
+import { scheduledMinutes } from './scheduleParser.js';
 
 // A matched master name agrees with the attendance name if they share a token
 // (handles first-name-only attendance) or are similar overall; used only as a
@@ -45,7 +46,7 @@ function eachDate(start, end) {
  * @param {string|null} [opts.month] - optional 'YYYY-MM' filter on the Date column
  * @returns {object} structured result (see fields below)
  */
-export function runPeriod({ attendancePath, masters = [], rosterRecords = [], month = null }) {
+export function runPeriod({ attendancePath, masters = [], rosterRecords = [], month = null, schedule = null }) {
   // ── Pass 1: per-employee day minutes from the attendance ──────────
   const { rows, cols } = loadAttendance(attendancePath);
   if (!cols.id) {
@@ -143,10 +144,28 @@ export function runPeriod({ attendancePath, masters = [], rosterRecords = [], mo
     return b.split(/[^a-z]+/).some((t) => t.length > 2 && toks.has(t));
   };
 
+  // ── Schedule (optional): HR Ops roster keyed by employee id ───────
+  // schedule.byEmpId: Map<empId, Map<ymd, shift>> where shift =
+  // { type:'work'|'off'|'leave'|'absent', start, end, overnight, leaveKind, raw }.
+  const schedByEmp = new Map();
+  if (schedule?.byEmpId instanceof Map) {
+    for (const [id, m] of schedule.byEmpId) schedByEmp.set(normalizeId(id), m);
+  }
+  const hhmm = (min) => min == null ? '' : `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
+  const shiftLabel = (s) => {
+    if (!s) return '';
+    if (s.type === 'off') return s.leaveKind === 'ph' ? 'PH' : 'OFF';
+    if (s.type === 'leave') return (s.leaveKind || 'leave').toUpperCase();
+    if (s.type === 'absent') return 'ABSENT';
+    if (s.type === 'work') return s.start != null ? `${hhmm(s.start)}-${hhmm(s.end)}` : (s.note || 'work');
+    return s.raw || '';
+  };
+
   // ── Pass 2: per-country OT per employee ───────────────────────────
   const outRows = [];
   for (const e of emp.values()) {
     const sc = scopeBy.get(e.empCode) || {};
+    const sched = schedByEmp.get(normalizeId(e.empCode)) || null;
     const country = resolveCountry(e.dept) || resolveCountry(sc.entity) || null;
     const cfg = getOtConfig(country || e.dept);
     const cfgMin = cfg.standardDailyMinutes;
@@ -155,15 +174,23 @@ export function runPeriod({ attendancePath, masters = [], rosterRecords = [], mo
       const ci = parseMinutes(d.checkIn), co = parseMinutes(d.checkOut);
       const overnight = ci != null && co != null && co < ci; // out clock strictly before in -> crossed midnight
       // Over 16h on one day means a missed punch, never a real shift — treat
-      // as missing hours (review) instead of scoring phantom overtime.
-      const minutes = d.minutes != null && d.minutes > MAX_SHIFT_MINUTES ? null : d.minutes;
+      // as missing hours (review) instead of scoring phantom overtime, but keep
+      // the raw figure + a flag so the report can surface the >16h anomaly.
+      const longShift = d.minutes != null && d.minutes > MAX_SHIFT_MINUTES;
+      const rawHours = d.minutes != null ? +(d.minutes / 60).toFixed(2) : null;
+      const minutes = longShift ? null : d.minutes;
       let ot = false, dayOtMin = 0;
       if (minutes != null) {
         const c = classifyDay({ workedMinutes: minutes, incomplete: false }, { status: 'work', scheduledMinutes: cfgMin }, cfg);
         if ((c.overtime || 0) > 0) { otDays += 1; otMin += c.overtime; ot = true; dayOtMin = c.overtime; }
         if (minutes > 540) otDays9 += 1; // illustrative flat-9h comparison
       }
-      return { date: d.date, weekday: weekdayOf(d.date), hours: minutes != null ? +(minutes / 60).toFixed(2) : null, checkIn: d.checkIn || '', checkOut: d.checkOut || '', overnight, stitched: !!d.stitched, ot, otMin: dayOtMin };
+      const shift = sched ? sched.get(d.date) : null;
+      const scheduled = shiftLabel(shift);
+      const schedMin = shift && shift.type === 'work' ? scheduledMinutes(shift) : null;
+      // Variance (actual − scheduled), in hours, when both are known.
+      const varianceH = (minutes != null && schedMin != null) ? +((minutes - schedMin) / 60).toFixed(2) : null;
+      return { date: d.date, weekday: weekdayOf(d.date), hours: minutes != null ? +(minutes / 60).toFixed(2) : null, rawHours, longShift, checkIn: d.checkIn || '', checkOut: d.checkOut || '', overnight, stitched: !!d.stitched, ot, otMin: dayOtMin, scheduled, schedType: shift?.type || null, schedOvernight: !!shift?.overnight, varianceH };
     });
     // Work rate: how long this person's typical day runs (8–12h is normal for
     // production; <4h or >12h days are flagged so odd punches stand out).
@@ -172,6 +199,10 @@ export function runPeriod({ attendancePath, masters = [], rosterRecords = [], mo
     const avgHours = hoursDays.length ? +(totalHours / hoursDays.length).toFixed(2) : null;
     const shortDays = hoursDays.filter((d) => d.hours < 4).length;
     const longDays = hoursDays.filter((d) => d.hours > 12).length;
+    // Scheduled-vs-actual roll-up (only meaningful when this person is on the
+    // uploaded schedule). variance totals the signed actual−scheduled hours.
+    const scheduledDays = sched ? days.filter((d) => d.schedType === 'work').length : 0;
+    const varianceHours = sched ? +days.reduce((a, d) => a + (d.varianceH || 0), 0).toFixed(1) : null;
     const position = sc.position || '';
     const matched = scopeBy.has(e.empCode);
     const isExcluded = !!position && EXCLUDE_POSITION.test(position);
@@ -183,8 +214,10 @@ export function runPeriod({ attendancePath, masters = [], rosterRecords = [], mo
       source: sc.source || '', position, matched, noPosition, isExcluded, inScope, nameMismatch: !!sc.nameMismatch,
       masterDept: sc.dept || '', deptMismatch: matched && !deptAgrees(e.dept, sc.dept),
       daysWorked: e.days.size, overnightDays: days.filter((d) => d.overnight).length,
+      longShiftDays: days.filter((d) => d.longShift).length,
       stitchedDays: days.filter((d) => d.stitched).length,
       totalHours, avgHours, shortDays, longDays, daysWithHours: hoursDays.length,
+      hasSchedule: !!sched, scheduledDays, varianceHours,
       firstSeen: days.length ? days[0].date : null, lastSeen: days.length ? days[days.length - 1].date : null,
       days, absences: [], absentDays: 0,
     });
@@ -215,8 +248,30 @@ export function runPeriod({ attendancePath, masters = [], rosterRecords = [], mo
   // Per-employee absence uses a LEAVE-ONE-OUT ratio (exclude the person under
   // test) so an absentee can't drag their own day below the threshold — without
   // it, single/tiny cohorts would silently swallow real absences.
-  let daily = { periodStart: null, periodEnd: null, workDays: [], offDays: [], totalAbsences: 0, totalOvernight: 0, inferred: true };
-  const inDated = inScopeRows.filter((e) => e.firstSeen);
+  let daily = { periodStart: null, periodEnd: null, workDays: [], offDays: [], totalAbsences: 0, totalOvernight: 0, inferred: true, scheduled: schedByEmp.size > 0 };
+
+  // (A) Scheduled employees: exact absences = scheduled WORK (or explicit
+  // ABSENT) days with no actual worked hours. Iterate the SCHEDULE's dates (not
+  // attendance), so a no-show on a day with no punch row still counts — and so
+  // an overnight whose end-date row was consumed by stitching isn't missed.
+  // OFF/PH/AL/SL are never absences.
+  for (const e of outRows) {
+    if (!e.hasSchedule) continue;
+    const sched = schedByEmp.get(normalizeId(e.empCode));
+    if (!sched) continue;
+    const workedSet = new Set(e.days.filter((d) => d.hours != null && d.hours > 0).map((d) => d.date));
+    const abs = [];
+    for (const [date, shift] of sched) {
+      const isSchedWork = shift.type === 'work' || shift.type === 'absent';
+      if (isSchedWork && !workedSet.has(date)) abs.push({ date, weekday: weekdayOf(date) });
+    }
+    abs.sort((a, b) => (a.date < b.date ? -1 : 1));
+    e.absences = abs;
+    e.absentDays = abs.length;
+  }
+
+  // (B) Non-scheduled employees: keep the team-attendance inference.
+  const inDated = inScopeRows.filter((e) => e.firstSeen && !e.hasSchedule);
   if (inDated.length) {
     const periodStart = inDated.reduce((m, e) => (e.firstSeen < m ? e.firstSeen : m), inDated[0].firstSeen);
     const periodEnd = inDated.reduce((m, e) => (e.lastSeen > m ? e.lastSeen : m), inDated[0].lastSeen);
@@ -228,10 +283,10 @@ export function runPeriod({ attendancePath, masters = [], rosterRecords = [], mo
     // Global work-day set for the summary (no leave-one-out).
     const workDaysSet = new Set();
     for (const d of eachDate(periodStart, periodEnd)) { const a = active[d] || 0, p = present[d] || 0; if (a > 0 && p / a >= WORKDAY_THRESHOLD) workDaysSet.add(d); }
-    // Absences for every dated employee; in-scope members are excluded from their
-    // own date's ratio so they can't suppress their own absence.
+    // Absences for every non-scheduled dated employee; in-scope members are
+    // excluded from their own date's ratio so they can't suppress their own absence.
     for (const e of outRows) {
-      if (!e.firstSeen) continue;
+      if (!e.firstSeen || e.hasSchedule) continue;
       const set = new Set(e.days.map((d) => d.date));
       const inPool = e.inScope;
       const abs = [];
@@ -244,15 +299,22 @@ export function runPeriod({ attendancePath, masters = [], rosterRecords = [], mo
       e.absentDays = abs.length;
     }
     const allRange = eachDate(periodStart, periodEnd);
-    daily = {
-      periodStart, periodEnd,
-      workDays: allRange.filter((d) => workDaysSet.has(d)),
-      offDays: allRange.filter((d) => !workDaysSet.has(d)),
-      totalAbsences: inDated.reduce((a, e) => a + e.absentDays, 0),
-      totalOvernight: inScopeRows.reduce((a, e) => a + (e.overnightDays || 0), 0),
-      inferred: true,
-    };
+    daily.workDays = allRange.filter((d) => workDaysSet.has(d));
+    daily.offDays = allRange.filter((d) => !workDaysSet.has(d));
+    daily.periodStart = periodStart;
+    daily.periodEnd = periodEnd;
   }
+
+  // Period bounds + totals span BOTH paths (scheduled + inferred).
+  const allSeen = inScopeRows.filter((e) => e.firstSeen);
+  if (allSeen.length) {
+    const ps = allSeen.reduce((m, e) => (e.firstSeen < m ? e.firstSeen : m), allSeen[0].firstSeen);
+    const pe = allSeen.reduce((m, e) => (e.lastSeen > m ? e.lastSeen : m), allSeen[0].lastSeen);
+    daily.periodStart = daily.periodStart && daily.periodStart < ps ? daily.periodStart : ps;
+    daily.periodEnd = daily.periodEnd && daily.periodEnd > pe ? daily.periodEnd : pe;
+  }
+  daily.totalAbsences = inScopeRows.reduce((a, e) => a + (e.absentDays || 0), 0);
+  daily.totalOvernight = inScopeRows.reduce((a, e) => a + (e.overnightDays || 0), 0);
 
   const scope = {
     matched: scopeBy.size,
@@ -326,6 +388,17 @@ export function runPeriod({ attendancePath, masters = [], rosterRecords = [], mo
     })(),
   };
 
+  // Schedule summary (present only when a schedule was uploaded).
+  const scheduleOut = schedule ? {
+    tab: schedule.meta?.tab || null,
+    periodStart: schedule.meta?.periodStart || null,
+    periodEnd: schedule.meta?.periodEnd || null,
+    scheduledEmployees: schedule.meta?.matched ?? schedByEmp.size,
+    linkedInRun: inScopeRows.filter((e) => e.hasSchedule).length,
+    unmatched: schedule.unmatched || [],
+    unmatchedCount: (schedule.unmatched || []).length,
+  } : null;
+
   return {
     attendance: { employees: emp.size, cols },
     masters: mastersMeta,
@@ -340,6 +413,7 @@ export function runPeriod({ attendancePath, masters = [], rosterRecords = [], mo
     topAbsent,
     missingHours,
     aggregates,
+    schedule: scheduleOut,
     rows: outRows,
   };
 }

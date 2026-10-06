@@ -11,19 +11,27 @@ const router = Router();
 
 const MIN_PASSWORD_LENGTH = 8;
 
+// Company email domains that may self-register and get immediate employee
+// access. Configurable via ALLOWED_EMAIL_DOMAINS (comma-separated); defaults to
+// calo.app. This domain gate replaces the old company-registration code.
+const ALLOWED_EMAIL_DOMAINS = (process.env.ALLOWED_EMAIL_DOMAINS || 'calo.app')
+  .split(',').map((d) => d.trim().toLowerCase().replace(/^@/, '')).filter(Boolean);
+const emailDomain = (email) => String(email || '').toLowerCase().split('@')[1] || '';
+const isAllowedDomain = (email) => ALLOWED_EMAIL_DOMAINS.includes(emailDomain(email));
+
 // POST /api/auth/register
 router.post('/register', asyncHandler(async (req, res) => {
-  const { email, password, name, department, companyCode } = req.body;
-
-  const validCode = process.env.COMPANY_REG_CODE;
-  if (!validCode || companyCode !== validCode) {
-    throw forbidden('Invalid company registration code. Contact your administrator.');
-  }
+  const { email, password, name, department } = req.body;
 
   if (!email || !password || !name) throw badRequest('Email, password, and name are required');
   if (password.length < MIN_PASSWORD_LENGTH) throw badRequest(`Password must be at least ${MIN_PASSWORD_LENGTH} characters`);
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   if (!emailRegex.test(email)) throw badRequest('Invalid email format');
+
+  // Gate on company email domain — anyone with a @calo.app address gets in.
+  if (!isAllowedDomain(email)) {
+    throw forbidden(`Registration is limited to ${ALLOWED_EMAIL_DOMAINS.map((d) => '@' + d).join(' / ')} email addresses.`);
+  }
 
   const db = getDb();
 
@@ -33,11 +41,12 @@ router.post('/register', asyncHandler(async (req, res) => {
   const salt = await bcrypt.genSalt(BCRYPT_COST);
   const passwordHash = await bcrypt.hash(password, salt);
 
-  // Determine role - first user is admin (and auto-approved)
+  // First user is admin; everyone else is an employee. Company-domain emails
+  // are auto-approved (active immediately) — no pending queue.
   const userCount = db.prepare('SELECT COUNT(*) as count FROM users').get();
   const isFirstUser = userCount.count === 0;
   const role = isFirstUser ? 'admin' : 'employee';
-  const isActive = isFirstUser ? 1 : 0; // New users are pending approval
+  const isActive = 1;
 
   const id = uuid();
   db.prepare(`
@@ -45,23 +54,12 @@ router.post('/register', asyncHandler(async (req, res) => {
     VALUES (?, ?, ?, ?, ?, ?, ?)
   `).run(id, email.toLowerCase(), name, passwordHash, role, department || null, isActive);
 
-  // First user (admin) gets immediate access
-  if (isFirstUser) {
-    const user = { id, email: email.toLowerCase(), name, role, department };
-    const token = generateToken(user);
-    return res.status(201).json({
-      message: 'Account created successfully',
-      user: { id, email: email.toLowerCase(), name, role, department },
-      token
-    });
-  }
-
-  // All other users: pending approval — notify admin
-  notifyAdminNewRegistration({ name, email: email.toLowerCase(), department }).catch(() => {});
-
+  const user = { id, email: email.toLowerCase(), name, role, department };
+  const token = generateToken(user);
   res.status(201).json({
-    message: 'Registration submitted. Awaiting admin approval.',
-    pending: true
+    message: 'Account created successfully',
+    user,
+    token,
   });
 }));
 
@@ -72,10 +70,11 @@ router.post('/login', asyncHandler(async (req, res) => {
 
   const db = getDb();
 
-  // Check if user exists but is pending approval
+  // Company-domain emails are auto-approved, so an inactive account means an
+  // admin deactivated it (not a pending queue).
   const anyUser = db.prepare('SELECT id, is_active FROM users WHERE email = ?').get(email.toLowerCase());
   if (anyUser && !anyUser.is_active) {
-    throw forbidden('Your account is pending admin approval. Please wait for activation.', { pending: true });
+    throw forbidden('Your account has been deactivated. Contact an administrator.', { deactivated: true });
   }
 
   const user = db.prepare('SELECT * FROM users WHERE email = ? AND is_active = 1').get(email.toLowerCase());
@@ -175,6 +174,36 @@ router.patch('/users/:id/toggle', requireAuth, requireAdmin, asyncHandler((req, 
 
   db.prepare('UPDATE users SET is_active = ? WHERE id = ?').run(user.is_active ? 0 : 1, user.id);
   res.json({ message: `User ${user.is_active ? 'deactivated' : 'activated'}` });
+}));
+
+// DELETE /api/auth/users/:id (admin only — remove a user completely)
+// Their reports & templates are REASSIGNED to the removing admin so nothing is
+// lost; their logs/sessions/AI-usage rows are deleted (FKs are enforced, no
+// cascade). Guards: can't remove yourself or the last remaining admin.
+router.delete('/users/:id', requireAuth, requireAdmin, asyncHandler((req, res) => {
+  const db = getDb();
+  const user = db.prepare('SELECT id, role FROM users WHERE id = ?').get(req.params.id);
+  if (!user) throw notFound('User not found');
+  if (user.id === req.user.id) throw badRequest('Cannot remove yourself — ask another admin');
+  if (user.role === 'admin') {
+    const admins = db.prepare("SELECT COUNT(*) AS n FROM users WHERE role = 'admin'").get();
+    if (admins.n <= 1) throw badRequest('Cannot remove the last admin');
+  }
+
+  // Preserve assets: hand the removed user's reports & templates to the admin.
+  const reassigned = db.prepare('UPDATE reports SET user_id = ? WHERE user_id = ?').run(req.user.id, user.id);
+  db.prepare('UPDATE templates SET user_id = ? WHERE user_id = ?').run(req.user.id, user.id);
+  // Drop the removed user's own log/session/usage rows (not assets).
+  for (const tbl of ['ai_usage', 'sessions', 'audit_log']) {
+    try { db.prepare(`DELETE FROM ${tbl} WHERE user_id = ?`).run(user.id); } catch { /* table may not exist */ }
+  }
+  db.prepare('DELETE FROM users WHERE id = ?').run(user.id);
+
+  try {
+    db.prepare(`INSERT INTO audit_log (user_id, action, resource_type, details, ip_address) VALUES (?, 'user.removed', 'auth', ?, ?)`)
+      .run(req.user.id, JSON.stringify({ removedUserId: user.id, reportsReassigned: reassigned.changes ?? null }), req.ip);
+  } catch { /* audit is best-effort */ }
+  res.json({ message: 'User removed', reportsReassigned: reassigned.changes ?? 0 });
 }));
 
 

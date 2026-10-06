@@ -11,7 +11,7 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [showPw, setShowPw] = useState(false);
   const [pendingApproval, setPendingApproval] = useState(false);
-  const [form, setForm] = useState({ email: '', password: '', name: '', department: '', companyCode: '' });
+  const [form, setForm] = useState({ email: '', password: '', name: '', department: '' });
 
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
 
@@ -180,11 +180,9 @@ export default function LoginPage() {
                   </div>
 
                   {mode === 'register' && (
-                    <div>
-                      <label className="label">Company code</label>
-                      <input className="input-field" placeholder="Enter registration code" value={form.companyCode} onChange={e => set('companyCode', e.target.value)} required />
-                      <p style={{ fontSize: 11, color: 'var(--ink-500)', marginTop: 4 }}>Get this from your administrator</p>
-                    </div>
+                    <p style={{ fontSize: 12, color: 'var(--ink-500)', marginTop: -4 }}>
+                      Use your <b>@calo.app</b> email — your account is activated right away, no code needed.
+                    </p>
                   )}
 
                   <button

@@ -123,6 +123,10 @@ class ApiClient {
     });
   }
 
+  async deleteUser(userId) {
+    return this.request(`/auth/users/${userId}`, { method: 'DELETE' });
+  }
+
   // Upload
   async uploadFile(file) {
     const formData = new FormData();

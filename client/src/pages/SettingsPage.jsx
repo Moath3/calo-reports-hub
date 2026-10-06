@@ -3,7 +3,7 @@ import { useAuth } from '../contexts/AuthContext';
 import api from '../utils/api';
 import toast from 'react-hot-toast';
 import {
-  User, Lock, Shield, Loader2, Save, Users, ToggleLeft, ToggleRight, Clock, CheckCircle, XCircle, Plug
+  User, Lock, Shield, Loader2, Save, Users, ToggleLeft, ToggleRight, Clock, CheckCircle, XCircle, Plug, Trash2
 } from 'lucide-react';
 
 export default function SettingsPage() {
@@ -80,6 +80,17 @@ export default function SettingsPage() {
       setUsers(prev => prev.map(u => u.id === uid ? { ...u, is_active: u.is_active ? 0 : 1 } : u));
     } catch (err) {
       toast.error(err.message || 'Failed');
+    }
+  };
+
+  const removeUser = async (uid, uname) => {
+    if (!confirm(`Remove ${uname || 'this user'} completely? Their reports move to you. This can't be undone.`)) return;
+    try {
+      const res = await api.deleteUser(uid);
+      toast.success(res.reportsReassigned ? `${res.message} · ${res.reportsReassigned} report(s) reassigned to you` : res.message);
+      setUsers(prev => prev.filter(u => u.id !== uid));
+    } catch (err) {
+      toast.error(err.message || 'Failed to remove user');
     }
   };
 
@@ -192,12 +203,13 @@ export default function SettingsPage() {
           {/* User management (admin only) */}
           {tab === 'users' && user?.role === 'admin' && (
             <div className="space-y-4">
-              {/* Pending approvals */}
+              {/* Deactivated users — @calo.app emails auto-activate, so an
+                  inactive account means it was deactivated by an admin. */}
               {!loadingUsers && users.filter(u => !u.is_active).length > 0 && (
                 <div className="card border-amber-200 bg-amber-50/50">
                   <div className="px-6 py-4 border-b border-amber-200 flex items-center gap-2">
                     <Clock className="h-5 w-5 text-amber-600" />
-                    <h2 className="text-lg font-bold text-amber-800">Pending Approval ({users.filter(u => !u.is_active).length})</h2>
+                    <h2 className="text-lg font-bold text-amber-800">Deactivated ({users.filter(u => !u.is_active).length})</h2>
                   </div>
                   <div className="divide-y divide-amber-100">
                     {users.filter(u => !u.is_active).map(u => (
@@ -211,13 +223,20 @@ export default function SettingsPage() {
                           <div className="text-xs text-gray-400 mt-0.5">Registered {new Date(u.created_at).toLocaleDateString()}</div>
                         </div>
                         <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-amber-100 text-amber-700">
-                          <Clock className="h-3 w-3" /> Pending
+                          Deactivated
                         </span>
                         <button
                           onClick={() => toggleUserStatus(u.id)}
                           className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-green-600 text-white hover:bg-green-700 transition-colors"
                         >
-                          <CheckCircle className="h-4 w-4" /> Approve
+                          <CheckCircle className="h-4 w-4" /> Reactivate
+                        </button>
+                        <button
+                          onClick={() => removeUser(u.id, u.name)}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-red-50 text-red-700 hover:bg-red-100 transition-colors"
+                          title="Remove completely"
+                        >
+                          <Trash2 className="h-4 w-4" /> Remove
                         </button>
                       </div>
                     ))}
@@ -261,9 +280,14 @@ export default function SettingsPage() {
                         )}
                         <span className="badge-green">Active</span>
                         {u.id !== user.id && (
-                          <button onClick={() => toggleUserStatus(u.id)} className="btn-ghost p-1.5" title="Deactivate">
-                            <ToggleRight className="h-5 w-5 text-green-600" />
-                          </button>
+                          <>
+                            <button onClick={() => toggleUserStatus(u.id)} className="btn-ghost p-1.5" title="Deactivate">
+                              <ToggleRight className="h-5 w-5 text-green-600" />
+                            </button>
+                            <button onClick={() => removeUser(u.id, u.name)} className="btn-ghost p-1.5" title="Remove completely">
+                              <Trash2 className="h-4 w-4 text-red-500" />
+                            </button>
+                          </>
                         )}
                       </div>
                     ))}

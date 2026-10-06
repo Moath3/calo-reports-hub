@@ -6,11 +6,10 @@ import { DEFAULT_OT_CONFIG as CFG, getOtConfig } from './otConfig.js';
 
 const work = { status: 'work', scheduledMinutes: 540 };
 
-test('UAE 10h threshold: 9.5h is regular, 10.5h has 30m OT', () => {
-  const uae = getOtConfig('CALO UAE'); // 600 min
-  assert.equal(classifyDay({ workedMinutes: 570, incomplete: false }, work, uae).overtime, 0);
-  const r = classifyDay({ workedMinutes: 630, incomplete: false }, work, uae);
-  assert.equal(r.regular, 600);
+test('UAE threshold is 9h now (flat rule): 9.5h already has 30m OT', () => {
+  const uae = getOtConfig('CALO UAE'); // 540 min (temporary flat 9h)
+  const r = classifyDay({ workedMinutes: 570, incomplete: false }, work, uae);
+  assert.equal(r.regular, 540);
   assert.equal(r.overtime, 30);
 });
 

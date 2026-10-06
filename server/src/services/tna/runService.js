@@ -537,7 +537,7 @@ export function buildWorkbook(result) {
   const s = result.scope, f = result.flags;
   const summary = [
     ['CALO Time & Attendance — Overtime'],
-    ['Overtime rule', 'UAE after 10h · KSA / Kuwait / Bahrain after 9h'],
+    ['Overtime rule', 'after 9h/day — all countries (temporary flat rule)'],
     [],
     ['Scope', `in-scope: ${s.inScope}`, `excluded (mgr/admin): ${s.excluded}`, `no position: ${s.noPosition}`, `unmatched: ${s.unmatched}`],
     ['Flags', `unknown country: ${f.unknownCountry}`, `name mismatches: ${f.nameMismatches}`, `ambiguous IDs: ${f.ambiguousIds}`],

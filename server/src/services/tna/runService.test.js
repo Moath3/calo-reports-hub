@@ -200,7 +200,7 @@ test('mispaired UAE export end-to-end: off day clean, fake OT gone, true OT kept
     assert.equal(n.present, 4);                        // NOT 6 — off day + tail cleared
     assert.deepEqual(n.days.map((d) => d.date), ['2026-09-08', '2026-09-09', '2026-09-11', '2026-09-12']);
     assert.deepEqual(n.days.map((d) => d.hours), [10.88, 11.18, 9.75, 10.77]);
-    assert.equal(n.otDays, 3);                         // UAE >10h: three of the four
+    assert.equal(n.otDays, 4);                         // flat 9h rule: all four days exceed 9h
     assert.equal(n.overnightDays, 4);
     assert.ok(n.days.every((d) => d.overnight && d.stitched));
   } finally { rmSync(p, { force: true }); }

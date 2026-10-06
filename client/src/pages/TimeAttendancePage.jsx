@@ -5,7 +5,7 @@ import { buildBrandedWorkbook } from '../utils/tnaWorkbook';
 
 /**
  * TimeAttendancePage — upload an attendance export (+ optional HR master files),
- * run the per-country overtime engine (UAE 10h; KSA/Kuwait/Bahrain 9h), and view
+ * run the overtime engine (flat 9h/day for all countries, for now), and view
  * a per-country summary + per-employee detail with Excel/CSV download.
  *
  * Masters are uploaded each run (not stored). Country is resolved from the
@@ -122,7 +122,7 @@ export default function TimeAttendancePage() {
       <PageHeader
         eyebrow="HR · Time & Attendance"
         title="Overtime"
-        subtitle="Turn a biometric export into a per-country overtime report. UAE counts OT after 10h; KSA, Kuwait & Bahrain after 9h."
+        subtitle="Turn a biometric export into an overtime report. OT is counted after 9h/day for all countries (temporary flat rule)."
       />
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
@@ -136,7 +136,7 @@ export default function TimeAttendancePage() {
             </summary>
             <div style={{ fontSize: 13, color: 'var(--ink-700)', lineHeight: 1.65, marginTop: 12, display: 'grid', gap: 8 }}>
               <div><b>Reporting window</b> — the <b>attendance file sets the dates</b>. Everything (including the schedule) is clipped to the days the attendance actually covers.</div>
-              <div><b>Attendance file</b> — upload either the <b>raw punch / Transaction export</b> (one row per punch + a Check In/Out state — most accurate, pairs across midnight) or a First-In/Last-Out summary. Overtime: after <b>10h/day in UAE</b>, <b>9h/day in KSA, Kuwait &amp; Bahrain</b>; country is read from Department or entity.</div>
+              <div><b>Attendance file</b> — upload either the <b>raw punch / Transaction export</b> (one row per punch + a Check In/Out state — most accurate, pairs across midnight) or a First-In/Last-Out summary. Overtime: after <b>9h/day for all countries</b> (temporary flat rule; per-country thresholds can be restored later).</div>
               <div><b>Overnight shifts</b> — night shifts that cross midnight are paired into <b>one working day on the punch-in date</b> with real hours (shown as 🌙, "stitched" when rebuilt from split rows). Handles raw punches, the KSA split and the UAE mispaired exports.</div>
               <div><b>&gt;16h flag</b> — any single day over 16h is treated as a <b>missed punch</b>: flagged for review (⚠ with the raw hours) and left out of overtime, never counted as a real shift.</div>
               <div><b>Schedule (optional)</b> — upload HR Ops's monthly roster and it becomes the source of truth: the Daily Log shows the <b>exact scheduled time or OFF for every day</b>, plus Scheduled-vs-Actual variance. OFF / AL / PH / SL come from the roster; a scheduled work day with no punch = <b>Absent</b>. Names are matched to Zelt; anything unmatched is listed on a "Schedule — Unmatched" sheet (those fall back to inferred off-days).</div>

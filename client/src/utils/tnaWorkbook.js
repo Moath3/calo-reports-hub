@@ -83,7 +83,7 @@ export function buildBrandedWorkbook(ExcelJS, data, { inScopeOnly = true, month 
   const banner = (row, text, font, h) => { one.mergeCells(`A${row}:F${row}`); const c = one.getCell(`A${row}`); c.value = text; c.font = font; c.alignment = { vertical: 'middle', wrapText: true }; if (h) one.getRow(row).height = h; };
   banner(1, 'calo', F(28, { bold: true, color: { argb: GREEN } }), 36);
   banner(2, 'Time & Attendance — Summary', F(15, { bold: true }));
-  banner(3, `Period ${periodLabel}   ·   Rule: UAE 10h · KSA/Kuwait/Bahrain 9h   ·   ${inScopeOnly ? 'in-scope only' : 'all employees'}`, F(9, { color: { argb: MUTE } }));
+  banner(3, `Period ${periodLabel}   ·   OT after 9h/day (all countries)   ·   ${inScopeOnly ? 'in-scope only' : 'all employees'}`, F(9, { color: { argb: MUTE } }));
   if (hasSchedule) banner(4, `Schedule: ${data.schedule.tab} — ${data.schedule.linkedInRun} linked${data.schedule.unmatchedCount ? `, ${data.schedule.unmatchedCount} unmatched (see last sheet)` : ''}`, F(9, { color: { argb: GREEN } }));
 
   // KPI strip — the four the report is about + absences/overnight.

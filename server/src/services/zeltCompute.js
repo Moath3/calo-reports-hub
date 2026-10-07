@@ -1091,13 +1091,39 @@ export async function debugBalanceSample() {
     return {
       policyDataKeys: Object.keys(pd),
       unitsTaken: pd.unitsTaken || null,
-      unitsLeft: pd.unitsLeft || null,
       holidayAccruedToBookNow: pd.holidayAccruedToBookNow,
       currentBalanceInDays: pd.currentBalanceInDays,
       workday: pd.currentAverageWorkDayLength,
     };
   });
-  return { pid, totalItems: items.length, withUpcomingOrPending: interesting.length, samples };
+
+  // Probe the absence list (partner OAuth) — the real source of booked future
+  // leave. Report structure + status/type tallies, no names.
+  let absenceProbe;
+  try {
+    const userIds = items.map(it => it.userId).filter(Boolean).slice(0, 10);
+    const absMap = await fetchAbsencesByUser(userIds);
+    const today = new Date();
+    let total = 0, upcoming = 0, sampleFields = null;
+    const statuses = {}, types = {};
+    for (const arr of absMap.values()) {
+      for (const ab of arr) {
+        total++;
+        if (!sampleFields) sampleFields = Object.keys(ab);
+        const st = ab.status || ab.state || ab.approvalStatus || ab.requestStatus || '(none)';
+        statuses[st] = (statuses[st] || 0) + 1;
+        const ty = ab.policyName || ab.policy?.name || ab.type || ab.absenceType || '(none)';
+        types[ty] = (types[ty] || 0) + 1;
+        const start = parseDateSafe(ab.start || ab.startDate);
+        if (start && start > today) upcoming++;
+      }
+    }
+    absenceProbe = { usersProbed: userIds.length, usersWithAbsences: absMap.size, totalAbsences: total, upcomingDated: upcoming, statuses, types, sampleFields };
+  } catch (e) {
+    absenceProbe = { error: `partner absences failed: ${e.status || ''} ${e.message}` };
+  }
+
+  return { pid, totalItems: items.length, withUpcomingOrPending: interesting.length, samples, absenceProbe };
 }
 
 // Per-user basic info — the only place Zelt's partner API exposes employeeId.

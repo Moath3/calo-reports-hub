@@ -368,30 +368,30 @@ async function fetchBalancesForEntityFresh(entityName, asOfDate = null, departme
     // balance aggregate — Zelt's balance endpoint reports unitsTaken.upcoming=0
     // here even when approved future leave exists, so relying on it zeroed the
     // column for everyone. We split annual absences by date + approval status.
-    const yearEnd = new Date(Date.UTC(today.getUTCFullYear(), 11, 31, 23, 59, 59));
+    // Scope to the current holiday year (calendar), matching Zelt's balance tab —
+    // the absence list spans multiple years, so unscoped history/upcoming would
+    // pull in old and far-future leave.
+    const hy = today.getUTCFullYear();
+    const yearStart = new Date(Date.UTC(hy, 0, 1, 0, 0, 0));
+    const yearEnd = new Date(Date.UTC(hy, 11, 31, 23, 59, 59));
     let history = 0;        // annual taken so far this year
-    let upcoming = 0;       // approved, future-dated
-    let pendingDays = 0;    // awaiting approval, future-dated
-    let upcomingThisYear = 0; // approved future before Dec 31 (for the year-end projection)
+    let upcoming = 0;       // approved, future-dated (this year)
+    let pendingDays = 0;    // awaiting approval, future-dated (this year)
     let confidence = 'high';
 
     for (const ab of userAbs) {
       const start = parseDateSafe(ab.start || ab.startDate);
       if (!start) { confidence = 'medium'; continue; }
       if (!isAnnualLeave(ab)) continue;
+      if (start < yearStart || start > yearEnd) continue; // current holiday year only
       const status = String(ab.status || ab.state || '').toLowerCase();
       if (/reject|cancel|declin|withdraw/.test(status)) continue; // not counted
       const days = absenceDays(ab);
       if (days <= 0) continue;
       const isPending = /pending|await|request|review/.test(status);
-      if (start <= today) {
-        history += days;
-      } else if (isPending) {
-        pendingDays += days;
-      } else {
-        upcoming += days;
-        if (start <= yearEnd) upcomingThisYear += days;
-      }
+      if (start <= today) history += days;
+      else if (isPending) pendingDays += days;
+      else upcoming += days;
     }
 
     // PREFERRED: use the live "Available Now" from Zelt's internal balance endpoint
@@ -426,8 +426,8 @@ async function fetchBalancesForEntityFresh(entityName, asOfDate = null, departme
       pending: round1(pendingDays),
       zeltBalance: liveBalance ? round1(liveBalance.zelt_balance) : null,
       // Year-end projection from the real requests: allowance (+ carry-over)
-      // minus annual taken and approved future leave dated before Dec 31.
-      endOfYear: effAllowance != null ? round1(effAllowance + carryOver - history - upcomingThisYear) : null,
+      // minus annual taken and approved future leave this year.
+      endOfYear: effAllowance != null ? round1(effAllowance + carryOver - history - upcoming) : null,
       compensatory: liveBalance ? round1(liveBalance.compensatory || 0) : null,
       // Dated compensatory additions + per-batch expiry (9 months for
       // production crew, 3 months for non-production).
@@ -1268,12 +1268,10 @@ function absenceDays(ab, workdayMinutes = WORKDAY_MINUTES_FALLBACK) {
   // these in MINUTES (same unit as the balance endpoint, where 480 = one day),
   // so convert to working days rather than counting calendar days (which would
   // over-count weekends inside a leave span).
-  const unit = String(ab.lengthUnit || '').toLowerCase();
   if (ab.totalLength != null) {
-    const len = Number(ab.totalLength) || 0;
-    if (unit.includes('day')) return len;                         // already in days/half-days
-    if (unit.includes('hour')) return (len * 60) / (workdayMinutes || WORKDAY_MINUTES_FALLBACK);
-    return len / (workdayMinutes || WORKDAY_MINUTES_FALLBACK);     // default: minutes
+    // totalLength is in MINUTES regardless of lengthUnit (where "day" only means
+    // the absence is booked in whole days); 480 min = one working day.
+    return (Number(ab.totalLength) || 0) / (workdayMinutes || WORKDAY_MINUTES_FALLBACK);
   }
   const start = parseDateSafe(ab.start || ab.startDate);
   const end = parseDateSafe(ab.end || ab.endDate);

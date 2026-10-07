@@ -405,6 +405,10 @@ async function fetchBalancesForEntityFresh(entityName, asOfDate = null, departme
       upcoming: round1(upcoming),
       pending: liveBalance ? round1(liveBalance.pending) : null,
       zeltBalance: liveBalance ? round1(liveBalance.zelt_balance) : null,
+      compensatory: liveBalance ? round1(liveBalance.compensatory || 0) : null,
+      // Flags: high annual (30+) / high compensatory (10+) balances to chase.
+      annualHigh: liveBalance ? round1(liveBalance.zelt_balance) >= 30 : false,
+      compHigh: liveBalance ? round1(liveBalance.compensatory || 0) >= 10 : false,
       availableNow,
       confidence,
     };
@@ -419,6 +423,10 @@ async function fetchBalancesForEntityFresh(entityName, asOfDate = null, departme
     // always stamped "now", making honored past-date requests look ignored.
     asOf: asOfDate ? new Date(asOfDate + 'T00:00:00Z').toISOString() : today.toISOString(),
     count: rows.length,
+    flags: {
+      annualHigh: rows.filter(r => r.annualHigh).length,  // 30+ annual days
+      compHigh: rows.filter(r => r.compHigh).length,       // 10+ compensatory days
+    },
     rows,
     // Diagnostic: when 0 rows match, surface what entities WERE seen in user
     // records so we can spot normalization or field-path mismatches.
@@ -575,6 +583,7 @@ const WORKDAY_MINUTES_FALLBACK = 480; // 8h × 60m — Zelt's default workday
 const POLICY_IDS_TTL_MS = 6 * 60 * 60 * 1000;
 let resolvedAnnualPolicyIds = null;
 let resolvedAnnualPolicyAt = 0;
+let resolvedCompPolicyIds = [];  // "Compensatory Days" policies — resolved alongside annual
 
 async function tryFetchBalances(userIds, asOfDate = null) {
   if (!userIds.length) return new Map();
@@ -602,6 +611,10 @@ async function tryFetchBalances(userIds, asOfDate = null) {
           const n = p.name || p.policyName || '';
           return /annual|vacation/i.test(n) && !/unpaid/i.test(n);
         })
+        .map(p => p.id)
+        .slice(0, ANNUAL_POLICY_PROBE_LIMIT);
+      resolvedCompPolicyIds = arr
+        .filter(p => /compensator/i.test(p.name || p.policyName || ''))
         .map(p => p.id)
         .slice(0, ANNUAL_POLICY_PROBE_LIMIT);
       resolvedAnnualPolicyAt = Date.now();
@@ -674,15 +687,49 @@ async function tryFetchBalances(userIds, asOfDate = null) {
       const total = ((policyData.totalAllowanceForCycle || 0)
         - (policyData.unitsTaken?.totalPublicHolidays || 0)
         - (policyData.unitsLeft?.unusedPublicHolidays || 0)) / workdayMinutes;
-      const prev = balances.get(uid) || { available_now: 0, upcoming_booked: 0, pending: 0, zelt_balance: 0, total: 0, policyName: null };
+      const prev = balances.get(uid) || { available_now: 0, upcoming_booked: 0, pending: 0, zelt_balance: 0, total: 0, compensatory: 0, policyName: null };
       balances.set(uid, {
         available_now: prev.available_now + accrued,
         upcoming_booked: prev.upcoming_booked + upcoming,
         pending: prev.pending + pending,
         zelt_balance: prev.zelt_balance + zeltBal,
         total: prev.total + total,
+        compensatory: prev.compensatory,
         policyName: prev.policyName || policyData.policyName || null,
       });
+    }
+  }
+
+  // Compensatory Days balance per user (currentBalanceInDays, summed across the
+  // comp policies). Added onto the same map so the leave page shows it alongside
+  // annual.
+  if (resolvedCompPolicyIds.length) {
+    const compResults = await Promise.all(resolvedCompPolicyIds.map(async (pid) => {
+      const all = [];
+      let page = 1;
+      while (true) {
+        try {
+          const params = { policyId: pid, Calendar: 'current', page, pageSize: PAGE_SIZE };
+          if (asOfDate) params.asOfDate = asOfDate;
+          const data = await botGet('/apiv2/absences/company/balance', params);
+          all.push(...(data.items || []).map(item => ({ item, pid })));
+          if (page >= (data.totalPages || 1)) break;
+          page++;
+        } catch { break; }
+      }
+      return all;
+    }));
+    for (const items of compResults) {
+      for (const { item, pid } of items) {
+        const d = item[pid];
+        if (!d) continue;
+        const wd = d.currentAverageWorkDayLength || WORKDAY_MINUTES_FALLBACK;
+        const days = (asOfDate && d.currentBalanceInDaysAsOfDate != null)
+          ? d.currentBalanceInDaysAsOfDate
+          : (d.currentBalanceInDays != null ? d.currentBalanceInDays : (d.currentBalance || 0) / wd);
+        const prev = balances.get(item.userId) || { available_now: 0, upcoming_booked: 0, pending: 0, zelt_balance: 0, total: 0, compensatory: 0, policyName: null };
+        balances.set(item.userId, { ...prev, compensatory: (prev.compensatory || 0) + (Number(days) || 0) });
+      }
     }
   }
   return balances;

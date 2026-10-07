@@ -32,6 +32,7 @@ export default function ZeltLeavePage() {
   const [loadingBalances, setLoadingBalances] = useState(false);
   const [error, setError] = useState(null);
   const [search, setSearch] = useState('');
+  const [flagFilter, setFlagFilter] = useState(null); // null | 'annual' | 'comp'
   const [sort, setSort] = useState({ key: 'name', dir: 'asc' });
   const [bootstrap, setBootstrap] = useState(null);
 
@@ -137,6 +138,8 @@ export default function ZeltLeavePage() {
     if (!data?.rows) return [];
     const q = search.trim().toLowerCase();
     let rows = data.rows;
+    if (flagFilter === 'annual') rows = rows.filter(r => r.annualHigh);
+    else if (flagFilter === 'comp') rows = rows.filter(r => r.compHigh);
     if (q) {
       rows = rows.filter(r =>
         (r.name || '').toLowerCase().includes(q) ||
@@ -156,7 +159,7 @@ export default function ZeltLeavePage() {
       return String(av).localeCompare(String(bv)) * mul;
     });
     return rows;
-  }, [data, search, sort]);
+  }, [data, search, sort, flagFilter]);
 
   const handleSort = (key) => {
     setSort(s => s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'asc' });
@@ -462,6 +465,24 @@ export default function ZeltLeavePage() {
             </div>
           </div>
 
+          {data.flags && (data.flags.annualHigh > 0 || data.flags.compHigh > 0) && (
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 12, fontSize: 13 }}>
+              {data.flags.annualHigh > 0 && (
+                <button onClick={() => setFlagFilter(flagFilter === 'annual' ? null : 'annual')}
+                  style={{ ...flagSummary, outline: flagFilter === 'annual' ? '2px solid #B45309' : 'none' }}>
+                  <b>{data.flags.annualHigh}</b> with 30+ annual days
+                </button>
+              )}
+              {data.flags.compHigh > 0 && (
+                <button onClick={() => setFlagFilter(flagFilter === 'comp' ? null : 'comp')}
+                  style={{ ...flagSummary, outline: flagFilter === 'comp' ? '2px solid #B45309' : 'none' }}>
+                  <b>{data.flags.compHigh}</b> with 10+ compensatory days
+                </button>
+              )}
+              {flagFilter && <button onClick={() => setFlagFilter(null)} style={{ ...ghostBtn, fontSize: 12 }}>Clear filter</button>}
+            </div>
+          )}
+
           <div style={{ overflowX: 'auto', borderRadius: 'var(--r-md)', border: '1px solid var(--ink-200)' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
               <thead>
@@ -476,17 +497,19 @@ export default function ZeltLeavePage() {
                   <Th onClick={() => handleSort('upcoming')} active={sort.key === 'upcoming'} dir={sort.dir} align="right">Upcoming</Th>
                   <Th onClick={() => handleSort('pending')} active={sort.key === 'pending'} dir={sort.dir} align="right">Pending</Th>
                   <Th onClick={() => handleSort('availableNow')} active={sort.key === 'availableNow'} dir={sort.dir} align="right">Available Now</Th>
-                  <Th onClick={() => handleSort('zeltBalance')} active={sort.key === 'zeltBalance'} dir={sort.dir} align="right">Zelt Balance</Th>
+                  <Th onClick={() => handleSort('zeltBalance')} active={sort.key === 'zeltBalance'} dir={sort.dir} align="right">Annual (Zelt)</Th>
+                  <Th onClick={() => handleSort('compensatory')} active={sort.key === 'compensatory'} dir={sort.dir} align="right">Compensatory</Th>
+                  <Th onClick={() => handleSort('compHigh')} active={sort.key === 'compHigh'} dir={sort.dir}>Flags</Th>
                 </tr>
               </thead>
               <tbody>
                 {filtered.length === 0 ? (
-                  <tr><td colSpan={data.multi ? 11 : 10} style={{ padding: '24px 16px', textAlign: 'center', color: 'var(--ink-500)' }}>
+                  <tr><td colSpan={data.multi ? 13 : 12} style={{ padding: '24px 16px', textAlign: 'center', color: 'var(--ink-500)' }}>
                     No employees match the filter.
                   </td></tr>
                 ) : filtered.map((r, i) => (
                   <tr key={r.userId || r.employeeId || i}
-                      style={{ background: i % 2 === 0 ? '#fff' : 'var(--ink-50)' }}>
+                      style={{ background: r.annualHigh || r.compHigh ? '#FFFBEB' : (i % 2 === 0 ? '#fff' : 'var(--ink-50)') }}>
                     <Td mono>{r.employeeId || '—'}</Td>
                     <Td bold>{r.name}</Td>
                     <Td>{r.site || '—'}</Td>
@@ -500,7 +523,13 @@ export default function ZeltLeavePage() {
                       {r.availableNow != null ? `${r.availableNow.toFixed(1)}d` :
                         <span style={{ color: 'var(--ink-500)', fontWeight: 400 }}>—</span>}
                     </Td>
-                    <Td align="right">{r.zeltBalance != null ? `${r.zeltBalance.toFixed(1)}d` : '—'}</Td>
+                    <Td align="right"><span style={r.annualHigh ? { color: '#B45309', fontWeight: 700 } : undefined}>{r.zeltBalance != null ? `${r.zeltBalance.toFixed(1)}d` : '—'}</span></Td>
+                    <Td align="right"><span style={r.compHigh ? { color: '#B45309', fontWeight: 700 } : undefined}>{r.compensatory != null ? `${r.compensatory.toFixed(1)}d` : '—'}</span></Td>
+                    <Td>
+                      {r.annualHigh && <span style={flagChip}>30+ annual</span>}
+                      {r.compHigh && <span style={flagChip}>10+ comp</span>}
+                      {!r.annualHigh && !r.compHigh && <span style={{ color: 'var(--ink-300)' }}>—</span>}
+                    </Td>
                   </tr>
                 ))}
               </tbody>
@@ -711,6 +740,13 @@ const ghostBtn = {
   cursor: 'pointer', textDecoration: 'none',
 };
 
+const flagSummary = {
+  display: 'inline-flex', alignItems: 'center', gap: 6,
+  background: '#FEF3E2', color: '#7A4F12', border: '1px solid #F6E0B6',
+  borderRadius: 'var(--r-md)', padding: '8px 14px', fontSize: 13,
+  cursor: 'pointer', fontWeight: 600,
+};
+
 // ---- helpers ------------------------------------------------------
 
 function formatErr(e, fallback) {
@@ -726,12 +762,18 @@ function formatErr(e, fallback) {
 function buildLeaveCsv(data) {
   const rows = data?.rows || [];
   const cols = data?.multi
-    ? ['employeeId', 'name', 'site', 'department', 'jobTitle', 'entity', 'policy', 'startDate', 'allowance', 'upcoming', 'pending', 'availableNow', 'zeltBalance']
-    : ['employeeId', 'name', 'site', 'department', 'jobTitle', 'policy', 'startDate', 'allowance', 'upcoming', 'pending', 'availableNow', 'zeltBalance'];
+    ? ['employeeId', 'name', 'site', 'department', 'jobTitle', 'entity', 'policy', 'startDate', 'allowance', 'upcoming', 'pending', 'availableNow', 'zeltBalance', 'compensatory', 'annualHigh', 'compHigh']
+    : ['employeeId', 'name', 'site', 'department', 'jobTitle', 'policy', 'startDate', 'allowance', 'upcoming', 'pending', 'availableNow', 'zeltBalance', 'compensatory', 'annualHigh', 'compHigh'];
   const header = cols.join(',');
   const body = rows.map(r => cols.map(c => csvCell(r[c])).join(',')).join('\n');
   return `${header}\n${body}\n`;
 }
+
+const flagChip = {
+  display: 'inline-block', fontSize: 10.5, fontWeight: 800, color: '#B45309',
+  background: '#FEF3E2', border: '1px solid #F6E0B6', borderRadius: 999,
+  padding: '2px 8px', marginRight: 4, whiteSpace: 'nowrap',
+};
 
 function csvCell(v) {
   if (v == null) return '';

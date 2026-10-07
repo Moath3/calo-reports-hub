@@ -34,7 +34,7 @@ import { botGet, botConfigured, getBotStatus } from '../services/zeltBot.js';
 import { listEntities, listDepartments, entitiesForDepartments, getBalancesForEntity, clearCaches, debugSampleUser } from '../services/zeltCompute.js';
 import { runAudit } from '../services/zeltAudit.js';
 import { getMobility } from '../services/zeltMobility.js';
-import { getWatchState, runSnapshotAndDiff, sendWeeklyDigestIfDue } from '../services/zeltWatcher.js';
+import { getWatchState, runSnapshotAndDiff, sendWeeklyDigestIfDue, sendCompExpiryDigestIfDue } from '../services/zeltWatcher.js';
 import { getDimensions, runReport, warmIndex, getIndexStatus, clearIndex, SENSITIVE_FIELDS } from '../services/zeltReport.js';
 
 const IS_PROD = process.env.NODE_ENV === 'production';
@@ -315,6 +315,13 @@ router.post('/watch/run', dataLimiter, requireAuth, requireAdmin, asyncHandler(a
 router.post('/watch/digest', dataLimiter, requireAuth, requireAdmin, asyncHandler(async (req, res) => {
   const result = await sendWeeklyDigestIfDue({ force: true });
   logZeltAudit(req.user.id, 'zelt.watch.digest', { sent: result.sent, skipped: result.skipped || null });
+  res.json(result);
+}));
+
+// Admin-only: force-send the weekly compensatory-expiry alert (counts only).
+router.post('/watch/comp-digest', dataLimiter, requireAuth, requireAdmin, asyncHandler(async (req, res) => {
+  const result = await sendCompExpiryDigestIfDue({ force: true });
+  logZeltAudit(req.user.id, 'zelt.watch.compDigest', { sent: result.sent, skipped: result.skipped || null });
   res.json(result);
 }));
 

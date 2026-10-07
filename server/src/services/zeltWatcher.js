@@ -11,6 +11,7 @@
 import { getDb, persistNow, kvGet, kvSet } from '../db/database.js';
 import { runAudit } from './zeltAudit.js';
 import { generateHygieneDigest } from './aiService.js';
+import { getCompExpiryAggregates } from './zeltCompute.js';
 
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
@@ -21,6 +22,7 @@ const HISTORY_LIMIT = 30;
 const TOP_CHECKS_LIMIT = 10;
 const SLACK_TIMEOUT_MS = 10000;
 const LAST_DIGEST_KEY = 'watcher_last_digest_at';
+const LAST_COMP_DIGEST_KEY = 'watcher_last_comp_digest_at';
 
 // Severity per check — mirrors the client's SEVERITY map in ZeltAuditPage.jsx
 // (single server-side source for the watcher). 'info' checks are displayed
@@ -281,6 +283,7 @@ export function getWatchState() {
   const latest = rows.length ? rows[rows.length - 1] : null;
   const prev = rows.length > 1 ? rows[rows.length - 2] : null;
   const lastDigestAt = kvGet(LAST_DIGEST_KEY);
+  const lastCompDigestAt = kvGet(LAST_COMP_DIGEST_KEY);
   return {
     snapshots: rows.map(s => ({
       capturedAt: s.capturedAt,
@@ -305,6 +308,7 @@ export function getWatchState() {
     diff: latest && prev ? diffSnapshots(prev.checks, latest.checks) : null,
     lastRun: latest ? new Date(latest.capturedAt).toISOString() : null,
     lastDigestAt: lastDigestAt || null,
+    lastCompDigestAt: lastCompDigestAt || null,
     slackConfigured: Boolean(process.env.SLACK_WEBHOOK_URL),
   };
 }
@@ -424,6 +428,86 @@ export async function sendWeeklyDigestIfDue({ force = false } = {}) {
   }
 }
 
+// ---- Weekly compensatory-expiry alert ----------------------------------
+// Separate weekly Slack message (own cadence, own kv timestamp). COUNTS ONLY
+// — the named list + CSV live on the Hub's /leave-balances page.
+
+const num = (n) => (Math.round((Number(n) || 0) * 10) / 10).toString();
+const emp = (n) => `${n} ${n === 1 ? 'employee' : 'employees'}`;
+
+// Pure: build the Slack text from the aggregates object. No employee names.
+export function formatCompExpirySlack(agg) {
+  if (!agg || agg.available === false) {
+    return `*HR Hub — compensatory-day expiry*\nCould not compute this week${agg?.reason ? ` — ${agg.reason}` : ''}.`;
+  }
+  const { all, production: p, nonProduction: n, window: w } = agg;
+  const lines = [];
+  lines.push(`*HR Hub — compensatory-day expiry* (as of ${agg.asOf})`);
+  lines.push(`_Expiry rule: production keeps ${w.prodMonths} months, non-production expires in ${w.nonProdMonths}. "Expiring soon" = within ${w.expiringSoonDays} days._`);
+  if (all.holders === 0) {
+    lines.push('');
+    lines.push('No employees are holding compensatory days right now. Nothing to chase. :white_check_mark:');
+    return lines.join('\n');
+  }
+  lines.push('');
+  lines.push(`• *${all.holders}* ${all.holders === 1 ? 'employee holds' : 'employees hold'} comp days — *${num(all.totalDays)}d* total, *${all.highComp}* with 10+ days.`);
+  lines.push(`• *Expiring soon:* ${emp(all.expiringEmployees)}, *${num(all.expiringDays)}d*`);
+  lines.push(`    ◦ non-production (${w.nonProdMonths}mo): ${emp(n.expiringEmployees)}, ${num(n.expiringDays)}d`);
+  lines.push(`    ◦ production (${w.prodMonths}mo): ${emp(p.expiringEmployees)}, ${num(p.expiringDays)}d`);
+  if (all.expiredEmployees > 0) {
+    lines.push(`• *Already expired:* ${emp(all.expiredEmployees)}, ${num(all.expiredDays)}d (non-prod ${num(n.expiredDays)}d · prod ${num(p.expiredDays)}d)`);
+  }
+  lines.push('');
+  lines.push('Named list + CSV → the Hub’s Leave Balances page, Compensatory column.');
+  return lines.join('\n');
+}
+
+/**
+ * Sends the weekly comp-expiry Slack alert when due (own kv timestamp, same
+ * 6.5-day gate; `force` bypasses). Always resolves to { sent, skipped?, preview }.
+ */
+export async function sendCompExpiryDigestIfDue({ force = false } = {}) {
+  if (!force) {
+    const last = kvGet(LAST_COMP_DIGEST_KEY);
+    if (last && Date.now() - Date.parse(last) < DIGEST_MIN_AGE_MS) {
+      return { sent: false, skipped: 'comp alert not due yet', preview: null };
+    }
+  }
+
+  let aggregates;
+  try {
+    aggregates = await getCompExpiryAggregates();
+  } catch (err) {
+    return { sent: false, skipped: `comp aggregates failed: ${err.message}`, preview: null };
+  }
+  const text = formatCompExpirySlack(aggregates);
+
+  const webhook = process.env.SLACK_WEBHOOK_URL;
+  if (!webhook) {
+    return { sent: false, skipped: 'SLACK_WEBHOOK_URL not set', preview: text };
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), SLACK_TIMEOUT_MS);
+  try {
+    const res = await fetch(webhook, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      return { sent: false, skipped: `Slack POST failed (${res.status})`, preview: text };
+    }
+    kvSet(LAST_COMP_DIGEST_KEY, new Date().toISOString());
+    return { sent: true, preview: text };
+  } catch (err) {
+    return { sent: false, skipped: `Slack POST failed: ${err.message}`, preview: text };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // ---- Scheduler ---------------------------------------------------------
 
 let schedulerStarted = false;
@@ -437,6 +521,9 @@ async function watcherTick(label) {
     await runSnapshotAndDiff();
     const digest = await sendWeeklyDigestIfDue();
     if (digest.sent) console.log('[zelt-watcher] weekly digest sent to Slack');
+    // Separate weekly comp-expiry alert (own cadence; swallows its own errors).
+    const compDigest = await sendCompExpiryDigestIfDue();
+    if (compDigest.sent) console.log('[zelt-watcher] weekly comp-expiry alert sent to Slack');
   } catch (err) {
     console.warn(`[zelt-watcher] ${label} skipped: ${err.message}`);
   }

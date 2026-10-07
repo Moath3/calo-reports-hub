@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { diffSnapshots, buildAggregates, SEVERITY } from './zeltWatcher.js';
+import { diffSnapshots, buildAggregates, SEVERITY, formatCompExpirySlack } from './zeltWatcher.js';
 import { generateHygieneDigest } from './aiService.js';
 
 // ---- diffSnapshots (pure) ----------------------------------------------
@@ -172,4 +172,41 @@ test('buildAggregates: new/resolved counts and week-over-week trend', () => {
   assert.equal(a.trend.delta, -3);    // 6 now vs 9 a week ago
   assert.equal(a.topChecks[0].check, 'duplicateEmployeeIds'); // high beats medium
   assert.equal(a.topChecks[0].delta, 1);
+});
+
+// ---- formatCompExpirySlack (pure, COUNTS ONLY) -------------------------
+
+const COMP_AGG = {
+  available: true,
+  asOf: '2026-10-07',
+  all: { holders: 3, highComp: 2, totalDays: 27, expiringEmployees: 2, expiringDays: 5, expiredEmployees: 1, expiredDays: 1 },
+  production: { holders: 1, highComp: 1, totalDays: 12, expiringEmployees: 1, expiringDays: 2, expiredEmployees: 0, expiredDays: 0 },
+  nonProduction: { holders: 2, highComp: 1, totalDays: 15, expiringEmployees: 1, expiringDays: 3, expiredEmployees: 1, expiredDays: 1 },
+  window: { expiringSoonDays: 45, prodMonths: 9, nonProdMonths: 3 },
+};
+
+test('formatCompExpirySlack: states the 3 vs 9 month rule and the split', () => {
+  const text = formatCompExpirySlack(COMP_AGG);
+  assert.match(text, /production keeps 9 months, non-production expires in 3/);
+  assert.match(text, /\*3\* employees hold comp days/);
+  assert.match(text, /Expiring soon:\* 2 employees, \*5d/);
+  assert.match(text, /non-production \(3mo\): 1 employee,/); // singular, not "1 employees"
+  assert.match(text, /production \(9mo\): 1 employee,/);
+  assert.match(text, /Already expired:\* 1 employee, 1d/);
+  assert.match(text, /Leave Balances page/); // points to the Hub for names
+});
+
+test('formatCompExpirySlack: never leaks a name field even if present', () => {
+  // The aggregates object carries only counts; a formatter must not echo
+  // anything but numbers. Guard against accidental name plumbing.
+  const text = formatCompExpirySlack({ ...COMP_AGG, name: 'Imran Ahmad', employeeId: 'FTE0099' });
+  assert.doesNotMatch(text, /Imran|FTE0099/);
+});
+
+test('formatCompExpirySlack: empty and unavailable states are safe', () => {
+  const empty = formatCompExpirySlack({ available: true, asOf: '2026-10-07', all: { holders: 0, highComp: 0, totalDays: 0, expiringEmployees: 0, expiringDays: 0, expiredEmployees: 0, expiredDays: 0 }, production: {}, nonProduction: {}, window: { expiringSoonDays: 45, prodMonths: 9, nonProdMonths: 3 } });
+  assert.match(empty, /No employees are holding compensatory days/);
+  const down = formatCompExpirySlack({ available: false, reason: 'Zelt bot not configured' });
+  assert.match(down, /Could not compute this week — Zelt bot not configured/);
+  assert.doesNotThrow(() => formatCompExpirySlack(null));
 });

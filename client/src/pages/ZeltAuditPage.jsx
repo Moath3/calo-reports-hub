@@ -405,6 +405,7 @@ function WatcherCard({ onData }) {
   const [running, setRunning] = useState(false);
   const [digesting, setDigesting] = useState(false);
   const [digest, setDigest] = useState(null);
+  const [compDigesting, setCompDigesting] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -444,6 +445,19 @@ function WatcherCard({ onData }) {
     }
   };
 
+  const sendCompDigest = async () => {
+    setCompDigesting(true);
+    setDigest(null);
+    try {
+      const r = await api.zeltWatchCompDigest();
+      setDigest(r);
+    } catch (e) {
+      setDigest({ error: e?.message || 'Comp alert failed' });
+    } finally {
+      setCompDigesting(false);
+    }
+  };
+
   const snaps = (data?.snapshots || []).slice(-30);
   const maxFlagged = Math.max(...snaps.map(s => s.totalFlagged || 0), 1);
   const lastSnapshotAt = data?.latest?.capturedAt || data?.lastRun || null;
@@ -468,12 +482,18 @@ function WatcherCard({ onData }) {
         {data?.lastDigestAt && (
           <Pill tone="neutral" size="sm" icon="Send">Last digest {fmtWhen(data.lastDigestAt)}</Pill>
         )}
+        {data?.lastCompDigestAt && (
+          <Pill tone="neutral" size="sm" icon="CalendarClock">Last comp alert {fmtWhen(data.lastCompDigestAt)}</Pill>
+        )}
         <div style={{ flex: 1 }} />
         <Btn variant="secondary" size="sm" icon={running ? 'LoaderCircle' : 'Camera'} onClick={runNow} disabled={running || loading}>
           {running ? 'Running… (~30s)' : 'Run snapshot now'}
         </Btn>
-        <Btn variant="secondary" size="sm" icon={digesting ? 'LoaderCircle' : 'Send'} onClick={sendDigest} disabled={digesting || loading}>
+        <Btn variant="secondary" size="sm" icon={digesting ? 'LoaderCircle' : 'Send'} onClick={sendDigest} disabled={digesting || compDigesting || loading}>
           {digesting ? 'Sending…' : 'Send digest now'}
+        </Btn>
+        <Btn variant="secondary" size="sm" icon={compDigesting ? 'LoaderCircle' : 'CalendarClock'} onClick={sendCompDigest} disabled={digesting || compDigesting || loading}>
+          {compDigesting ? 'Sending…' : 'Send comp alert now'}
         </Btn>
       </div>
 

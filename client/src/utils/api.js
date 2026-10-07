@@ -359,6 +359,9 @@ class ApiClient {
   async zeltWatchDigest() {
     return this.request('/zelt/watch/digest', { method: 'POST' });
   }
+  async zeltWatchCompDigest() {
+    return this.request('/zelt/watch/comp-digest', { method: 'POST' });
+  }
   // Zelt report builder
   async zeltReportDimensions() {
     return this.request('/zelt/report/dimensions');

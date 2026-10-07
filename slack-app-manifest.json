@@ -1,0 +1,29 @@
+{
+    "display_information": {
+        "name": "HR Hub",
+        "description": "HR automation from the CALO Reports Hub: Zelt hygiene digests and leave / compensatory-day expiry alerts.",
+        "background_color": "#02b376"
+    },
+    "features": {
+        "bot_user": {
+            "display_name": "HR Hub",
+            "always_online": true
+        }
+    },
+    "oauth_config": {
+        "scopes": {
+            "bot": [
+                "incoming-webhook",
+                "chat:write"
+            ]
+        }
+    },
+    "settings": {
+        "org_deploy_enabled": false,
+        "socket_mode_enabled": false,
+        "token_rotation_enabled": false,
+        "interactivity": {
+            "is_enabled": false
+        }
+    }
+}

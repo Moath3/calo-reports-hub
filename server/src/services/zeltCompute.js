@@ -827,6 +827,129 @@ async function enrichCompAdditions(holders, balances, asOfDate) {
   await Promise.all(Array.from({ length: CONCURRENCY }, worker));
 }
 
+// ---- Company-wide compensatory-expiry aggregates (COUNTS ONLY) ----------
+// Powers the weekly HR Hub Slack alert. Never returns names — only counts and
+// day totals, split production (9-month window) vs non-production (3-month).
+
+// Pure: roll a list of comp holders up into counts. A holder is
+// { isProduction, compensatory, compExpiringDays, compExpiredDays }.
+export function summarizeCompExpiry(holders) {
+  const bucket = () => ({ holders: 0, highComp: 0, totalDays: 0, expiringEmployees: 0, expiringDays: 0, expiredEmployees: 0, expiredDays: 0 });
+  const all = bucket(), production = bucket(), nonProduction = bucket();
+  const add = (b, h) => {
+    b.holders += 1;
+    b.totalDays += Number(h.compensatory) || 0;
+    if ((Number(h.compensatory) || 0) >= 10) b.highComp += 1;
+    if ((Number(h.compExpiringDays) || 0) > 0) { b.expiringEmployees += 1; b.expiringDays += Number(h.compExpiringDays) || 0; }
+    if ((Number(h.compExpiredDays) || 0) > 0) { b.expiredEmployees += 1; b.expiredDays += Number(h.compExpiredDays) || 0; }
+  };
+  for (const h of holders || []) {
+    add(all, h);
+    add(h.isProduction ? production : nonProduction, h);
+  }
+  const fin = (b) => ({ ...b, totalDays: round1(b.totalDays), expiringDays: round1(b.expiringDays), expiredDays: round1(b.expiredDays) });
+  return {
+    all: fin(all),
+    production: fin(production),
+    nonProduction: fin(nonProduction),
+    window: { expiringSoonDays: COMP_EXPIRING_SOON_DAYS, prodMonths: COMP_EXPIRY_MONTHS_PROD, nonProdMonths: COMP_EXPIRY_MONTHS_NONPROD },
+  };
+}
+
+// Async: scan every compensatory policy company-wide, enrich dated additions,
+// and return counts only. Independent of tryFetchBalances (leave page) so that
+// path stays untouched. Best-effort: returns zeros/available:false on failure.
+export async function getCompExpiryAggregates(asOfDate = null) {
+  const asOf = asOfDate || new Date().toISOString().slice(0, 10);
+  if (!botConfigured()) {
+    return { available: false, reason: 'Zelt bot not configured', asOf, ...summarizeCompExpiry([]) };
+  }
+
+  // Discover compensatory policy IDs (own lookup — does not touch the shared
+  // annual/comp policy cache used by the leave page).
+  let compPolicyIds = [];
+  try {
+    const policies = await botGet('/apiv2/absence-policies/extended');
+    const arr = Array.isArray(policies) ? policies : (policies?.items || []);
+    compPolicyIds = arr
+      .filter(p => /compensator/i.test(p.name || p.policyName || ''))
+      .map(p => p.id)
+      .slice(0, ANNUAL_POLICY_PROBE_LIMIT);
+  } catch (err) {
+    return { available: false, reason: `policy lookup failed (${err.status || ''} ${err.message})`, asOf, ...summarizeCompExpiry([]) };
+  }
+  if (!compPolicyIds.length) {
+    return { available: true, asOf, ...summarizeCompExpiry([]) };
+  }
+
+  // Employed users only → production/non-production map (same employed filter
+  // as the balances path, minus the entity/department scoping).
+  const users = await fetchAllUsers();
+  const seen = new Map();
+  for (const u of users) {
+    const k = u.userId || u.id || u.employeeId || JSON.stringify(u).slice(0, 40);
+    if (!seen.has(k)) seen.set(k, u);
+  }
+  const prodByUser = new Map();
+  for (const u of seen.values()) {
+    const status = u?.accountStatus || u?.status || u?.lifecycle?.status;
+    if (status === 'Deactivated' || status === 'Terminated') continue;
+    const eventStatus = u?.userEvent?.status || u?.lifecycle?.status;
+    if (eventStatus === 'Terminated' || eventStatus === 'Resigned' || eventStatus === 'Offboarded') continue;
+    if (u?.leaveDate || u?.lifecycle?.leaveDate) continue;
+    prodByUser.set(u.userId || u.id, isProductionEmployee(u));
+  }
+
+  // Comp balance per policy (paginated), employed users only.
+  const balances = new Map();
+  const compHolders = [];
+  const compResults = await Promise.all(compPolicyIds.map(async (pid) => {
+    const all = [];
+    let page = 1;
+    while (true) {
+      try {
+        const params = { policyId: pid, Calendar: 'current', page, pageSize: PAGE_SIZE };
+        if (asOfDate) params.asOfDate = asOfDate;
+        const data = await botGet('/apiv2/absences/company/balance', params);
+        all.push(...(data.items || []).map(item => ({ item, pid })));
+        if (page >= (data.totalPages || 1)) break;
+        page++;
+      } catch { break; }
+    }
+    return all;
+  }));
+  for (const items of compResults) {
+    for (const { item, pid } of items) {
+      if (!prodByUser.has(item.userId)) continue; // employed users only
+      const d = item[pid];
+      if (!d) continue;
+      const wd = d.currentAverageWorkDayLength || WORKDAY_MINUTES_FALLBACK;
+      const days = (asOfDate && d.currentBalanceInDaysAsOfDate != null)
+        ? d.currentBalanceInDaysAsOfDate
+        : (d.currentBalanceInDays != null ? d.currentBalanceInDays : (d.currentBalance || 0) / wd);
+      const isProd = prodByUser.get(item.userId) === true;
+      const prev = balances.get(item.userId) || { compensatory: 0, isProduction: isProd };
+      balances.set(item.userId, { ...prev, compensatory: (prev.compensatory || 0) + (Number(days) || 0) });
+      if ((Number(days) || 0) !== 0) compHolders.push({ uid: item.userId, pid, wd, isProd });
+    }
+  }
+  await enrichCompAdditions(compHolders, balances, asOfDate);
+
+  // Keep only employees who actually hold (or recently held) comp days.
+  const holders = [];
+  for (const b of balances.values()) {
+    const held = (Number(b.compensatory) || 0) > 0 || (b.compExpiringDays || 0) > 0 || (b.compExpiredDays || 0) > 0;
+    if (!held) continue;
+    holders.push({
+      isProduction: b.isProduction === true,
+      compensatory: b.compensatory || 0,
+      compExpiringDays: b.compExpiringDays || 0,
+      compExpiredDays: b.compExpiredDays || 0,
+    });
+  }
+  return { available: true, asOf, ...summarizeCompExpiry(holders) };
+}
+
 // Per-user basic info — the only place Zelt's partner API exposes employeeId.
 // Probed once per session, then cached.
 const BASIC_ENDPOINT_CANDIDATES = [

@@ -575,7 +575,7 @@ export default function ZeltLeavePage() {
                     <tr>
                       <td colSpan={(data.multi ? 13 : 12) + (showEoy ? 1 : 0)} style={{ padding: '10px 18px', background: 'var(--ink-50)', borderBottom: '1px solid var(--ink-200)' }}>
                         <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--ink-500)', letterSpacing: '.06em', textTransform: 'uppercase', marginBottom: 8 }}>
-                          Compensatory additions — {r.isProduction ? 'production' : 'non-production'}: expire {r.compExpiryMonths ?? (r.isProduction ? 9 : 3)} months after each add date
+                          Compensatory additions — existing days (on/before 15 Oct 2026) expire 15 Jul 2027; newer {r.isProduction ? 'production' : 'non-production'} days expire {r.isProduction ? 9 : 3} months after the add date
                         </div>
                         <div style={{ display: 'grid', gap: 6 }}>
                           {r.compAdditions.map((a, j) => (
@@ -585,6 +585,7 @@ export default function ZeltLeavePage() {
                               <span style={{ color: a.status === 'expired' ? '#8C2929' : a.status === 'expiring' ? '#8A5A1A' : 'var(--ink-500)', fontWeight: a.status !== 'active' ? 700 : 400 }}>
                                 → expires {a.expiresOn}{a.status === 'expired' ? ' (EXPIRED)' : a.status === 'expiring' ? ` (in ${a.daysToExpiry}d)` : ''}
                               </span>
+                              {a.grace && <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--ink-400)', background: 'var(--ink-100, #eef0ee)', borderRadius: 999, padding: '1px 7px' }}>grace</span>}
                               {a.note && <span style={{ color: 'var(--ink-500)', fontStyle: 'italic' }}>“{a.note}”</span>}
                             </div>
                           ))}

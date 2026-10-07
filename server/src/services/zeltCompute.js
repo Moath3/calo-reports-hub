@@ -791,6 +791,16 @@ function addMonths(iso, n) {
   return d.toISOString().slice(0, 10);
 }
 
+// Transition rule (the per-batch expiry policy is not operational yet): every
+// compensatory addition dated ON OR BEFORE the policy start keeps a single
+// grace expiry — 9 months after 15 Oct 2026 = 15 Jul 2027 — instead of being
+// retroactively expired on its own add-date + 3/9 months. Grants created AFTER
+// the start follow the real per-type rule. Drop/extend COMP_POLICY_START once
+// the policy goes live.
+const COMP_POLICY_START = '2026-10-15';
+const COMP_POLICY_GRACE_MONTHS = 9;
+const COMP_OLD_EXPIRY = addMonths(`${COMP_POLICY_START}T00:00:00Z`, COMP_POLICY_GRACE_MONTHS); // '2027-07-15'
+
 // Fetch each comp holder's one-off adjustment entries and attach compAdditions
 // (with 9-month expiry) to their balance summary. Concurrency-capped for the WAF.
 async function enrichCompAdditions(holders, balances, asOfDate) {
@@ -810,12 +820,16 @@ async function enrichCompAdditions(holders, balances, asOfDate) {
         if (!entries.length) continue;
         const additions = entries.map(e => {
           const addDate = (e.createdAt || '').slice(0, 10);
-          const expiresOn = addMonths(e.createdAt, expiryMonths);
+          // Grace for existing days: anything added on/before the policy start
+          // all expires together on 15 Jul 2027. Newer grants use the per-type
+          // window (3mo non-production / 9mo production) from the add date.
+          const grace = !!addDate && addDate <= COMP_POLICY_START;
+          const expiresOn = grace ? COMP_OLD_EXPIRY : addMonths(e.createdAt, expiryMonths);
           const days = +((e.value || 0) / (wd || WORKDAY_MINUTES_FALLBACK)).toFixed(2);
           const exp = expiresOn ? new Date(expiresOn + 'T00:00:00Z') : null;
           const daysToExpiry = exp ? Math.round((exp - refNow) / 86400000) : null;
           const status = daysToExpiry == null ? 'active' : (daysToExpiry < 0 ? 'expired' : (daysToExpiry <= COMP_EXPIRING_SOON_DAYS ? 'expiring' : 'active'));
-          return { addDate, days, note: e.notes || '', expiresOn, daysToExpiry, status, expiryMonths };
+          return { addDate, days, note: e.notes || '', expiresOn, daysToExpiry, status, expiryMonths: grace ? null : expiryMonths, grace };
         }).sort((a, b) => (a.addDate < b.addDate ? -1 : 1));
         const expiringDays = additions.filter(a => a.status === 'expiring').reduce((s, a) => s + a.days, 0);
         const expiredDays = additions.filter(a => a.status === 'expired').reduce((s, a) => s + a.days, 0);

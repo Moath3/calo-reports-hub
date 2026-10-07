@@ -25,9 +25,19 @@ const colLetter = (n) => {
 
 const STYLE_ROW_LIMIT = 2500; // skip zebra/borders above this (keeps big sheets fast); highlights always apply
 
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+function fmtAsOf(iso) {
+  if (!iso) return null;
+  const d = new Date(iso.length === 10 ? `${iso}T00:00:00Z` : iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
+}
+
 // Friendly column catalogue + how to pull/format each value. `highlight` marks
-// the two conditionally-coloured balance cells.
-function leaveColumns(multi) {
+// the conditionally-coloured balance cell (Available Now).
+function leaveColumns(multi, asOfDate) {
+  const asOf = fmtAsOf(asOfDate);
+  const availHeader = asOf ? `Available by ${asOf}` : 'Available Now';
   const cols = [
     { header: 'Employee ID', key: 'employeeId', width: 13 },
     { header: 'Name', key: 'name', width: 24 },
@@ -41,10 +51,9 @@ function leaveColumns(multi) {
     { header: 'Policy', key: 'policy', width: 18 },
     { header: 'Start Date', key: 'startDate', width: 13, align: 'center', date: true },
     { header: 'Annual Allowance', key: 'allowance', width: 15, align: 'right', num: true },
-    { header: 'Available Now', key: 'availableNow', width: 14, align: 'right', num: true, highlight: 'annual' },
+    { header: availHeader, key: 'availableNow', width: 20, align: 'right', num: true, highlight: 'annual' },
     { header: 'Upcoming Booked', key: 'upcoming', width: 15, align: 'right', num: true },
     { header: 'Pending Approval', key: 'pending', width: 15, align: 'right', num: true },
-    { header: 'Balance by Dec 31', key: 'endOfYear', width: 16, align: 'right', num: true },
     { header: 'Compensatory Days', key: 'compensatory', width: 16, align: 'right', num: true, highlight: 'comp' },
     { header: 'Comp Expiring (≤45d)', key: 'compExpiringDays', width: 18, align: 'right', num: true },
     { header: 'Comp Expired', key: 'compExpiredDays', width: 13, align: 'right', num: true },
@@ -76,7 +85,7 @@ export function buildLeaveWorkbook(ExcelJS, data, { asOfDate = '' } = {}) {
 
   const rows = data?.rows || [];
   const multi = !!data?.multi;
-  const cols = leaveColumns(multi);
+  const cols = leaveColumns(multi, asOfDate);
 
   const ws = wb.addWorksheet('Leave Balances', { views: [{ state: 'frozen', ySplit: 1, showGridLines: false }] });
   ws.columns = cols.map((c) => ({ width: c.width || 14 }));

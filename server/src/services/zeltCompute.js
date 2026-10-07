@@ -425,9 +425,10 @@ async function fetchBalancesForEntityFresh(entityName, asOfDate = null, departme
       upcoming: round1(upcoming),
       pending: round1(pendingDays),
       zeltBalance: liveBalance ? round1(liveBalance.zelt_balance) : null,
-      // Year-end projection from the real requests: allowance (+ carry-over)
-      // minus annual taken and approved future leave this year.
-      endOfYear: effAllowance != null ? round1(effAllowance + carryOver - history - upcoming) : null,
+      // Year-end projection: use Zelt's own "Remaining by Dec 31" (computed in
+      // tryFetchBalances). Recomputing it from a different basis than
+      // availableNow produced values below the current balance — don't.
+      endOfYear: liveBalance ? round1(liveBalance.end_of_year) : null,
       compensatory: liveBalance ? round1(liveBalance.compensatory || 0) : null,
       // Dated compensatory additions + per-batch expiry (9 months for
       // production crew, 3 months for non-production).

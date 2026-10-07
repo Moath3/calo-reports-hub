@@ -196,11 +196,21 @@ test('formatCompExpirySlack: states the 3 vs 9 month rule and the split', () => 
   assert.match(text, /Leave Balances page/); // points to the Hub for names
 });
 
-test('formatCompExpirySlack: never leaks a name field even if present', () => {
-  // The aggregates object carries only counts; a formatter must not echo
-  // anything but numbers. Guard against accidental name plumbing.
-  const text = formatCompExpirySlack({ ...COMP_AGG, name: 'Imran Ahmad', employeeId: 'FTE0099' });
-  assert.doesNotMatch(text, /Imran|FTE0099/);
+test('formatCompExpirySlack: renders the named comp/expiry list when present', () => {
+  const agg = { ...COMP_AGG, list: [
+    { name: 'Imran Ahmad', employeeId: 'FTE0099', isProduction: true, compDays: 12, nextExpiry: '2027-07-15', status: 'active' },
+    { name: 'Sara N', employeeId: null, isProduction: false, compDays: 6, nextExpiry: '2026-11-20', status: 'expiring' },
+  ] };
+  const text = formatCompExpirySlack(agg);
+  assert.match(text, /Comp holders & expiry \(2\)/);
+  assert.match(text, /Imran Ahmad \(FTE0099\) — 12d, expires 2027-07-15/);
+  assert.match(text, /Sara N — 6d, expires 2026-11-20/); // no id → no parens
+  assert.match(text, /soon/); // expiring tag
+});
+
+test('formatCompExpirySlack: no list key → counts only, no holder section', () => {
+  const text = formatCompExpirySlack(COMP_AGG); // COMP_AGG has no `list`
+  assert.doesNotMatch(text, /Comp holders & expiry/);
 });
 
 test('formatCompExpirySlack: empty and unavailable states are safe', () => {

@@ -429,13 +429,15 @@ export async function sendWeeklyDigestIfDue({ force = false } = {}) {
 }
 
 // ---- Weekly compensatory-expiry alert ----------------------------------
-// Separate weekly Slack message (own cadence, own kv timestamp). COUNTS ONLY
-// — the named list + CSV live on the Hub's /leave-balances page.
+// Separate weekly Slack message (own cadence, own kv timestamp). Includes a
+// named per-employee comp/expiry list (the HR Hub channel is access-restricted,
+// so names are intended here). Full CSV/Excel export lives on /leave-balances.
 
 const num = (n) => (Math.round((Number(n) || 0) * 10) / 10).toString();
 const emp = (n) => `${n} ${n === 1 ? 'employee' : 'employees'}`;
 
-// Pure: build the Slack text from the aggregates object. No employee names.
+// Pure: build the Slack text from the aggregates object. Includes the named
+// per-employee comp/expiry list (the HR Hub channel is access-restricted).
 export function formatCompExpirySlack(agg) {
   if (!agg || agg.available === false) {
     return `*HR Hub — compensatory-day expiry*\nCould not compute this week${agg?.reason ? ` — ${agg.reason}` : ''}.`;
@@ -457,8 +459,22 @@ export function formatCompExpirySlack(agg) {
   if (all.expiredEmployees > 0) {
     lines.push(`• *Already expired:* ${emp(all.expiredEmployees)}, ${num(all.expiredDays)}d (non-prod ${num(n.expiredDays)}d · prod ${num(p.expiredDays)}d)`);
   }
+  // Named per-employee list — soonest expiry first, capped for Slack length.
+  const list = Array.isArray(agg.list) ? agg.list : [];
+  if (list.length) {
+    const CAP = 40;
+    lines.push('');
+    lines.push(`*Comp holders & expiry (${list.length})*`);
+    for (const e of list.slice(0, CAP)) {
+      const id = e.employeeId ? ` (${e.employeeId})` : '';
+      const exp = e.nextExpiry ? `expires ${e.nextExpiry}` : 'no dated expiry';
+      const tag = e.status === 'expired' ? '  :warning: EXPIRED' : e.status === 'expiring' ? '  :hourglass_flowing_sand: soon' : '';
+      lines.push(`• ${e.name}${id} — ${num(e.compDays)}d, ${exp}${tag}`);
+    }
+    if (list.length > CAP) lines.push(`…and ${list.length - CAP} more. Full list on the Hub’s Leave Balances page.`);
+  }
   lines.push('');
-  lines.push('Named list + CSV → the Hub’s Leave Balances page, Compensatory column.');
+  lines.push('Full export (CSV/Excel) → the Hub’s Leave Balances page, Compensatory column.');
   return lines.join('\n');
 }
 

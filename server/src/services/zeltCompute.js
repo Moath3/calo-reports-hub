@@ -871,7 +871,9 @@ export function summarizeCompExpiry(holders) {
 }
 
 // Async: scan every compensatory policy company-wide, enrich dated additions,
-// and return counts only. Independent of tryFetchBalances (leave page) so that
+// and return counts PLUS a named per-employee list (name, employee ID, comp
+// days, next expiry) for the HR Slack alert — the HR channel is restricted, so
+// names are intended here. Independent of tryFetchBalances (leave page) so that
 // path stays untouched. Best-effort: returns zeros/available:false on failure.
 export async function getCompExpiryAggregates(asOfDate = null) {
   const asOf = asOfDate || new Date().toISOString().slice(0, 10);
@@ -905,13 +907,18 @@ export async function getCompExpiryAggregates(asOfDate = null) {
     if (!seen.has(k)) seen.set(k, u);
   }
   const prodByUser = new Map();
+  const nameByUser = new Map();
+  const empIdByUser = new Map();
   for (const u of seen.values()) {
     const status = u?.accountStatus || u?.status || u?.lifecycle?.status;
     if (status === 'Deactivated' || status === 'Terminated') continue;
     const eventStatus = u?.userEvent?.status || u?.lifecycle?.status;
     if (eventStatus === 'Terminated' || eventStatus === 'Resigned' || eventStatus === 'Offboarded') continue;
     if (u?.leaveDate || u?.lifecycle?.leaveDate) continue;
-    prodByUser.set(u.userId || u.id, isProductionEmployee(u));
+    const uid = u.userId || u.id;
+    prodByUser.set(uid, isProductionEmployee(u));
+    nameByUser.set(uid, readName(u));
+    empIdByUser.set(uid, readEmployeeId(u) ?? null);
   }
 
   // Comp balance per policy (paginated), employed users only.
@@ -949,9 +956,11 @@ export async function getCompExpiryAggregates(asOfDate = null) {
   }
   await enrichCompAdditions(compHolders, balances, asOfDate);
 
-  // Keep only employees who actually hold (or recently held) comp days.
+  // Keep only employees who actually hold (or recently held) comp days. Build
+  // the counts input AND the named list (for the HR Slack alert) in one pass.
   const holders = [];
-  for (const b of balances.values()) {
+  const list = [];
+  for (const [uid, b] of balances) {
     const held = (Number(b.compensatory) || 0) > 0 || (b.compExpiringDays || 0) > 0 || (b.compExpiredDays || 0) > 0;
     if (!held) continue;
     holders.push({
@@ -960,8 +969,27 @@ export async function getCompExpiryAggregates(asOfDate = null) {
       compExpiringDays: b.compExpiringDays || 0,
       compExpiredDays: b.compExpiredDays || 0,
     });
+    const adds = Array.isArray(b.compAdditions) ? b.compAdditions : [];
+    const expiries = adds.map(a => a.expiresOn).filter(Boolean).sort();
+    const status = adds.some(a => a.status === 'expired') ? 'expired'
+      : adds.some(a => a.status === 'expiring') ? 'expiring' : 'active';
+    list.push({
+      name: nameByUser.get(uid) || '(unknown)',
+      employeeId: empIdByUser.get(uid) || null,
+      isProduction: b.isProduction === true,
+      compDays: round1(b.compensatory || 0),
+      nextExpiry: expiries[0] || null,
+      status,
+    });
   }
-  return { available: true, asOf, ...summarizeCompExpiry(holders) };
+  // Soonest expiry first; employees with no dated expiry sort to the end.
+  list.sort((a, b) => {
+    if (a.nextExpiry && b.nextExpiry) return a.nextExpiry < b.nextExpiry ? -1 : (a.nextExpiry > b.nextExpiry ? 1 : (b.compDays - a.compDays));
+    if (a.nextExpiry) return -1;
+    if (b.nextExpiry) return 1;
+    return b.compDays - a.compDays;
+  });
+  return { available: true, asOf, ...summarizeCompExpiry(holders), list };
 }
 
 // Diagnostic: can the Hub's Zelt bot READ the dated compensatory-addition

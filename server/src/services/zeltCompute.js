@@ -17,6 +17,9 @@
 import { zeltGet } from './zeltApi.js';
 import { botGet, botConfigured } from './zeltBot.js';
 import { getDb, persistNow } from '../db/database.js';
+// Production vs non-production classification — drives the compensatory-day
+// expiry window (production keeps 9 months, non-production expires in 3).
+import { isProductionDept, isOfficeDept } from '../../../client/src/utils/caloCanon.js';
 
 const ENTITIES_TTL_MS = 6 * 60 * 60 * 1000; // 6h — entities barely change
 const BALANCES_TTL_MS = 5 * 60 * 1000;
@@ -305,6 +308,9 @@ async function fetchBalancesForEntityFresh(entityName, asOfDate = null, departme
   });
 
   const targetUserIds = targets.map(u => u.userId || u.id);
+  // Map each user to production vs non-production so comp-day expiry can be
+  // 9 months for production crew, 3 months for everyone else.
+  const prodByUser = new Map(targets.map(u => [u.userId || u.id, isProductionEmployee(u)]));
 
   // Skip the expensive per-user basics fetch if our user records already
   // contain employeeId (true when bot's /users/cache succeeded).
@@ -316,7 +322,7 @@ async function fetchBalancesForEntityFresh(entityName, asOfDate = null, departme
   const [absencesResult, basicsResult, balancesResult] = await Promise.allSettled([
     fetchAbsencesByUser(targetUserIds),
     hasEmpIdAlready ? Promise.resolve(new Map()) : fetchUserBasics(targetUserIds),
-    tryFetchBalances(targetUserIds, asOfDate),
+    tryFetchBalances(targetUserIds, asOfDate, prodByUser),
   ]);
 
   const balancesByUser = balancesResult.status === 'fulfilled' ? balancesResult.value : new Map();
@@ -407,10 +413,13 @@ async function fetchBalancesForEntityFresh(entityName, asOfDate = null, departme
       zeltBalance: liveBalance ? round1(liveBalance.zelt_balance) : null,
       endOfYear: liveBalance ? round1(liveBalance.end_of_year) : null,
       compensatory: liveBalance ? round1(liveBalance.compensatory || 0) : null,
-      // Dated compensatory additions + 9-month-per-batch expiry.
+      // Dated compensatory additions + per-batch expiry (9 months for
+      // production crew, 3 months for non-production).
       compAdditions: liveBalance?.compAdditions || [],
       compExpiringDays: liveBalance?.compExpiringDays ?? 0,
       compExpiredDays: liveBalance?.compExpiredDays ?? 0,
+      isProduction: prodByUser.get(userId) === true,
+      compExpiryMonths: liveBalance?.compExpiryMonths ?? (prodByUser.get(userId) === true ? COMP_EXPIRY_MONTHS_PROD : COMP_EXPIRY_MONTHS_NONPROD),
       // Flags: high annual (30+) / high compensatory (10+) balances to chase.
       annualHigh: liveBalance ? round1(liveBalance.zelt_balance) >= 30 : false,
       compHigh: liveBalance ? round1(liveBalance.compensatory || 0) >= 10 : false,
@@ -594,7 +603,7 @@ let resolvedAnnualPolicyIds = null;
 let resolvedAnnualPolicyAt = 0;
 let resolvedCompPolicyIds = [];  // "Compensatory Days" policies — resolved alongside annual
 
-async function tryFetchBalances(userIds, asOfDate = null) {
+async function tryFetchBalances(userIds, asOfDate = null, prodByUser = new Map()) {
   if (!userIds.length) return new Map();
   const balances = new Map();
 
@@ -746,7 +755,7 @@ async function tryFetchBalances(userIds, asOfDate = null) {
           : (d.currentBalanceInDays != null ? d.currentBalanceInDays : (d.currentBalance || 0) / wd);
         const prev = balances.get(item.userId) || { available_now: 0, upcoming_booked: 0, pending: 0, zelt_balance: 0, total: 0, end_of_year: 0, compensatory: 0, policyName: null };
         balances.set(item.userId, { ...prev, compensatory: (prev.compensatory || 0) + (Number(days) || 0) });
-        if ((Number(days) || 0) !== 0) compHolders.push({ uid: item.userId, pid, wd });
+        if ((Number(days) || 0) !== 0) compHolders.push({ uid: item.userId, pid, wd, isProd: prodByUser.get(item.userId) === true });
       }
     }
     // For each comp holder, pull the DATED one-off additions (date + note + days)
@@ -756,8 +765,23 @@ async function tryFetchBalances(userIds, asOfDate = null) {
   return balances;
 }
 
-const COMP_EXPIRY_MONTHS = 9;        // each compensatory addition expires 9 months after its add date
-const COMP_EXPIRING_SOON_DAYS = 45;  // flag additions expiring within this window
+const COMP_EXPIRY_MONTHS_PROD = 9;     // production crew: comp additions expire 9 months after the add date
+const COMP_EXPIRY_MONTHS_NONPROD = 3;  // office / non-production: 3 months
+const COMP_EXPIRING_SOON_DAYS = 45;    // flag additions expiring within this window
+
+// Classify a Zelt user record as production vs non-production. Production crew
+// (Kitchen/Dispatch/Stewarding/Logistics, or anyone sitting at a Production
+// facility) keep the 9-month comp window; everyone else gets 3 months. Office
+// departments are always non-production even when posted to a production site.
+function isProductionEmployee(u) {
+  const dept = u?.role?.department?.name || u?.department?.name || u?.department || '';
+  const site = u?.role?.site?.name || u?.site?.name || u?.site || '';
+  if (isOfficeDept(dept)) return false;      // Finance/Legal/People/… never production
+  if (isProductionDept(dept)) return true;   // canonical production department
+  if (/\bproduction\b/i.test(site)) return true; // "KSA Production", "Kuwait Production", …
+  return false;                              // blank/other → non-production (shorter window)
+}
+
 function addMonths(iso, n) {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return null;
@@ -777,24 +801,26 @@ async function enrichCompAdditions(holders, balances, asOfDate) {
   const queue = [...holders];
   const worker = async () => {
     while (queue.length) {
-      const { uid, pid, wd } = queue.shift();
+      const { uid, pid, wd, isProd } = queue.shift();
+      // Production crew keep 9 months; office / non-production expire in 3.
+      const expiryMonths = isProd ? COMP_EXPIRY_MONTHS_PROD : COMP_EXPIRY_MONTHS_NONPROD;
       try {
         const data = await botGet(`/apiv2/absence-policies/${pid}/users/${uid}/allowances/${year}`);
         const entries = (data?.oneOffAdjustmentEntries || []).filter(e => (e.value || 0) > 0); // additions only, not debits
         if (!entries.length) continue;
         const additions = entries.map(e => {
           const addDate = (e.createdAt || '').slice(0, 10);
-          const expiresOn = addMonths(e.createdAt, COMP_EXPIRY_MONTHS);
+          const expiresOn = addMonths(e.createdAt, expiryMonths);
           const days = +((e.value || 0) / (wd || WORKDAY_MINUTES_FALLBACK)).toFixed(2);
           const exp = expiresOn ? new Date(expiresOn + 'T00:00:00Z') : null;
           const daysToExpiry = exp ? Math.round((exp - refNow) / 86400000) : null;
           const status = daysToExpiry == null ? 'active' : (daysToExpiry < 0 ? 'expired' : (daysToExpiry <= COMP_EXPIRING_SOON_DAYS ? 'expiring' : 'active'));
-          return { addDate, days, note: e.notes || '', expiresOn, daysToExpiry, status };
+          return { addDate, days, note: e.notes || '', expiresOn, daysToExpiry, status, expiryMonths };
         }).sort((a, b) => (a.addDate < b.addDate ? -1 : 1));
         const expiringDays = additions.filter(a => a.status === 'expiring').reduce((s, a) => s + a.days, 0);
         const expiredDays = additions.filter(a => a.status === 'expired').reduce((s, a) => s + a.days, 0);
         const prev = balances.get(uid);
-        if (prev) balances.set(uid, { ...prev, compAdditions: additions, compExpiringDays: round1(expiringDays), compExpiredDays: round1(expiredDays) });
+        if (prev) balances.set(uid, { ...prev, compAdditions: additions, compExpiringDays: round1(expiringDays), compExpiredDays: round1(expiredDays), compExpiryMonths: expiryMonths, isProduction: !!isProd });
       } catch { /* best-effort per user */ }
     }
   };

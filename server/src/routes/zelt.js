@@ -31,7 +31,7 @@ import {
   zeltGetOauthOnly,
 } from '../services/zeltApi.js';
 import { botGet, botConfigured, getBotStatus } from '../services/zeltBot.js';
-import { listEntities, listDepartments, entitiesForDepartments, getBalancesForEntity, clearCaches, debugSampleUser } from '../services/zeltCompute.js';
+import { listEntities, listDepartments, entitiesForDepartments, getBalancesForEntity, clearCaches, debugSampleUser, probeCompAdditionsAccess } from '../services/zeltCompute.js';
 import { runAudit } from '../services/zeltAudit.js';
 import { getMobility } from '../services/zeltMobility.js';
 import { getWatchState, runSnapshotAndDiff, sendWeeklyDigestIfDue, sendCompExpiryDigestIfDue } from '../services/zeltWatcher.js';
@@ -322,6 +322,13 @@ router.post('/watch/digest', dataLimiter, requireAuth, requireAdmin, asyncHandle
 router.post('/watch/comp-digest', dataLimiter, requireAuth, requireAdmin, asyncHandler(async (req, res) => {
   const result = await sendCompExpiryDigestIfDue({ force: true });
   logZeltAudit(req.user.id, 'zelt.watch.compDigest', { sent: result.sent, skipped: result.skipped || null });
+  res.json(result);
+}));
+
+// Admin-only: can the bot read the dated comp-addition ledger? Non-PII probe.
+router.get('/watch/comp-access', dataLimiter, requireAuth, requireAdmin, asyncHandler(async (req, res) => {
+  const result = await probeCompAdditionsAccess();
+  logZeltAudit(req.user.id, 'zelt.watch.compAccess', { allowancesOk: result.allowancesOk, status: result.firstStatus });
   res.json(result);
 }));
 

@@ -950,6 +950,78 @@ export async function getCompExpiryAggregates(asOfDate = null) {
   return { available: true, asOf, ...summarizeCompExpiry(holders) };
 }
 
+// Diagnostic: can the Hub's Zelt bot READ the dated compensatory-addition
+// ledger (/absence-policies/{pid}/users/{uid}/allowances/{year})? Probes a few
+// real comp holders and returns a NON-PII access result — HTTP status, counts
+// and shape booleans only. Never returns names, dates or note text.
+export async function probeCompAdditionsAccess() {
+  const out = {
+    botConfigured: botConfigured(),
+    compPolicies: 0,
+    holdersProbed: 0,
+    allowancesOk: false,
+    firstStatus: null,
+    holdersWithEntries: 0,
+    totalEntriesSeen: 0,
+    shapeOk: null,
+    note: null,
+  };
+  if (!botConfigured()) { out.note = 'Zelt bot not configured'; return out; }
+
+  let compPolicyIds = [];
+  try {
+    const policies = await botGet('/apiv2/absence-policies/extended');
+    const arr = Array.isArray(policies) ? policies : (policies?.items || []);
+    compPolicyIds = arr.filter(p => /compensator/i.test(p.name || p.policyName || '')).map(p => p.id);
+  } catch (err) {
+    out.note = `policy lookup failed (${err.status || ''} ${err.message})`;
+    return out;
+  }
+  out.compPolicies = compPolicyIds.length;
+  if (!compPolicyIds.length) { out.note = 'no compensatory policies found'; return out; }
+
+  // Gather up to 6 holders with a live comp balance (likeliest to have additions).
+  const holders = [];
+  for (const pid of compPolicyIds) {
+    if (holders.length >= 6) break;
+    try {
+      const data = await botGet('/apiv2/absences/company/balance', { policyId: pid, Calendar: 'current', page: 1, pageSize: PAGE_SIZE });
+      for (const it of (data.items || [])) {
+        const d = it[pid];
+        if ((Number(d?.currentBalanceInDays) || 0) > 0) {
+          holders.push({ uid: it.userId, pid });
+          if (holders.length >= 6) break;
+        }
+      }
+    } catch { /* try next policy */ }
+  }
+  if (!holders.length) { out.note = 'no comp holders with a balance to probe'; return out; }
+
+  const year = new Date().getUTCFullYear();
+  for (const h of holders) {
+    out.holdersProbed++;
+    try {
+      const data = await botGet(`/apiv2/absence-policies/${h.pid}/users/${h.uid}/allowances/${year}`);
+      if (out.firstStatus == null) out.firstStatus = 200;
+      out.allowancesOk = true;
+      const entries = Array.isArray(data?.oneOffAdjustmentEntries) ? data.oneOffAdjustmentEntries : [];
+      if (entries.length) {
+        out.holdersWithEntries++;
+        out.totalEntriesSeen += entries.length;
+        if (out.shapeOk == null) out.shapeOk = ('createdAt' in entries[0] && 'value' in entries[0]);
+      }
+    } catch (err) {
+      if (out.firstStatus == null) out.firstStatus = err.status || 'error';
+    }
+  }
+  out.note = out.allowancesOk
+    ? (out.holdersWithEntries
+        ? 'Bot CAN read dated comp additions.'
+        : 'Endpoint reachable, but none of the probed holders had one-off additions this year.')
+    : `Allowances endpoint blocked for the bot (status ${out.firstStatus}).`;
+  return out;
+}
+
 // Per-user basic info — the only place Zelt's partner API exposes employeeId.
 // Probed once per session, then cached.
 const BASIC_ENDPOINT_CANDIDATES = [

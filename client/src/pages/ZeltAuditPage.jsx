@@ -406,6 +406,8 @@ function WatcherCard({ onData }) {
   const [digesting, setDigesting] = useState(false);
   const [digest, setDigest] = useState(null);
   const [compDigesting, setCompDigesting] = useState(false);
+  const [checkingAccess, setCheckingAccess] = useState(false);
+  const [compAccess, setCompAccess] = useState(null);
 
   useEffect(() => {
     let alive = true;
@@ -458,6 +460,19 @@ function WatcherCard({ onData }) {
     }
   };
 
+  const checkCompAccess = async () => {
+    setCheckingAccess(true);
+    setCompAccess(null);
+    try {
+      const r = await api.zeltWatchCompAccess();
+      setCompAccess(r);
+    } catch (e) {
+      setCompAccess({ error: e?.message || 'Access check failed' });
+    } finally {
+      setCheckingAccess(false);
+    }
+  };
+
   const snaps = (data?.snapshots || []).slice(-30);
   const maxFlagged = Math.max(...snaps.map(s => s.totalFlagged || 0), 1);
   const lastSnapshotAt = data?.latest?.capturedAt || data?.lastRun || null;
@@ -495,7 +510,28 @@ function WatcherCard({ onData }) {
         <Btn variant="secondary" size="sm" icon={compDigesting ? 'LoaderCircle' : 'CalendarClock'} onClick={sendCompDigest} disabled={digesting || compDigesting || loading}>
           {compDigesting ? 'Sending…' : 'Send comp alert now'}
         </Btn>
+        <Btn variant="secondary" size="sm" icon={checkingAccess ? 'LoaderCircle' : 'ShieldCheck'} onClick={checkCompAccess} disabled={checkingAccess || loading}>
+          {checkingAccess ? 'Checking…' : 'Check comp access'}
+        </Btn>
       </div>
+
+      {/* Comp-addition access probe result */}
+      {compAccess && (
+        <div style={{ marginTop: 10, fontSize: 13 }}>
+          {compAccess.error ? (
+            <span style={{ color: 'var(--ink-500)' }}>Access check failed — {compAccess.error}</span>
+          ) : (
+            <span>
+              <b style={{ color: compAccess.allowancesOk ? 'var(--calo-700, #1e8359)' : '#8C2929' }}>
+                {compAccess.allowancesOk ? '✓ Bot can read comp-addition dates' : '✗ Bot blocked from comp-addition dates'}
+              </b>
+              <span style={{ color: 'var(--ink-500)' }}>
+                {' '}— {compAccess.note} (policies {compAccess.compPolicies}, probed {compAccess.holdersProbed}, with additions {compAccess.holdersWithEntries}, entries seen {compAccess.totalEntriesSeen})
+              </span>
+            </span>
+          )}
+        </div>
+      )}
 
       {/* Digest result */}
       {digest && (

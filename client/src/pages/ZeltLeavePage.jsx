@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useCallback, useRef, Fragment } from 'rea
 import { useAuth } from '../contexts/AuthContext';
 import api from '../utils/api';
 import { Icon } from '../components/ui';
+import { buildLeaveWorkbook } from '../utils/leaveWorkbook';
 
 /**
  * ZeltLeavePage — HR self-service leave balance lookup.
@@ -448,29 +449,33 @@ export default function ZeltLeavePage() {
                 placeholder="Search name, ID, dept…"
                 style={searchInput}
               />
-              <button onClick={() => {
+              <button onClick={async () => {
                 try {
-                  // Build the CSV in the browser from the rows already on screen,
-                  // so the file always matches the table: same as-of date, same
-                  // entity selection, same (possibly cached) snapshot. The old
-                  // server-side export ignored asOfDate and mishandled multi-entity.
-                  const csv = buildLeaveCsv(data);
-                  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+                  // Build a CALO-branded .xlsx in the browser from the rows already
+                  // on screen, so the file always matches the table: same as-of
+                  // date, same entity selection, same (possibly cached) snapshot.
+                  // Green header, friendly names, and the annual/comp balance cells
+                  // highlighted (yellow/red) instead of plain TRUE/FALSE columns.
+                  const mod = await import('exceljs');
+                  const ExcelJS = mod.default ?? mod;
+                  const wb = buildLeaveWorkbook(ExcelJS, data, { asOfDate });
+                  const buf = await wb.xlsx.writeBuffer();
+                  const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
                   const url = URL.createObjectURL(blob);
                   const a = document.createElement('a');
                   a.href = url;
                   const safe = ((data.departments?.length ? data.departments.join('-') : data.entity) || 'entities')
                     .replace(/[^a-z0-9]+/gi, '-').toLowerCase().slice(0, 60);
-                  a.download = `calo-available-now-${safe}-${asOfDate}.csv`;
+                  a.download = `calo-leave-balances-${safe}-${asOfDate}.xlsx`;
                   document.body.appendChild(a);
                   a.click();
                   a.remove();
                   URL.revokeObjectURL(url);
                 } catch (e) {
-                  setError(formatErr(e, 'CSV export failed'));
+                  setError(formatErr(e, 'Excel export failed'));
                 }
               }} style={ghostBtn}>
-                <Icon name="Download" size={16} /> CSV
+                <Icon name="Download" size={16} /> Excel
               </button>
             </div>
           </div>
@@ -812,32 +817,11 @@ function formatErr(e, fallback) {
   return e?.message || fallback;
 }
 
-// Serialize the on-screen balances to CSV. Column order mirrors the server's
-// toCsv (so downstream tooling that consumed the old export still works), and
-// an Entity column is added for multi-entity reports — which the server-side
-// export dropped entirely. Cell escaping matches the server's csvCell exactly.
-function buildLeaveCsv(data) {
-  const rows = data?.rows || [];
-  const cols = data?.multi
-    ? ['employeeId', 'name', 'site', 'department', 'jobTitle', 'entity', 'policy', 'startDate', 'allowance', 'upcoming', 'pending', 'availableNow', 'zeltBalance', 'endOfYear', 'compensatory', 'compExpiringDays', 'compExpiredDays', 'annualHigh', 'compHigh']
-    : ['employeeId', 'name', 'site', 'department', 'jobTitle', 'policy', 'startDate', 'allowance', 'upcoming', 'pending', 'availableNow', 'zeltBalance', 'endOfYear', 'compensatory', 'compExpiringDays', 'compExpiredDays', 'annualHigh', 'compHigh'];
-  const header = cols.join(',');
-  const body = rows.map(r => cols.map(c => csvCell(r[c])).join(',')).join('\n');
-  return `${header}\n${body}\n`;
-}
-
 const flagChip = {
   display: 'inline-block', fontSize: 10.5, fontWeight: 800, color: '#B45309',
   background: '#FEF3E2', border: '1px solid #F6E0B6', borderRadius: 999,
   padding: '2px 8px', marginRight: 4, whiteSpace: 'nowrap',
 };
-
-function csvCell(v) {
-  if (v == null) return '';
-  const s = String(v);
-  if (/[",\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
-  return s;
-}
 
 function fmtDate(iso) {
   if (!iso) return '—';

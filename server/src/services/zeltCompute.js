@@ -1066,6 +1066,40 @@ export async function probeCompAdditionsAccess() {
   return out;
 }
 
+// Diagnostic (temporary): dump the raw balance policyData structure for a few
+// sample items so we can see exactly which fields carry upcoming/pending leave.
+// NON-PII — field keys and numeric values only, no names or userIds.
+export async function debugBalanceSample() {
+  if (!botConfigured()) return { error: 'bot not configured' };
+  let pid = null;
+  try {
+    const policies = await botGet('/apiv2/absence-policies/extended');
+    const arr = Array.isArray(policies) ? policies : (policies?.items || []);
+    const p = arr.find(x => { const n = x.name || x.policyName || ''; return /annual|vacation/i.test(n) && !/unpaid/i.test(n); });
+    pid = p?.id;
+  } catch (e) { return { error: `policy lookup failed: ${e.status || ''} ${e.message}` }; }
+  if (!pid) return { error: 'no annual policy found' };
+  let data;
+  try { data = await botGet('/apiv2/absences/company/balance', { policyId: pid, Calendar: 'current', page: 1, pageSize: 50 }); }
+  catch (e) { return { error: `balance fetch failed: ${e.status || ''} ${e.message}` }; }
+  const items = data.items || [];
+  const hasActivity = (it) => { const u = (it[pid] || {}).unitsTaken || {}; return (u.upcoming || 0) > 0 || (u.upcomingPending || 0) > 0 || (u.historyPending || 0) > 0; };
+  const interesting = items.filter(hasActivity).slice(0, 5);
+  const chosen = interesting.length ? interesting : items.slice(0, 3);
+  const samples = chosen.map(it => {
+    const pd = it[pid] || {};
+    return {
+      policyDataKeys: Object.keys(pd),
+      unitsTaken: pd.unitsTaken || null,
+      unitsLeft: pd.unitsLeft || null,
+      holidayAccruedToBookNow: pd.holidayAccruedToBookNow,
+      currentBalanceInDays: pd.currentBalanceInDays,
+      workday: pd.currentAverageWorkDayLength,
+    };
+  });
+  return { pid, totalItems: items.length, withUpcomingOrPending: interesting.length, samples };
+}
+
 // Per-user basic info — the only place Zelt's partner API exposes employeeId.
 // Probed once per session, then cached.
 const BASIC_ENDPOINT_CANDIDATES = [

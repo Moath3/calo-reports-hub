@@ -407,9 +407,15 @@ async function fetchBalancesForEntityFresh(entityName, asOfDate = null, departme
       zeltBalance: liveBalance ? round1(liveBalance.zelt_balance) : null,
       endOfYear: liveBalance ? round1(liveBalance.end_of_year) : null,
       compensatory: liveBalance ? round1(liveBalance.compensatory || 0) : null,
+      // Dated compensatory additions + 9-month-per-batch expiry.
+      compAdditions: liveBalance?.compAdditions || [],
+      compExpiringDays: liveBalance?.compExpiringDays ?? 0,
+      compExpiredDays: liveBalance?.compExpiredDays ?? 0,
       // Flags: high annual (30+) / high compensatory (10+) balances to chase.
       annualHigh: liveBalance ? round1(liveBalance.zelt_balance) >= 30 : false,
       compHigh: liveBalance ? round1(liveBalance.compensatory || 0) >= 10 : false,
+      compExpiring: !!(liveBalance?.compExpiringDays > 0),
+      compExpired: !!(liveBalance?.compExpiredDays > 0),
       availableNow,
       confidence,
     };
@@ -427,6 +433,8 @@ async function fetchBalancesForEntityFresh(entityName, asOfDate = null, departme
     flags: {
       annualHigh: rows.filter(r => r.annualHigh).length,  // 30+ annual days
       compHigh: rows.filter(r => r.compHigh).length,       // 10+ compensatory days
+      compExpiring: rows.filter(r => r.compExpiring).length, // comp additions expiring soon
+      compExpired: rows.filter(r => r.compExpired).length,   // comp additions already expired
     },
     rows,
     // Diagnostic: when 0 rows match, surface what entities WERE seen in user
@@ -727,6 +735,7 @@ async function tryFetchBalances(userIds, asOfDate = null) {
       }
       return all;
     }));
+    const compHolders = []; // { uid, pid, wd } — users with a live comp balance
     for (const items of compResults) {
       for (const { item, pid } of items) {
         const d = item[pid];
@@ -737,10 +746,59 @@ async function tryFetchBalances(userIds, asOfDate = null) {
           : (d.currentBalanceInDays != null ? d.currentBalanceInDays : (d.currentBalance || 0) / wd);
         const prev = balances.get(item.userId) || { available_now: 0, upcoming_booked: 0, pending: 0, zelt_balance: 0, total: 0, end_of_year: 0, compensatory: 0, policyName: null };
         balances.set(item.userId, { ...prev, compensatory: (prev.compensatory || 0) + (Number(days) || 0) });
+        if ((Number(days) || 0) !== 0) compHolders.push({ uid: item.userId, pid, wd });
       }
     }
+    // For each comp holder, pull the DATED one-off additions (date + note + days)
+    // from the allowance endpoint, and compute a 9-month expiry PER addition.
+    await enrichCompAdditions(compHolders, balances, asOfDate);
   }
   return balances;
+}
+
+const COMP_EXPIRY_MONTHS = 9;        // each compensatory addition expires 9 months after its add date
+const COMP_EXPIRING_SOON_DAYS = 45;  // flag additions expiring within this window
+function addMonths(iso, n) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  const day = d.getUTCDate();
+  d.setUTCMonth(d.getUTCMonth() + n);
+  if (d.getUTCDate() < day) d.setUTCDate(0); // clamp end-of-month overflow
+  return d.toISOString().slice(0, 10);
+}
+
+// Fetch each comp holder's one-off adjustment entries and attach compAdditions
+// (with 9-month expiry) to their balance summary. Concurrency-capped for the WAF.
+async function enrichCompAdditions(holders, balances, asOfDate) {
+  if (!holders.length) return;
+  const year = (asOfDate ? new Date(asOfDate) : new Date()).getUTCFullYear();
+  const refNow = asOfDate ? new Date(asOfDate + 'T00:00:00Z') : new Date();
+  const CONCURRENCY = 4;
+  const queue = [...holders];
+  const worker = async () => {
+    while (queue.length) {
+      const { uid, pid, wd } = queue.shift();
+      try {
+        const data = await botGet(`/apiv2/absence-policies/${pid}/users/${uid}/allowances/${year}`);
+        const entries = (data?.oneOffAdjustmentEntries || []).filter(e => (e.value || 0) > 0); // additions only, not debits
+        if (!entries.length) continue;
+        const additions = entries.map(e => {
+          const addDate = (e.createdAt || '').slice(0, 10);
+          const expiresOn = addMonths(e.createdAt, COMP_EXPIRY_MONTHS);
+          const days = +((e.value || 0) / (wd || WORKDAY_MINUTES_FALLBACK)).toFixed(2);
+          const exp = expiresOn ? new Date(expiresOn + 'T00:00:00Z') : null;
+          const daysToExpiry = exp ? Math.round((exp - refNow) / 86400000) : null;
+          const status = daysToExpiry == null ? 'active' : (daysToExpiry < 0 ? 'expired' : (daysToExpiry <= COMP_EXPIRING_SOON_DAYS ? 'expiring' : 'active'));
+          return { addDate, days, note: e.notes || '', expiresOn, daysToExpiry, status };
+        }).sort((a, b) => (a.addDate < b.addDate ? -1 : 1));
+        const expiringDays = additions.filter(a => a.status === 'expiring').reduce((s, a) => s + a.days, 0);
+        const expiredDays = additions.filter(a => a.status === 'expired').reduce((s, a) => s + a.days, 0);
+        const prev = balances.get(uid);
+        if (prev) balances.set(uid, { ...prev, compAdditions: additions, compExpiringDays: round1(expiringDays), compExpiredDays: round1(expiredDays) });
+      } catch { /* best-effort per user */ }
+    }
+  };
+  await Promise.all(Array.from({ length: CONCURRENCY }, worker));
 }
 
 // Per-user basic info — the only place Zelt's partner API exposes employeeId.

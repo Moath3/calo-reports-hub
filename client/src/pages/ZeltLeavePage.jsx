@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef, Fragment } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import api from '../utils/api';
 import { Icon } from '../components/ui';
@@ -34,6 +34,8 @@ export default function ZeltLeavePage() {
   const [search, setSearch] = useState('');
   const [flagFilter, setFlagFilter] = useState(null); // null | 'annual' | 'comp'
   const [showEoy, setShowEoy] = useState(false);       // project annual balance to Dec 31
+  const [expanded, setExpanded] = useState(() => new Set()); // userIds showing comp additions
+  const toggleExpand = (id) => setExpanded(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
   const [sort, setSort] = useState({ key: 'name', dir: 'asc' });
   const [bootstrap, setBootstrap] = useState(null);
 
@@ -141,6 +143,8 @@ export default function ZeltLeavePage() {
     let rows = data.rows;
     if (flagFilter === 'annual') rows = rows.filter(r => r.annualHigh);
     else if (flagFilter === 'comp') rows = rows.filter(r => r.compHigh);
+    else if (flagFilter === 'expiring') rows = rows.filter(r => r.compExpiring);
+    else if (flagFilter === 'expired') rows = rows.filter(r => r.compExpired);
     if (q) {
       rows = rows.filter(r =>
         (r.name || '').toLowerCase().includes(q) ||
@@ -471,7 +475,7 @@ export default function ZeltLeavePage() {
             </div>
           </div>
 
-          {data.flags && (data.flags.annualHigh > 0 || data.flags.compHigh > 0) && (
+          {data.flags && (data.flags.annualHigh > 0 || data.flags.compHigh > 0 || data.flags.compExpiring > 0 || data.flags.compExpired > 0) && (
             <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 12, fontSize: 13 }}>
               {data.flags.annualHigh > 0 && (
                 <button onClick={() => setFlagFilter(flagFilter === 'annual' ? null : 'annual')}
@@ -483,6 +487,18 @@ export default function ZeltLeavePage() {
                 <button onClick={() => setFlagFilter(flagFilter === 'comp' ? null : 'comp')}
                   style={{ ...flagSummary, outline: flagFilter === 'comp' ? '2px solid #B45309' : 'none' }}>
                   <b>{data.flags.compHigh}</b> with 10+ compensatory days
+                </button>
+              )}
+              {data.flags.compExpiring > 0 && (
+                <button onClick={() => setFlagFilter(flagFilter === 'expiring' ? null : 'expiring')}
+                  style={{ ...flagSummary, outline: flagFilter === 'expiring' ? '2px solid #8A5A1A' : 'none' }}>
+                  <b>{data.flags.compExpiring}</b> with comp days expiring soon
+                </button>
+              )}
+              {data.flags.compExpired > 0 && (
+                <button onClick={() => setFlagFilter(flagFilter === 'expired' ? null : 'expired')}
+                  style={{ ...flagSummary, background: '#FDECEC', color: '#8C2929', borderColor: '#F5CFCF', outline: flagFilter === 'expired' ? '2px solid #8C2929' : 'none' }}>
+                  <b>{data.flags.compExpired}</b> with comp days expired
                 </button>
               )}
               {flagFilter && <button onClick={() => setFlagFilter(null)} style={{ ...ghostBtn, fontSize: 12 }}>Clear filter</button>}
@@ -515,8 +531,8 @@ export default function ZeltLeavePage() {
                     No employees match the filter.
                   </td></tr>
                 ) : filtered.map((r, i) => (
-                  <tr key={r.userId || r.employeeId || i}
-                      style={{ background: r.annualHigh || r.compHigh ? '#FFFBEB' : (i % 2 === 0 ? '#fff' : 'var(--ink-50)') }}>
+                  <Fragment key={r.userId || r.employeeId || i}>
+                  <tr style={{ background: r.annualHigh || r.compHigh ? '#FFFBEB' : (i % 2 === 0 ? '#fff' : 'var(--ink-50)') }}>
                     <Td mono>{r.employeeId || '—'}</Td>
                     <Td bold>{r.name}</Td>
                     <Td>{r.site || '—'}</Td>
@@ -532,13 +548,46 @@ export default function ZeltLeavePage() {
                     </Td>
                     <Td align="right"><span style={r.annualHigh ? { color: '#B45309', fontWeight: 700 } : undefined}>{r.zeltBalance != null ? `${r.zeltBalance.toFixed(1)}d` : '—'}</span></Td>
                     {showEoy && <Td align="right">{r.endOfYear != null ? `${r.endOfYear.toFixed(1)}d` : '—'}</Td>}
-                    <Td align="right"><span style={r.compHigh ? { color: '#B45309', fontWeight: 700 } : undefined}>{r.compensatory != null ? `${r.compensatory.toFixed(1)}d` : '—'}</span></Td>
+                    <Td align="right">
+                      {r.compAdditions?.length ? (
+                        <button onClick={() => toggleExpand(r.userId)} style={{ background: 'none', border: 'none', cursor: 'pointer', font: 'inherit', color: r.compHigh ? '#B45309' : 'var(--calo-700)', fontWeight: r.compHigh ? 700 : 600, textDecoration: 'underline dotted' }}
+                          title="Show when these days were added + 9-month expiry">
+                          {r.compensatory != null ? `${r.compensatory.toFixed(1)}d` : '—'} ▾
+                        </button>
+                      ) : (
+                        <span style={r.compHigh ? { color: '#B45309', fontWeight: 700 } : undefined}>{r.compensatory != null ? `${r.compensatory.toFixed(1)}d` : '—'}</span>
+                      )}
+                    </Td>
                     <Td>
                       {r.annualHigh && <span style={flagChip}>30+ annual</span>}
                       {r.compHigh && <span style={flagChip}>10+ comp</span>}
-                      {!r.annualHigh && !r.compHigh && <span style={{ color: 'var(--ink-300)' }}>—</span>}
+                      {r.compExpired && <span style={{ ...flagChip, color: '#8C2929', background: '#FDECEC', borderColor: '#F5CFCF' }}>{r.compExpiredDays}d expired</span>}
+                      {r.compExpiring && <span style={{ ...flagChip, color: '#8A5A1A', background: '#FEF5E4', borderColor: '#F6E0B6' }}>{r.compExpiringDays}d expiring</span>}
+                      {!r.annualHigh && !r.compHigh && !r.compExpired && !r.compExpiring && <span style={{ color: 'var(--ink-300)' }}>—</span>}
                     </Td>
                   </tr>
+                  {expanded.has(r.userId) && r.compAdditions?.length > 0 && (
+                    <tr>
+                      <td colSpan={(data.multi ? 13 : 12) + (showEoy ? 1 : 0)} style={{ padding: '10px 18px', background: 'var(--ink-50)', borderBottom: '1px solid var(--ink-200)' }}>
+                        <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--ink-500)', letterSpacing: '.06em', textTransform: 'uppercase', marginBottom: 8 }}>
+                          Compensatory additions — expire 9 months after each add date
+                        </div>
+                        <div style={{ display: 'grid', gap: 6 }}>
+                          {r.compAdditions.map((a, j) => (
+                            <div key={j} style={{ display: 'flex', gap: 12, alignItems: 'center', fontSize: 12.5, flexWrap: 'wrap' }}>
+                              <span style={{ fontWeight: 700, minWidth: 48 }}>+{a.days}d</span>
+                              <span style={{ color: 'var(--ink-600)' }}>added {a.addDate}</span>
+                              <span style={{ color: a.status === 'expired' ? '#8C2929' : a.status === 'expiring' ? '#8A5A1A' : 'var(--ink-500)', fontWeight: a.status !== 'active' ? 700 : 400 }}>
+                                → expires {a.expiresOn}{a.status === 'expired' ? ' (EXPIRED)' : a.status === 'expiring' ? ` (in ${a.daysToExpiry}d)` : ''}
+                              </span>
+                              {a.note && <span style={{ color: 'var(--ink-500)', fontStyle: 'italic' }}>“{a.note}”</span>}
+                            </div>
+                          ))}
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                  </Fragment>
                 ))}
               </tbody>
             </table>
@@ -770,8 +819,8 @@ function formatErr(e, fallback) {
 function buildLeaveCsv(data) {
   const rows = data?.rows || [];
   const cols = data?.multi
-    ? ['employeeId', 'name', 'site', 'department', 'jobTitle', 'entity', 'policy', 'startDate', 'allowance', 'upcoming', 'pending', 'availableNow', 'zeltBalance', 'endOfYear', 'compensatory', 'annualHigh', 'compHigh']
-    : ['employeeId', 'name', 'site', 'department', 'jobTitle', 'policy', 'startDate', 'allowance', 'upcoming', 'pending', 'availableNow', 'zeltBalance', 'endOfYear', 'compensatory', 'annualHigh', 'compHigh'];
+    ? ['employeeId', 'name', 'site', 'department', 'jobTitle', 'entity', 'policy', 'startDate', 'allowance', 'upcoming', 'pending', 'availableNow', 'zeltBalance', 'endOfYear', 'compensatory', 'compExpiringDays', 'compExpiredDays', 'annualHigh', 'compHigh']
+    : ['employeeId', 'name', 'site', 'department', 'jobTitle', 'policy', 'startDate', 'allowance', 'upcoming', 'pending', 'availableNow', 'zeltBalance', 'endOfYear', 'compensatory', 'compExpiringDays', 'compExpiredDays', 'annualHigh', 'compHigh'];
   const header = cols.join(',');
   const body = rows.map(r => cols.map(c => csvCell(r[c])).join(',')).join('\n');
   return `${header}\n${body}\n`;

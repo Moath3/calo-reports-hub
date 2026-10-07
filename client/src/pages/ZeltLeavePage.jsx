@@ -33,6 +33,7 @@ export default function ZeltLeavePage() {
   const [error, setError] = useState(null);
   const [search, setSearch] = useState('');
   const [flagFilter, setFlagFilter] = useState(null); // null | 'annual' | 'comp'
+  const [showEoy, setShowEoy] = useState(false);       // project annual balance to Dec 31
   const [sort, setSort] = useState({ key: 'name', dir: 'asc' });
   const [bootstrap, setBootstrap] = useState(null);
 
@@ -431,7 +432,12 @@ export default function ZeltLeavePage() {
                 {data.count} employees · as of {fmtDate(data.asOf)}
               </div>
             </div>
-            <div style={{ display: 'flex', gap: 8 }}>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13, fontWeight: 600, color: 'var(--ink-700)', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                title="Project each annual balance to Dec 31 (full-year entitlement minus leave taken/booked)">
+                <input type="checkbox" checked={showEoy} onChange={e => setShowEoy(e.target.checked)} />
+                Year-end (Dec 31)
+              </label>
               <input
                 value={search}
                 onChange={e => setSearch(e.target.value)}
@@ -498,13 +504,14 @@ export default function ZeltLeavePage() {
                   <Th onClick={() => handleSort('pending')} active={sort.key === 'pending'} dir={sort.dir} align="right">Pending</Th>
                   <Th onClick={() => handleSort('availableNow')} active={sort.key === 'availableNow'} dir={sort.dir} align="right">Available Now</Th>
                   <Th onClick={() => handleSort('zeltBalance')} active={sort.key === 'zeltBalance'} dir={sort.dir} align="right">Annual (Zelt)</Th>
+                  {showEoy && <Th onClick={() => handleSort('endOfYear')} active={sort.key === 'endOfYear'} dir={sort.dir} align="right">By Dec 31</Th>}
                   <Th onClick={() => handleSort('compensatory')} active={sort.key === 'compensatory'} dir={sort.dir} align="right">Compensatory</Th>
                   <Th onClick={() => handleSort('compHigh')} active={sort.key === 'compHigh'} dir={sort.dir}>Flags</Th>
                 </tr>
               </thead>
               <tbody>
                 {filtered.length === 0 ? (
-                  <tr><td colSpan={data.multi ? 13 : 12} style={{ padding: '24px 16px', textAlign: 'center', color: 'var(--ink-500)' }}>
+                  <tr><td colSpan={(data.multi ? 13 : 12) + (showEoy ? 1 : 0)} style={{ padding: '24px 16px', textAlign: 'center', color: 'var(--ink-500)' }}>
                     No employees match the filter.
                   </td></tr>
                 ) : filtered.map((r, i) => (
@@ -524,6 +531,7 @@ export default function ZeltLeavePage() {
                         <span style={{ color: 'var(--ink-500)', fontWeight: 400 }}>—</span>}
                     </Td>
                     <Td align="right"><span style={r.annualHigh ? { color: '#B45309', fontWeight: 700 } : undefined}>{r.zeltBalance != null ? `${r.zeltBalance.toFixed(1)}d` : '—'}</span></Td>
+                    {showEoy && <Td align="right">{r.endOfYear != null ? `${r.endOfYear.toFixed(1)}d` : '—'}</Td>}
                     <Td align="right"><span style={r.compHigh ? { color: '#B45309', fontWeight: 700 } : undefined}>{r.compensatory != null ? `${r.compensatory.toFixed(1)}d` : '—'}</span></Td>
                     <Td>
                       {r.annualHigh && <span style={flagChip}>30+ annual</span>}
@@ -762,8 +770,8 @@ function formatErr(e, fallback) {
 function buildLeaveCsv(data) {
   const rows = data?.rows || [];
   const cols = data?.multi
-    ? ['employeeId', 'name', 'site', 'department', 'jobTitle', 'entity', 'policy', 'startDate', 'allowance', 'upcoming', 'pending', 'availableNow', 'zeltBalance', 'compensatory', 'annualHigh', 'compHigh']
-    : ['employeeId', 'name', 'site', 'department', 'jobTitle', 'policy', 'startDate', 'allowance', 'upcoming', 'pending', 'availableNow', 'zeltBalance', 'compensatory', 'annualHigh', 'compHigh'];
+    ? ['employeeId', 'name', 'site', 'department', 'jobTitle', 'entity', 'policy', 'startDate', 'allowance', 'upcoming', 'pending', 'availableNow', 'zeltBalance', 'endOfYear', 'compensatory', 'annualHigh', 'compHigh']
+    : ['employeeId', 'name', 'site', 'department', 'jobTitle', 'policy', 'startDate', 'allowance', 'upcoming', 'pending', 'availableNow', 'zeltBalance', 'endOfYear', 'compensatory', 'annualHigh', 'compHigh'];
   const header = cols.join(',');
   const body = rows.map(r => cols.map(c => csvCell(r[c])).join(',')).join('\n');
   return `${header}\n${body}\n`;

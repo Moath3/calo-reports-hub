@@ -405,6 +405,7 @@ async function fetchBalancesForEntityFresh(entityName, asOfDate = null, departme
       upcoming: round1(upcoming),
       pending: liveBalance ? round1(liveBalance.pending) : null,
       zeltBalance: liveBalance ? round1(liveBalance.zelt_balance) : null,
+      endOfYear: liveBalance ? round1(liveBalance.end_of_year) : null,
       compensatory: liveBalance ? round1(liveBalance.compensatory || 0) : null,
       // Flags: high annual (30+) / high compensatory (10+) balances to chase.
       annualHigh: liveBalance ? round1(liveBalance.zelt_balance) >= 30 : false,
@@ -687,13 +688,20 @@ async function tryFetchBalances(userIds, asOfDate = null) {
       const total = ((policyData.totalAllowanceForCycle || 0)
         - (policyData.unitsTaken?.totalPublicHolidays || 0)
         - (policyData.unitsLeft?.unusedPublicHolidays || 0)) / workdayMinutes;
-      const prev = balances.get(uid) || { available_now: 0, upcoming_booked: 0, pending: 0, zelt_balance: 0, total: 0, compensatory: 0, policyName: null };
+      // Projected end-of-year (Dec 31) balance = full-cycle entitlement minus
+      // everything taken/booked this cycle. Mirrors Zelt's "Remaining by Dec 31"
+      // (Allowance − Taken − Booked), assuming no further leave is booked.
+      const histDays = (policyData.unitsTaken?.history || 0) / workdayMinutes;
+      const upcDays = (policyData.unitsTaken?.upcoming || 0) / workdayMinutes;
+      const eoy = total - histDays - upcDays;
+      const prev = balances.get(uid) || { available_now: 0, upcoming_booked: 0, pending: 0, zelt_balance: 0, total: 0, end_of_year: 0, compensatory: 0, policyName: null };
       balances.set(uid, {
         available_now: prev.available_now + accrued,
         upcoming_booked: prev.upcoming_booked + upcoming,
         pending: prev.pending + pending,
         zelt_balance: prev.zelt_balance + zeltBal,
         total: prev.total + total,
+        end_of_year: prev.end_of_year + eoy,
         compensatory: prev.compensatory,
         policyName: prev.policyName || policyData.policyName || null,
       });
@@ -727,7 +735,7 @@ async function tryFetchBalances(userIds, asOfDate = null) {
         const days = (asOfDate && d.currentBalanceInDaysAsOfDate != null)
           ? d.currentBalanceInDaysAsOfDate
           : (d.currentBalanceInDays != null ? d.currentBalanceInDays : (d.currentBalance || 0) / wd);
-        const prev = balances.get(item.userId) || { available_now: 0, upcoming_booked: 0, pending: 0, zelt_balance: 0, total: 0, compensatory: 0, policyName: null };
+        const prev = balances.get(item.userId) || { available_now: 0, upcoming_booked: 0, pending: 0, zelt_balance: 0, total: 0, end_of_year: 0, compensatory: 0, policyName: null };
         balances.set(item.userId, { ...prev, compensatory: (prev.compensatory || 0) + (Number(days) || 0) });
       }
     }

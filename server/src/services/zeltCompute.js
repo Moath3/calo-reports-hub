@@ -364,18 +364,34 @@ async function fetchBalancesForEntityFresh(entityName, asOfDate = null, departme
     );
     const userAbs = absencesByUser.get(userId) || [];
 
-    let history = 0;
-    let upcoming = 0;
+    // Upcoming/pending leave comes from the ACTUAL absence requests, not the
+    // balance aggregate — Zelt's balance endpoint reports unitsTaken.upcoming=0
+    // here even when approved future leave exists, so relying on it zeroed the
+    // column for everyone. We split annual absences by date + approval status.
+    const yearEnd = new Date(Date.UTC(today.getUTCFullYear(), 11, 31, 23, 59, 59));
+    let history = 0;        // annual taken so far this year
+    let upcoming = 0;       // approved, future-dated
+    let pendingDays = 0;    // awaiting approval, future-dated
+    let upcomingThisYear = 0; // approved future before Dec 31 (for the year-end projection)
     let confidence = 'high';
 
     for (const ab of userAbs) {
-      const days = absenceDays(ab);
-      if (days <= 0) continue;
       const start = parseDateSafe(ab.start || ab.startDate);
       if (!start) { confidence = 'medium'; continue; }
       if (!isAnnualLeave(ab)) continue;
-      if (start <= today) history += days;
-      else upcoming += days;
+      const status = String(ab.status || ab.state || '').toLowerCase();
+      if (/reject|cancel|declin|withdraw/.test(status)) continue; // not counted
+      const days = absenceDays(ab);
+      if (days <= 0) continue;
+      const isPending = /pending|await|request|review/.test(status);
+      if (start <= today) {
+        history += days;
+      } else if (isPending) {
+        pendingDays += days;
+      } else {
+        upcoming += days;
+        if (start <= yearEnd) upcomingThisYear += days;
+      }
     }
 
     // PREFERRED: use the live "Available Now" from Zelt's internal balance endpoint
@@ -384,10 +400,8 @@ async function fetchBalancesForEntityFresh(entityName, asOfDate = null, departme
     const liveBalance = balancesByUser.get(userId);
     if (liveBalance) {
       availableNow = round1(liveBalance.available_now);
-      if (liveBalance.upcoming_booked != null) upcoming = round1(liveBalance.upcoming_booked);
       confidence = 'high';
     } else if (allowance != null) {
-      // Fallback: compute from allowance + history + upcoming
       availableNow = round1(allowance + carryOver - history - upcoming);
     } else {
       confidence = 'low';
@@ -409,9 +423,11 @@ async function fetchBalancesForEntityFresh(entityName, asOfDate = null, departme
       carryOver,
       history: round1(history),
       upcoming: round1(upcoming),
-      pending: liveBalance ? round1(liveBalance.pending) : null,
+      pending: round1(pendingDays),
       zeltBalance: liveBalance ? round1(liveBalance.zelt_balance) : null,
-      endOfYear: liveBalance ? round1(liveBalance.end_of_year) : null,
+      // Year-end projection from the real requests: allowance (+ carry-over)
+      // minus annual taken and approved future leave dated before Dec 31.
+      endOfYear: effAllowance != null ? round1(effAllowance + carryOver - history - upcomingThisYear) : null,
       compensatory: liveBalance ? round1(liveBalance.compensatory || 0) : null,
       // Dated compensatory additions + per-batch expiry (9 months for
       // production crew, 3 months for non-production).
@@ -1106,10 +1122,12 @@ export async function debugBalanceSample() {
     const today = new Date();
     let total = 0, upcoming = 0, sampleFields = null;
     const statuses = {}, types = {};
+    const rawSamples = [];
     for (const arr of absMap.values()) {
       for (const ab of arr) {
         total++;
         if (!sampleFields) sampleFields = Object.keys(ab);
+        if (rawSamples.length < 3) rawSamples.push({ startDate: ab.startDate || ab.start, endDate: ab.endDate || ab.end, totalLength: ab.totalLength, lengthUnit: ab.lengthUnit, status: ab.status, computedDays: absenceDays(ab) });
         const st = ab.status || ab.state || ab.approvalStatus || ab.requestStatus || '(none)';
         statuses[st] = (statuses[st] || 0) + 1;
         const ty = ab.policyName || ab.policy?.name || ab.type || ab.absenceType || '(none)';
@@ -1118,7 +1136,7 @@ export async function debugBalanceSample() {
         if (start && start > today) upcoming++;
       }
     }
-    absenceProbe = { usersProbed: userIds.length, usersWithAbsences: absMap.size, totalAbsences: total, upcomingDated: upcoming, statuses, types, sampleFields };
+    absenceProbe = { usersProbed: userIds.length, usersWithAbsences: absMap.size, totalAbsences: total, upcomingDated: upcoming, statuses, types, sampleFields, rawSamples };
   } catch (e) {
     absenceProbe = { error: `partner absences failed: ${e.status || ''} ${e.message}` };
   }
@@ -1242,16 +1260,26 @@ async function fetchAbsencesByUser(userIds) {
   return map;
 }
 
-function absenceDays(ab) {
-  // Prefer pre-computed day length if Zelt provides it
+function absenceDays(ab, workdayMinutes = WORKDAY_MINUTES_FALLBACK) {
+  // Prefer pre-computed day length if Zelt provides it.
   if (ab.lengthDays != null) return Number(ab.lengthDays) || 0;
   if (ab.totalDays != null) return Number(ab.totalDays) || 0;
+  // The partner-absence record carries totalLength + lengthUnit. Zelt stores
+  // these in MINUTES (same unit as the balance endpoint, where 480 = one day),
+  // so convert to working days rather than counting calendar days (which would
+  // over-count weekends inside a leave span).
+  const unit = String(ab.lengthUnit || '').toLowerCase();
+  if (ab.totalLength != null) {
+    const len = Number(ab.totalLength) || 0;
+    if (unit.includes('day')) return len;                         // already in days/half-days
+    if (unit.includes('hour')) return (len * 60) / (workdayMinutes || WORKDAY_MINUTES_FALLBACK);
+    return len / (workdayMinutes || WORKDAY_MINUTES_FALLBACK);     // default: minutes
+  }
   const start = parseDateSafe(ab.start || ab.startDate);
   const end = parseDateSafe(ab.end || ab.endDate);
   if (!start || !end) return 0;
-  // Calendar days inclusive — matches the locked rule from leave-recon
   const ms = end.getTime() - start.getTime();
-  return Math.max(0, Math.floor(ms / MS_PER_DAY) + 1);
+  return Math.max(0, Math.floor(ms / MS_PER_DAY) + 1); // calendar-days fallback
 }
 
 function isAnnualLeave(ab) {

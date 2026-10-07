@@ -420,8 +420,10 @@ async function fetchBalancesForEntityFresh(entityName, asOfDate = null, departme
       compExpiredDays: liveBalance?.compExpiredDays ?? 0,
       isProduction: prodByUser.get(userId) === true,
       compExpiryMonths: liveBalance?.compExpiryMonths ?? (prodByUser.get(userId) === true ? COMP_EXPIRY_MONTHS_PROD : COMP_EXPIRY_MONTHS_NONPROD),
-      // Flags: high annual (30+) / high compensatory (10+) balances to chase.
-      annualHigh: liveBalance ? round1(liveBalance.zelt_balance) >= 30 : false,
+      // Flags: high annual (30+ available now) / high compensatory (10+) to chase.
+      // Keyed off availableNow, not the Zelt balance (which is inflated by
+      // public holidays and no longer shown).
+      annualHigh: availableNow != null && availableNow >= 30,
       compHigh: liveBalance ? round1(liveBalance.compensatory || 0) >= 10 : false,
       compExpiring: !!(liveBalance?.compExpiringDays > 0),
       compExpired: !!(liveBalance?.compExpiredDays > 0),

@@ -34,7 +34,6 @@ export default function ZeltLeavePage() {
   const [error, setError] = useState(null);
   const [search, setSearch] = useState('');
   const [flagFilter, setFlagFilter] = useState(null); // null | 'annual' | 'comp'
-  const [showEoy, setShowEoy] = useState(false);       // project annual balance to Dec 31
   const [expanded, setExpanded] = useState(() => new Set()); // userIds showing comp additions
   const toggleExpand = (id) => setExpanded(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
   const [sort, setSort] = useState({ key: 'name', dir: 'asc' });
@@ -438,11 +437,6 @@ export default function ZeltLeavePage() {
               </div>
             </div>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-              <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13, fontWeight: 600, color: 'var(--ink-700)', cursor: 'pointer', whiteSpace: 'nowrap' }}
-                title="Project each annual balance to Dec 31 (full-year entitlement minus leave taken/booked)">
-                <input type="checkbox" checked={showEoy} onChange={e => setShowEoy(e.target.checked)} />
-                Year-end (Dec 31)
-              </label>
               <input
                 value={search}
                 onChange={e => setSearch(e.target.value)}
@@ -524,15 +518,14 @@ export default function ZeltLeavePage() {
                   <Th onClick={() => handleSort('upcoming')} active={sort.key === 'upcoming'} dir={sort.dir} align="right">Upcoming</Th>
                   <Th onClick={() => handleSort('pending')} active={sort.key === 'pending'} dir={sort.dir} align="right">Pending</Th>
                   <Th onClick={() => handleSort('availableNow')} active={sort.key === 'availableNow'} dir={sort.dir} align="right">Available Now</Th>
-                  <Th onClick={() => handleSort('zeltBalance')} active={sort.key === 'zeltBalance'} dir={sort.dir} align="right">Annual (Zelt)</Th>
-                  {showEoy && <Th onClick={() => handleSort('endOfYear')} active={sort.key === 'endOfYear'} dir={sort.dir} align="right">By Dec 31</Th>}
+                  <Th onClick={() => handleSort('endOfYear')} active={sort.key === 'endOfYear'} dir={sort.dir} align="right">By Dec 31</Th>
                   <Th onClick={() => handleSort('compensatory')} active={sort.key === 'compensatory'} dir={sort.dir} align="right">Compensatory</Th>
                   <Th onClick={() => handleSort('compHigh')} active={sort.key === 'compHigh'} dir={sort.dir}>Flags</Th>
                 </tr>
               </thead>
               <tbody>
                 {filtered.length === 0 ? (
-                  <tr><td colSpan={(data.multi ? 13 : 12) + (showEoy ? 1 : 0)} style={{ padding: '24px 16px', textAlign: 'center', color: 'var(--ink-500)' }}>
+                  <tr><td colSpan={data.multi ? 13 : 12} style={{ padding: '24px 16px', textAlign: 'center', color: 'var(--ink-500)' }}>
                     No employees match the filter.
                   </td></tr>
                 ) : filtered.map((r, i) => (
@@ -548,11 +541,12 @@ export default function ZeltLeavePage() {
                     <Td align="right">{r.upcoming > 0 ? `${r.upcoming.toFixed(1)}d` : '0'}</Td>
                     <Td align="right">{r.pending > 0 ? <span style={{ color: '#B45309', fontWeight: 600 }}>{r.pending.toFixed(1)}d</span> : (r.pending === 0 ? '0' : '—')}</Td>
                     <Td align="right" bold>
-                      {r.availableNow != null ? `${r.availableNow.toFixed(1)}d` :
-                        <span style={{ color: 'var(--ink-500)', fontWeight: 400 }}>—</span>}
+                      <span style={r.annualHigh ? { color: '#B45309', fontWeight: 700 } : undefined}>
+                        {r.availableNow != null ? `${r.availableNow.toFixed(1)}d` :
+                          <span style={{ color: 'var(--ink-500)', fontWeight: 400 }}>—</span>}
+                      </span>
                     </Td>
-                    <Td align="right"><span style={r.annualHigh ? { color: '#B45309', fontWeight: 700 } : undefined}>{r.zeltBalance != null ? `${r.zeltBalance.toFixed(1)}d` : '—'}</span></Td>
-                    {showEoy && <Td align="right">{r.endOfYear != null ? `${r.endOfYear.toFixed(1)}d` : '—'}</Td>}
+                    <Td align="right">{r.endOfYear != null ? `${r.endOfYear.toFixed(1)}d` : '—'}</Td>
                     <Td align="right">
                       {r.compAdditions?.length ? (
                         <button onClick={() => toggleExpand(r.userId)} style={{ background: 'none', border: 'none', cursor: 'pointer', font: 'inherit', color: r.compHigh ? '#B45309' : 'var(--calo-700)', fontWeight: r.compHigh ? 700 : 600, textDecoration: 'underline dotted' }}
@@ -573,7 +567,7 @@ export default function ZeltLeavePage() {
                   </tr>
                   {expanded.has(r.userId) && r.compAdditions?.length > 0 && (
                     <tr>
-                      <td colSpan={(data.multi ? 13 : 12) + (showEoy ? 1 : 0)} style={{ padding: '10px 18px', background: 'var(--ink-50)', borderBottom: '1px solid var(--ink-200)' }}>
+                      <td colSpan={data.multi ? 13 : 12} style={{ padding: '10px 18px', background: 'var(--ink-50)', borderBottom: '1px solid var(--ink-200)' }}>
                         <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--ink-500)', letterSpacing: '.06em', textTransform: 'uppercase', marginBottom: 8 }}>
                           Compensatory additions — existing days (on/before 15 Oct 2026) expire 15 Jul 2027; newer {r.isProduction ? 'production' : 'non-production'} days expire {r.isProduction ? 9 : 3} months after the add date
                         </div>

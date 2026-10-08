@@ -1248,7 +1248,7 @@ export async function debugEmployeeBalance(empId) {
   }
   return {
     empId, entity: readEntity(u),
-    toolRow: lb ? { availableNow: round1(lb.available_now), upcoming: round1(upcoming), pending: round1(pending), endOfYear: round1(lb.end_of_year), total: round1(lb.total), zeltBalance: round1(lb.zelt_balance) } : null,
+    balanceEndpoint: lb ? { availableNow: round1(lb.available_now), upcomingBooked: round1(lb.upcoming_booked), pending: round1(lb.pending), endOfYear: round1(lb.end_of_year), total: round1(lb.total), zeltBalance: round1(lb.zelt_balance) } : null,
     absenceDerived: { history: round1(history), upcoming: round1(upcoming), pending: round1(pending), annualAbsencesAllYears: annual, byStatus },
   };
 }

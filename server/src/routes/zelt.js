@@ -31,7 +31,7 @@ import {
   zeltGetOauthOnly,
 } from '../services/zeltApi.js';
 import { botGet, botConfigured, getBotStatus } from '../services/zeltBot.js';
-import { listEntities, listDepartments, entitiesForDepartments, getBalancesForEntity, clearCaches, debugSampleUser, probeCompAdditionsAccess, debugEmployeeBalance } from '../services/zeltCompute.js';
+import { listEntities, listDepartments, entitiesForDepartments, getBalancesForEntity, clearCaches, debugSampleUser, probeCompAdditionsAccess, debugEmployeeBalance, getCompLedger } from '../services/zeltCompute.js';
 import { runAudit } from '../services/zeltAudit.js';
 import { getMobility } from '../services/zeltMobility.js';
 import { getWatchState, runSnapshotAndDiff, sendWeeklyDigestIfDue, sendCompExpiryDigestIfDue } from '../services/zeltWatcher.js';
@@ -335,6 +335,11 @@ router.get('/watch/comp-access', dataLimiter, requireAuth, requireAdmin, asyncHa
 // Admin-only: reconcile one employee's balance fields vs Zelt (?id=FTE####).
 router.get('/debug/emp', dataLimiter, requireAuth, requireAdmin, asyncHandler(async (req, res) => {
   res.json(await debugEmployeeBalance(req.query.id || ''));
+}));
+
+// Admin-only: company-wide compensatory ledger (additions + taken per employee).
+router.get('/comp-ledger', dataLimiter, requireAuth, requireAdmin, asyncHandler(async (req, res) => {
+  res.json(await getCompLedger());
 }));
 
 // ---- Report builder (generate a filtered people report from live Zelt) ----

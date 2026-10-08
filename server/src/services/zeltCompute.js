@@ -1011,6 +1011,94 @@ export async function getCompExpiryAggregates(asOfDate = null) {
   return { available: true, asOf, ...summarizeCompExpiry(holders), list };
 }
 
+// Company-wide compensatory ledger for an HR report: per employee, the dated
+// additions (credits) and the comp days taken. Admin-only.
+export async function getCompLedger() {
+  const asOf = new Date().toISOString().slice(0, 10);
+  const empty = (reason) => ({ available: !reason, reason: reason || null, asOf, summary: [], additions: [], taken: [] });
+  if (!botConfigured()) return empty('Zelt bot not configured');
+
+  let compPolicyIds = [];
+  try {
+    const policies = await botGet('/apiv2/absence-policies/extended');
+    const arr = Array.isArray(policies) ? policies : (policies?.items || []);
+    compPolicyIds = arr.filter(p => /compensator/i.test(p.name || p.policyName || '')).map(p => p.id).slice(0, ANNUAL_POLICY_PROBE_LIMIT);
+  } catch (e) { return empty(`policy lookup failed (${e.status || ''} ${e.message})`); }
+  if (!compPolicyIds.length) return { ...empty(), available: true };
+
+  // Employed users → info (name, employeeId, entity, department, prod flag).
+  const users = await fetchAllUsers();
+  const seen = new Map();
+  for (const u of users) { const k = u.userId || u.id || u.employeeId || JSON.stringify(u).slice(0, 40); if (!seen.has(k)) seen.set(k, u); }
+  const info = new Map();
+  for (const u of seen.values()) {
+    const status = u?.accountStatus || u?.status || u?.lifecycle?.status;
+    if (status === 'Deactivated' || status === 'Terminated') continue;
+    const ev = u?.userEvent?.status || u?.lifecycle?.status;
+    if (ev === 'Terminated' || ev === 'Resigned' || ev === 'Offboarded') continue;
+    if (u?.leaveDate || u?.lifecycle?.leaveDate) continue;
+    const uid = u.userId || u.id;
+    info.set(uid, {
+      name: readName(u),
+      employeeId: readEmployeeId(u) ?? null,
+      entity: readEntity(u),
+      department: u?.role?.department?.name || u?.department?.name || u?.department || null,
+      isProduction: isProductionEmployee(u),
+    });
+  }
+
+  // Comp balances → holders (non-zero balance).
+  const balances = new Map();
+  const compHolders = [];
+  const compResults = await Promise.all(compPolicyIds.map(async (pid) => {
+    const all = []; let page = 1;
+    while (true) {
+      try {
+        const data = await botGet('/apiv2/absences/company/balance', { policyId: pid, Calendar: 'current', page, pageSize: PAGE_SIZE });
+        all.push(...(data.items || []).map(item => ({ item, pid })));
+        if (page >= (data.totalPages || 1)) break;
+        page++;
+      } catch { break; }
+    }
+    return all;
+  }));
+  for (const items of compResults) {
+    for (const { item, pid } of items) {
+      if (!info.has(item.userId)) continue;
+      const d = item[pid]; if (!d) continue;
+      const wd = d.currentAverageWorkDayLength || WORKDAY_MINUTES_FALLBACK;
+      const bal = d.currentBalanceInDays != null ? d.currentBalanceInDays : (d.currentBalance || 0) / wd;
+      const prev = balances.get(item.userId) || { compensatory: 0, wd };
+      balances.set(item.userId, { ...prev, compensatory: (prev.compensatory || 0) + (Number(bal) || 0), wd });
+      if ((Number(bal) || 0) !== 0) compHolders.push({ uid: item.userId, pid, wd, isProd: info.get(item.userId).isProduction });
+    }
+  }
+  await enrichCompAdditions(compHolders, balances, null);
+
+  // Comp days taken: the comp-policy absences for each holder.
+  let absMap = new Map();
+  try { absMap = await fetchAbsencesByUser([...balances.keys()]); } catch { /* best-effort */ }
+
+  const summary = [], additions = [], taken = [];
+  for (const [uid, b] of balances) {
+    const i = info.get(uid) || {};
+    const adds = Array.isArray(b.compAdditions) ? b.compAdditions : [];
+    const compAbs = (absMap.get(uid) || []).filter(ab => /compensat/i.test(String(ab.policy?.name || ab.policyName || ab.policy || '')));
+    const takenRows = compAbs.map(ab => ({
+      date: String(ab.startDate || ab.start || '').slice(0, 10),
+      days: round1(absenceDays(ab, b.wd)),
+      status: ab.status || null,
+    })).sort((x, y) => (x.date < y.date ? -1 : 1));
+    const totalAdded = round1(adds.reduce((s, a) => s + (a.days || 0), 0));
+    const totalTaken = round1(takenRows.reduce((s, t) => s + (t.days || 0), 0));
+    summary.push({ employeeId: i.employeeId, name: i.name, entity: i.entity, department: i.department, isProduction: i.isProduction === true, compBalance: round1(b.compensatory || 0), totalAdded, totalTaken });
+    for (const a of adds) additions.push({ employeeId: i.employeeId, name: i.name, entity: i.entity, addDate: a.addDate, days: a.days, note: a.note || '' });
+    for (const t of takenRows) taken.push({ employeeId: i.employeeId, name: i.name, entity: i.entity, date: t.date, days: t.days, status: t.status });
+  }
+  summary.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  return { available: true, asOf, summary, additions, taken };
+}
+
 // Diagnostic: can the Hub's Zelt bot READ the dated compensatory-addition
 // ledger (/absence-policies/{pid}/users/{uid}/allowances/{year})? Probes a few
 // real comp holders and returns a NON-PII access result — HTTP status, counts

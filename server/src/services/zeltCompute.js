@@ -343,15 +343,23 @@ async function fetchBalancesForEntityFresh(entityName, asOfDate = null, departme
   // contain employeeId (true when bot's /users/cache succeeded).
   const hasEmpIdAlready = targets.length > 0 && targets.every(u => readEmployeeId(u) != null);
 
-  // Fetch balances (bot), absence requests (partner OAuth), and basics IN
-  // PARALLEL. Upcoming/Pending are then cross-checked between the balance
-  // aggregate and the actual absence requests (see the row builder): each source
-  // intermittently returns zero under load, so we take whichever has the data.
-  // This is what stops a whole entity reading 0 upcoming.
-  const [absencesResult, basicsResult, balancesResult] = await Promise.allSettled([
+  // Discover the annual/comp policy IDs ONCE up front so the current-balance
+  // sweep and the 31-Dec sweep run in PARALLEL off the same discovery. The
+  // year-end pull used to run sequentially AFTER the balance pull — a second
+  // full company-wide sweep that roughly doubled the cold-path time (~73s).
+  await ensureAnnualPolicyIds();
+
+  // Fetch balances (bot), the direct 31-Dec projection (bot), absence requests
+  // (partner OAuth), and basics ALL IN PARALLEL. Upcoming/Pending are then
+  // cross-checked between the balance aggregate and the actual absence requests
+  // (see the row builder): each source intermittently returns zero under load,
+  // so we take whichever has the data. This is what stops a whole entity reading
+  // 0 upcoming.
+  const [absencesResult, basicsResult, balancesResult, yearEndResult] = await Promise.allSettled([
     fetchAbsencesByUser(targetUserIds),
     hasEmpIdAlready ? Promise.resolve(new Map()) : fetchUserBasics(targetUserIds),
     tryFetchBalances(targetUserIds, asOfDate, prodByUser),
+    fetchYearEndBalances(),
   ]);
 
   const balancesByUser = balancesResult.status === 'fulfilled' ? balancesResult.value : new Map();
@@ -374,9 +382,10 @@ async function fetchBalancesForEntityFresh(entityName, asOfDate = null, departme
   }
   if (hasEmpIdAlready) console.log('[zelt] skipping per-user basics fetch (emp IDs already in user list)');
 
-  // Zelt's own projected 31 Dec balance, read directly — robust against the
-  // flaky unitsTaken arithmetic that intermittently inflated By Dec 31.
-  const yearEndByUser = await fetchYearEndBalances().catch(() => new Map());
+  // Zelt's own projected 31 Dec balance (fetched in parallel above), read
+  // directly — robust against the flaky unitsTaken arithmetic that intermittently
+  // inflated By Dec 31.
+  const yearEndByUser = yearEndResult.status === 'fulfilled' ? yearEndResult.value : new Map();
 
   const today = new Date();
   const rows = targets.map(u => {
@@ -655,6 +664,40 @@ let resolvedAnnualPolicyIds = null;
 let resolvedAnnualPolicyAt = 0;
 let resolvedCompPolicyIds = [];  // "Compensatory Days" policies — resolved alongside annual
 
+// Discover the paid annual-vacation + compensatory policy IDs once (cached on a
+// 6h TTL; a failure is NOT cached — next request retries). Extracted so the
+// current-balance sweep AND the 31-Dec sweep can both run in parallel off the
+// same discovery instead of each waiting on the other. Returns true when we have
+// at least one annual policy.
+async function ensureAnnualPolicyIds() {
+  if (resolvedAnnualPolicyIds != null && Date.now() - resolvedAnnualPolicyAt <= POLICY_IDS_TTL_MS) {
+    return resolvedAnnualPolicyIds.length > 0;
+  }
+  if (!botConfigured()) return false;
+  try {
+    const policies = await botGet('/apiv2/absence-policies/extended');
+    const arr = Array.isArray(policies) ? policies : (policies?.items || []);
+    // Skip unpaid policies — zero-balance shadow policies that pollute the
+    // aggregated 'policy' column for users on the paid plan.
+    resolvedAnnualPolicyIds = arr
+      .filter(p => {
+        const n = p.name || p.policyName || '';
+        return /annual|vacation/i.test(n) && !/unpaid/i.test(n);
+      })
+      .map(p => p.id)
+      .slice(0, ANNUAL_POLICY_PROBE_LIMIT);
+    resolvedCompPolicyIds = arr
+      .filter(p => /compensator/i.test(p.name || p.policyName || ''))
+      .map(p => p.id)
+      .slice(0, ANNUAL_POLICY_PROBE_LIMIT);
+    resolvedAnnualPolicyAt = Date.now();
+    console.log(`[zelt-bot] found ${resolvedAnnualPolicyIds.length} paid annual-vacation policies`);
+  } catch (err) {
+    console.warn(`[zelt-bot] /absence-policies/extended failed (${err.status || ''} ${err.message}) — Available Now unavailable this run`);
+  }
+  return resolvedAnnualPolicyIds != null && resolvedAnnualPolicyIds.length > 0;
+}
+
 async function tryFetchBalances(userIds, asOfDate = null, prodByUser = new Map()) {
   if (!userIds.length) return new Map();
 
@@ -674,70 +717,35 @@ async function tryFetchBalances(userIds, asOfDate = null, prodByUser = new Map()
     return balances;
   }
 
-  // Step 1: discover annual-vacation policy IDs (re-discovered on a TTL; a
-  // failure is NOT cached — the next request retries instead of staying blank
-  // until a restart).
-  if (resolvedAnnualPolicyIds == null || Date.now() - resolvedAnnualPolicyAt > POLICY_IDS_TTL_MS) {
-    try {
-      const policies = await botGet('/apiv2/absence-policies/extended');
-      const arr = Array.isArray(policies) ? policies : (policies?.items || []);
-      // Skip unpaid policies — they're zero-balance shadow policies that
-      // pollute the aggregated 'policy' column for users on the paid plan.
-      resolvedAnnualPolicyIds = arr
-        .filter(p => {
-          const n = p.name || p.policyName || '';
-          return /annual|vacation/i.test(n) && !/unpaid/i.test(n);
-        })
-        .map(p => p.id)
-        .slice(0, ANNUAL_POLICY_PROBE_LIMIT);
-      resolvedCompPolicyIds = arr
-        .filter(p => /compensator/i.test(p.name || p.policyName || ''))
-        .map(p => p.id)
-        .slice(0, ANNUAL_POLICY_PROBE_LIMIT);
-      resolvedAnnualPolicyAt = Date.now();
-      console.log(`[zelt-bot] found ${resolvedAnnualPolicyIds.length} paid annual-vacation policies`);
-    } catch (err) {
-      console.warn(`[zelt-bot] /absence-policies/extended failed (${err.status || ''} ${err.message}) — Available Now unavailable this run`);
-      if (resolvedAnnualPolicyIds == null) return balances; // nothing cached — retry next request
-    }
-  }
-  if (!resolvedAnnualPolicyIds.length) return balances;
+  // Step 1: ensure annual/comp policy IDs are known (shared discovery, 6h TTL).
+  await ensureAnnualPolicyIds();
+  if (!resolvedAnnualPolicyIds || !resolvedAnnualPolicyIds.length) return balances;
 
   // Step 2: pull balance per policy (paginated, bounded concurrency so we don't
   // burst Zelt into rate-limiting us), aggregate by userId.
-  const policyHasActivity = (items, pid) => items.some(({ item }) => {
-    const u = item[pid]?.unitsTaken || {};
-    return (u.history || 0) || (u.upcoming || 0) || (u.historyPending || 0) || (u.upcomingPending || 0);
-  });
+  // Per-policy balance pull (paginated). We do NOT retry an all-zero policy here
+  // any more: it penalised every genuinely-empty third-party policy (Fakihi,
+  // Ewan, Retail…) with a wasted 500ms + full re-fetch, and the balance endpoint
+  // stays degraded under load anyway. Degraded upcoming/pending is instead
+  // recovered by cross-checking the actual absence requests in
+  // getBalancesForEntity (we take the max of the two sources per user).
   const fetchOnePolicy = async (pid) => {
-    const run = async () => {
-      const all = [];
-      let page = 1;
-      while (true) {
-        try {
-          const params = { policyId: pid, Calendar: 'current', page, pageSize: PAGE_SIZE };
-          if (asOfDate) params.asOfDate = asOfDate;
-          const data = await botGet('/apiv2/absences/company/balance', params);
-          all.push(...(data.items || []).map(item => ({ item, pid })));
-          if (page >= (data.totalPages || 1)) break;
-          page++;
-        } catch (err) {
-          console.warn(`[zelt-bot] /absences/company/balance pid=${pid} page=${page} failed: ${err.status || ''} ${err.message}`);
-          break;
-        }
+    const all = [];
+    let page = 1;
+    while (true) {
+      try {
+        const params = { policyId: pid, Calendar: 'current', page, pageSize: PAGE_SIZE };
+        if (asOfDate) params.asOfDate = asOfDate;
+        const data = await botGet('/apiv2/absences/company/balance', params);
+        all.push(...(data.items || []).map(item => ({ item, pid })));
+        if (page >= (data.totalPages || 1)) break;
+        page++;
+      } catch (err) {
+        console.warn(`[zelt-bot] /absences/company/balance pid=${pid} page=${page} failed: ${err.status || ''} ${err.message}`);
+        break;
       }
-      return all;
-    };
-    let items = await run();
-    // A policy whose users ALL show zero leave activity is almost certainly a
-    // degraded response (Zelt returned empty unitsTaken for that policy) — this
-    // is what makes a whole department/entity read 0. Retry the policy once.
-    if (items.length > 0 && !policyHasActivity(items, pid)) {
-      await new Promise(r => setTimeout(r, 500));
-      const retry = await run();
-      if (policyHasActivity(retry, pid)) items = retry;
     }
-    return items;
+    return all;
   };
   const fetchPolicyResults = () => mapLimit(resolvedAnnualPolicyIds, BALANCE_FETCH_CONCURRENCY, fetchOnePolicy);
 

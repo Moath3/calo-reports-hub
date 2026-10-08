@@ -710,24 +710,41 @@ async function tryFetchBalances(userIds, asOfDate = null, prodByUser = new Map()
 
   // Step 2: pull balance per policy (paginated, bounded concurrency so we don't
   // burst Zelt into rate-limiting us), aggregate by userId.
-  const fetchPolicyResults = () => mapLimit(resolvedAnnualPolicyIds, BALANCE_FETCH_CONCURRENCY, async (pid) => {
-    const all = [];
-    let page = 1;
-    while (true) {
-      try {
-        const params = { policyId: pid, Calendar: 'current', page, pageSize: PAGE_SIZE };
-        if (asOfDate) params.asOfDate = asOfDate;
-        const data = await botGet('/apiv2/absences/company/balance', params);
-        all.push(...(data.items || []).map(item => ({ item, pid })));
-        if (page >= (data.totalPages || 1)) break;
-        page++;
-      } catch (err) {
-        console.warn(`[zelt-bot] /absences/company/balance pid=${pid} page=${page} failed: ${err.status || ''} ${err.message}`);
-        break;
-      }
-    }
-    return all;
+  const policyHasActivity = (items, pid) => items.some(({ item }) => {
+    const u = item[pid]?.unitsTaken || {};
+    return (u.history || 0) || (u.upcoming || 0) || (u.historyPending || 0) || (u.upcomingPending || 0);
   });
+  const fetchOnePolicy = async (pid) => {
+    const run = async () => {
+      const all = [];
+      let page = 1;
+      while (true) {
+        try {
+          const params = { policyId: pid, Calendar: 'current', page, pageSize: PAGE_SIZE };
+          if (asOfDate) params.asOfDate = asOfDate;
+          const data = await botGet('/apiv2/absences/company/balance', params);
+          all.push(...(data.items || []).map(item => ({ item, pid })));
+          if (page >= (data.totalPages || 1)) break;
+          page++;
+        } catch (err) {
+          console.warn(`[zelt-bot] /absences/company/balance pid=${pid} page=${page} failed: ${err.status || ''} ${err.message}`);
+          break;
+        }
+      }
+      return all;
+    };
+    let items = await run();
+    // A policy whose users ALL show zero leave activity is almost certainly a
+    // degraded response (Zelt returned empty unitsTaken for that policy) — this
+    // is what makes a whole department/entity read 0. Retry the policy once.
+    if (items.length > 0 && !policyHasActivity(items, pid)) {
+      await new Promise(r => setTimeout(r, 500));
+      const retry = await run();
+      if (policyHasActivity(retry, pid)) items = retry;
+    }
+    return items;
+  };
+  const fetchPolicyResults = () => mapLimit(resolvedAnnualPolicyIds, BALANCE_FETCH_CONCURRENCY, fetchOnePolicy);
 
   // Aggregate a set of policy results into `target`. Zelt counts PENDING requests
   // INSIDE unitsTaken.upcoming/history (with *Pending as the awaiting-approval

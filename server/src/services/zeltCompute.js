@@ -362,6 +362,10 @@ async function fetchBalancesForEntityFresh(entityName, asOfDate = null, departme
   }
   if (hasEmpIdAlready) console.log('[zelt] skipping per-user basics fetch (emp IDs already in user list)');
 
+  // Zelt's own projected 31 Dec balance, read directly — robust against the
+  // flaky unitsTaken arithmetic that intermittently inflated By Dec 31.
+  const yearEndByUser = await fetchYearEndBalances().catch(() => new Map());
+
   const today = new Date();
   const rows = targets.map(u => {
     const userId = u.userId || u.id;
@@ -441,7 +445,7 @@ async function fetchBalancesForEntityFresh(entityName, asOfDate = null, departme
       // Year-end projection: use Zelt's own "Remaining by Dec 31" (computed in
       // tryFetchBalances). Recomputing it from a different basis than
       // availableNow produced values below the current balance — don't.
-      endOfYear: liveBalance ? round1(liveBalance.end_of_year) : null,
+      endOfYear: yearEndByUser.has(userId) ? round1(yearEndByUser.get(userId)) : (liveBalance ? round1(liveBalance.end_of_year) : null),
       compensatory: liveBalance ? round1(liveBalance.compensatory || 0) : null,
       // Dated compensatory additions + per-batch expiry (9 months for
       // production crew, 3 months for non-production).
@@ -805,6 +809,43 @@ async function tryFetchBalances(userIds, asOfDate = null, prodByUser = new Map()
   // Cache the full company-wide map (only meaningful results worth reusing).
   if (balances.size > 0) cache.balancesMap.set(balKey, { value: balances, expiresAt: Date.now() + BALANCES_TTL_MS });
   return balances;
+}
+
+// Zelt's OWN projected balance at 31 Dec (currentBalanceInDaysAsOfDate), read
+// directly rather than computed from the flaky unitsTaken. Company-wide, cached.
+// Returns a map userId → year-end days. Relies on the annual policies already
+// discovered by tryFetchBalances.
+async function fetchYearEndBalances() {
+  if (!botConfigured()) return new Map();
+  const yr = new Date().getUTCFullYear();
+  const key = `yearend-${yr}`;
+  const cached = cache.balancesMap.get(key);
+  if (cached && cached.expiresAt > Date.now()) return cached.value;
+  if (!resolvedAnnualPolicyIds || !resolvedAnnualPolicyIds.length) return new Map();
+  const dec31 = `${yr}-12-31`;
+  const map = new Map();
+  const results = await Promise.all(resolvedAnnualPolicyIds.map(async (pid) => {
+    const all = []; let page = 1;
+    while (true) {
+      try {
+        const d = await botGet('/apiv2/absences/company/balance', { policyId: pid, Calendar: 'current', asOfDate: dec31, page, pageSize: PAGE_SIZE });
+        all.push(...(d.items || []).map(it => ({ it, pid })));
+        if (page >= (d.totalPages || 1)) break;
+        page++;
+      } catch { break; }
+    }
+    return all;
+  }));
+  for (const items of results) {
+    for (const { it, pid } of items) {
+      const d = it[pid]; if (!d) continue;
+      const v = d.currentBalanceInDaysAsOfDate != null ? d.currentBalanceInDaysAsOfDate : d.currentBalanceInDays;
+      if (v == null) continue;
+      map.set(it.userId, (map.get(it.userId) || 0) + v);
+    }
+  }
+  if (map.size > 0) cache.balancesMap.set(key, { value: map, expiresAt: Date.now() + BALANCES_TTL_MS });
+  return map;
 }
 
 const COMP_EXPIRY_MONTHS_PROD = 9;     // production crew: comp additions expire 9 months after the add date

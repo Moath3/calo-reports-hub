@@ -31,6 +31,10 @@ const cache = {
   entities: { value: null, expiresAt: 0 },
   departments: { value: null, expiresAt: 0 },
   balances: new Map(), // key: entity → { value, expiresAt }
+  // Company-wide live-balance map (output of tryFetchBalances), keyed by as-of
+  // date. The balance endpoint is fetched company-wide regardless of entity, so
+  // caching it lets a second entity (or a retry) skip the whole expensive pull.
+  balancesMap: new Map(), // key: asOfDate|'now' → { value, expiresAt }
   // Heavyweight: full user list. Reused across entity picks for 5 min so
   // generating reports for two different entities doesn't refetch 1961 users.
   allUsers: { value: null, expiresAt: 0 },
@@ -310,7 +314,10 @@ async function fetchBalancesForEntityFresh(entityName, asOfDate = null, departme
   const targetUserIds = targets.map(u => u.userId || u.id);
   // Map each user to production vs non-production so comp-day expiry can be
   // 9 months for production crew, 3 months for everyone else.
-  const prodByUser = new Map(targets.map(u => [u.userId || u.id, isProductionEmployee(u)]));
+  // Company-wide (deduped), not just this entity's targets — tryFetchBalances
+  // fetches balances company-wide and caches the map, so the production flags it
+  // bakes into comp expiry must cover everyone, not only the current entity.
+  const prodByUser = new Map(deduped.map(u => [u.userId || u.id, isProductionEmployee(u)]));
 
   // Skip the expensive per-user basics fetch if our user records already
   // contain employeeId (true when bot's /users/cache succeeded).
@@ -340,6 +347,10 @@ async function fetchBalancesForEntityFresh(entityName, asOfDate = null, departme
   } else {
     throw absencesResult.reason;
   }
+  // When the absence fetch failed or came back partial, upcoming/pending are
+  // understated for some employees — don't cache that so the next request
+  // recomputes instead of serving wrong zeros for 5 minutes.
+  const absencesDegraded = absencesResult.status === 'rejected' || absencesByUser.incomplete === true;
 
   const basicsByUser = basicsResult.status === 'fulfilled' ? basicsResult.value : new Map();
   if (basicsResult.status === 'rejected') {
@@ -477,7 +488,7 @@ async function fetchBalancesForEntityFresh(entityName, asOfDate = null, departme
         }
       : undefined,
   };
-  cache.balances.set(key, { value: payload, expiresAt: Date.now() + BALANCES_TTL_MS });
+  if (!absencesDegraded) cache.balances.set(key, { value: payload, expiresAt: Date.now() + BALANCES_TTL_MS });
   return payload;
 }
 
@@ -490,6 +501,7 @@ export function clearCaches() {
   cache.entities = { value: null, expiresAt: 0 };
   cache.departments = { value: null, expiresAt: 0 };
   cache.balances.clear();
+  cache.balancesMap.clear();
   cache.allUsers = { value: null, expiresAt: 0 };
   cache.basics = { value: new Map(), expiresAt: 0 };
 }
@@ -624,6 +636,13 @@ let resolvedCompPolicyIds = [];  // "Compensatory Days" policies — resolved al
 
 async function tryFetchBalances(userIds, asOfDate = null, prodByUser = new Map()) {
   if (!userIds.length) return new Map();
+
+  // Company-wide result, cached by as-of date — the balance endpoint is pulled
+  // for everyone regardless of entity, so a second entity or a retry reuses it
+  // instead of re-running the whole expensive fetch.
+  const balKey = asOfDate || 'now';
+  const balCached = cache.balancesMap.get(balKey);
+  if (balCached && balCached.expiresAt > Date.now()) return balCached.value;
   const balances = new Map();
 
   // Use the bot session if configured — partner OAuth token can't reach
@@ -781,6 +800,8 @@ async function tryFetchBalances(userIds, asOfDate = null, prodByUser = new Map()
     // from the allowance endpoint, and compute a 9-month expiry PER addition.
     await enrichCompAdditions(compHolders, balances, asOfDate);
   }
+  // Cache the full company-wide map (only meaningful results worth reusing).
+  if (balances.size > 0) cache.balancesMap.set(balKey, { value: balances, expiresAt: Date.now() + BALANCES_TTL_MS });
   return balances;
 }
 
@@ -1305,6 +1326,7 @@ async function fetchUserBasics(userIds) {
 
 async function fetchAbsencesByUser(userIds) {
   const map = new Map();
+  map.incomplete = false;
   if (!userIds.length) return map;
 
   const year = new Date().getFullYear();
@@ -1312,16 +1334,12 @@ async function fetchAbsencesByUser(userIds) {
   const chunks = [];
   for (let i = 0; i < userIds.length; i += ABSENCE_USER_CHUNK_SIZE) chunks.push(userIds.slice(i, i + ABSENCE_USER_CHUNK_SIZE));
 
-  const results = await Promise.all(chunks.map(async (chunk) => {
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+  const fetchChunk = async (chunk) => {
     const all = [];
     let page = 1;
     while (true) {
-      const json = await zeltGet('/apiv2/partner/absences', {
-        userId: chunk.join(','),
-        year,
-        page,
-        pageSize: PAGE_SIZE,
-      });
+      const json = await zeltGet('/apiv2/partner/absences', { userId: chunk.join(','), year, page, pageSize: PAGE_SIZE });
       const items = readItems(json);
       all.push(...items);
       const totalPages = json.totalPages ?? null;
@@ -1334,6 +1352,21 @@ async function fetchAbsencesByUser(userIds) {
       if (page > MAX_USER_PAGES) break;
     }
     return all;
+  };
+
+  // Each chunk retries up to 3 times with backoff; a chunk that still fails
+  // returns [] (so ONE bad chunk never zeroes everyone's upcoming/pending) and
+  // marks the whole result incomplete so the caller won't cache the degraded data.
+  let failed = 0;
+  const results = await Promise.all(chunks.map(async (chunk) => {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try { return await fetchChunk(chunk); }
+      catch (err) {
+        if (attempt === 2) { failed++; console.warn(`[zelt] absence chunk failed after retries (${err.status || ''} ${err.message})`); return []; }
+        await sleep(400 * (attempt + 1));
+      }
+    }
+    return [];
   }));
 
   for (const items of results) {
@@ -1345,6 +1378,7 @@ async function fetchAbsencesByUser(userIds) {
       map.set(uid, arr);
     }
   }
+  map.incomplete = failed > 0;
   return map;
 }
 

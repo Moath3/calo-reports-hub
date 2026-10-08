@@ -494,7 +494,7 @@ async function fetchBalancesForEntityFresh(entityName, asOfDate = null, departme
         }
       : undefined,
   };
-  if (!absencesDegraded) cache.balances.set(key, { value: payload, expiresAt: Date.now() + BALANCES_TTL_MS });
+  if (!absencesDegraded && !balancesByUser.degraded) cache.balances.set(key, { value: payload, expiresAt: Date.now() + BALANCES_TTL_MS });
   return payload;
 }
 
@@ -806,8 +806,14 @@ async function tryFetchBalances(userIds, asOfDate = null, prodByUser = new Map()
     // from the allowance endpoint, and compute a 9-month expiry PER addition.
     await enrichCompAdditions(compHolders, balances, asOfDate);
   }
-  // Cache the full company-wide map (only meaningful results worth reusing).
-  if (balances.size > 0) cache.balancesMap.set(balKey, { value: balances, expiresAt: Date.now() + BALANCES_TTL_MS });
+  // Don't cache an obviously degraded response. Zelt occasionally returns
+  // unitsTaken=0 for everyone under load, so nobody shows any upcoming, pending,
+  // or taken leave (end_of_year == total for all). Caching that would serve the
+  // "0 for everyone" state for 5 minutes; recompute next request instead.
+  const anyActivity = [...balances.values()].some(b =>
+    (b.upcoming_booked || 0) > 0.01 || (b.pending || 0) > 0.01 || Math.abs((b.end_of_year || 0) - (b.total || 0)) > 0.01);
+  balances.degraded = balances.size > 0 && !anyActivity;
+  if (balances.size > 0 && anyActivity) cache.balancesMap.set(balKey, { value: balances, expiresAt: Date.now() + BALANCES_TTL_MS });
   return balances;
 }
 

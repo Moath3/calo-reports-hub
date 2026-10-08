@@ -1083,6 +1083,44 @@ export async function probeCompAdditionsAccess() {
   return out;
 }
 
+// Admin diagnostic: for one employee, dump the balance figures + the
+// absence-derived taken/upcoming/pending, so a tool-vs-Zelt mismatch can be
+// reconciled field by field.
+export async function debugEmployeeBalance(empId) {
+  const users = await fetchAllUsers();
+  const u = users.find(x => String(readEmployeeId(x) || '').toLowerCase() === String(empId || '').toLowerCase());
+  if (!u) return { error: 'employee not found', empId };
+  const uid = u.userId || u.id;
+  const [balMap, absMap] = await Promise.all([tryFetchBalances([uid]), fetchAbsencesByUser([uid])]);
+  const lb = balMap.get(uid) || null;
+  const userAbs = absMap.get(uid) || [];
+  const today = new Date();
+  const hy = today.getUTCFullYear();
+  const yearStart = new Date(Date.UTC(hy, 0, 1)), yearEnd = new Date(Date.UTC(hy, 11, 31, 23, 59, 59));
+  let history = 0, upcoming = 0, pending = 0, annual = 0;
+  const byStatus = {};
+  for (const ab of userAbs) {
+    if (!isAnnualLeave(ab)) continue;
+    annual++;
+    const start = parseDateSafe(ab.start || ab.startDate);
+    if (!start) continue;
+    const st = String(ab.status || '').toLowerCase();
+    byStatus[st] = (byStatus[st] || 0) + 1;
+    if (start < yearStart || start > yearEnd) continue;
+    if (/reject|cancel|declin|withdraw/.test(st)) continue;
+    const days = absenceDays(ab);
+    const isPending = /pending|await|request|review/.test(st);
+    if (start <= today) history += days;
+    else if (isPending) pending += days;
+    else upcoming += days;
+  }
+  return {
+    empId, entity: readEntity(u),
+    toolRow: lb ? { availableNow: round1(lb.available_now), upcoming: round1(upcoming), pending: round1(pending), endOfYear: round1(lb.end_of_year), total: round1(lb.total), zeltBalance: round1(lb.zelt_balance) } : null,
+    absenceDerived: { history: round1(history), upcoming: round1(upcoming), pending: round1(pending), annualAbsencesAllYears: annual, byStatus },
+  };
+}
+
 // Per-user basic info — the only place Zelt's partner API exposes employeeId.
 // Probed once per session, then cached.
 const BASIC_ENDPOINT_CANDIDATES = [

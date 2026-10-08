@@ -1305,6 +1305,45 @@ export async function debugEmployeeBalance(empId) {
   return { empId, uid, entity: readEntity(u), annualPolicyCount: annual.length, annualPolicyNames: annual.map(p => p.name || p.policyName), perPolicy };
 }
 
+// Diagnostic: does hammering the balance endpoint (sequential vs parallel)
+// make Zelt return empty unitsTaken? Fetches the same page containing one user
+// `count` times and reports how many came back with real upcoming vs zero.
+export async function debugStress(empId, { count = 12, parallel = false } = {}) {
+  const users = await fetchAllUsers();
+  const u = users.find(x => String(readEmployeeId(x) || '').toLowerCase() === String(empId || '').toLowerCase());
+  if (!u) return { error: 'not found' };
+  const uid = u.userId || u.id;
+  const policies = await botGet('/apiv2/absence-policies/extended');
+  const arr = Array.isArray(policies) ? policies : (policies?.items || []);
+  const annual = arr.filter(p => { const n = p.name || p.policyName || ''; return /annual|vacation/i.test(n) && !/unpaid/i.test(n); });
+  let pid = null, foundPage = 1;
+  for (const p of annual) {
+    let page = 1, hit = false;
+    while (page <= 25) {
+      let d; try { d = await botGet('/apiv2/absences/company/balance', { policyId: p.id, Calendar: 'current', page, pageSize: PAGE_SIZE }); } catch { break; }
+      if ((d.items || []).some(x => x.userId === uid)) { pid = p.id; foundPage = page; hit = true; break; }
+      if (page >= (d.totalPages || 1)) break;
+      page++;
+    }
+    if (hit) break;
+  }
+  if (!pid) return { error: 'policy not found for user' };
+  const oneFetch = async () => {
+    try {
+      const d = await botGet('/apiv2/absences/company/balance', { policyId: pid, Calendar: 'current', page: foundPage, pageSize: PAGE_SIZE });
+      const it = (d.items || []).find(x => x.userId === uid);
+      const pd = it?.[pid];
+      if (!pd) return 'no-item';
+      const wd = pd.currentAverageWorkDayLength || 480;
+      return round1((pd.unitsTaken?.upcoming || 0) / wd);
+    } catch (e) { return `err-${e.status || e.message}`; }
+  };
+  let results;
+  if (parallel) results = await Promise.all(Array.from({ length: count }, oneFetch));
+  else { results = []; for (let i = 0; i < count; i++) results.push(await oneFetch()); }
+  return { empId, pid, foundPage, mode: parallel ? 'parallel' : 'sequential', count, good: results.filter(r => typeof r === 'number' && r > 0).length, zero: results.filter(r => r === 0).length, errs: results.filter(r => typeof r === 'string').length, results };
+}
+
 // Per-user basic info — the only place Zelt's partner API exposes employeeId.
 // Probed once per session, then cached.
 const BASIC_ENDPOINT_CANDIDATES = [

@@ -31,7 +31,7 @@ import {
   zeltGetOauthOnly,
 } from '../services/zeltApi.js';
 import { botGet, botConfigured, getBotStatus } from '../services/zeltBot.js';
-import { listEntities, listDepartments, entitiesForDepartments, getBalancesForEntity, clearCaches, debugSampleUser, probeCompAdditionsAccess, debugEmployeeBalance, getCompLedger } from '../services/zeltCompute.js';
+import { listEntities, listDepartments, entitiesForDepartments, getBalancesForEntity, clearCaches, debugSampleUser, probeCompAdditionsAccess, debugEmployeeBalance, getCompLedger, debugStress } from '../services/zeltCompute.js';
 import { runAudit } from '../services/zeltAudit.js';
 import { getMobility } from '../services/zeltMobility.js';
 import { getWatchState, runSnapshotAndDiff, sendWeeklyDigestIfDue, sendCompExpiryDigestIfDue } from '../services/zeltWatcher.js';
@@ -340,6 +340,11 @@ router.get('/debug/emp', dataLimiter, requireAuth, requireAdmin, asyncHandler(as
 // Admin-only: company-wide compensatory ledger (additions + taken per employee).
 router.get('/comp-ledger', dataLimiter, requireAuth, requireAdmin, asyncHandler(async (req, res) => {
   res.json(await getCompLedger());
+}));
+
+// Admin-only: stress-test the balance endpoint (sequential vs parallel).
+router.get('/debug/stress', dataLimiter, requireAuth, requireAdmin, asyncHandler(async (req, res) => {
+  res.json(await debugStress(req.query.id || '', { count: Number(req.query.count) || 12, parallel: req.query.parallel === '1' }));
 }));
 
 // ---- Report builder (generate a filtered people report from live Zelt) ----

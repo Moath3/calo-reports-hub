@@ -15,7 +15,7 @@
  *   - /balances cached 5min per entity (balances move with bookings)
  */
 import { zeltGet } from './zeltApi.js';
-import { botGet, botConfigured } from './zeltBot.js';
+import { botGet, botConfigured, botLogout } from './zeltBot.js';
 import { getDb, persistNow } from '../db/database.js';
 // Production vs non-production classification — drives the compensatory-day
 // expiry window (production keeps 9 months, non-production expires in 3).
@@ -26,6 +26,26 @@ const BALANCES_TTL_MS = 5 * 60 * 1000;
 const PAGE_SIZE = 100;
 const MS_PER_DAY = 86_400_000; // 24h × 60m × 60s × 1000ms
 const ABSENCE_USER_CHUNK_SIZE = 50; // users per /partner/absences batch call
+const BALANCE_FETCH_CONCURRENCY = 5; // policies fetched at once (don't burst Zelt → rate-limit → empty responses)
+
+// Run an async fn over items with bounded concurrency. Preserves order.
+async function mapLimit(items, limit, fn) {
+  const results = new Array(items.length);
+  let idx = 0;
+  const run = async () => { while (idx < items.length) { const i = idx++; results[i] = await fn(items[i], i); } };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length || 1) }, run));
+  return results;
+}
+
+// Does any user in this balances map have real leave activity? Used to detect a
+// session-wide degraded response (Zelt returns unitsTaken=0 for everyone under
+// rate-limit) so we can refresh the session and retry.
+function balancesHaveActivity(m) {
+  for (const b of m.values()) {
+    if ((b.upcoming_booked || 0) > 0.01 || (b.pending || 0) > 0.01 || Math.abs((b.end_of_year || 0) - (b.total || 0)) > 0.01) return true;
+  }
+  return false;
+}
 
 const cache = {
   entities: { value: null, expiresAt: 0 },
@@ -688,22 +708,17 @@ async function tryFetchBalances(userIds, asOfDate = null, prodByUser = new Map()
   }
   if (!resolvedAnnualPolicyIds.length) return balances;
 
-  // Step 2: pull balance per policy (paginated), aggregate by userId. Run in parallel.
-  const policyResults = await Promise.all(resolvedAnnualPolicyIds.map(async (pid) => {
+  // Step 2: pull balance per policy (paginated, bounded concurrency so we don't
+  // burst Zelt into rate-limiting us), aggregate by userId.
+  const fetchPolicyResults = () => mapLimit(resolvedAnnualPolicyIds, BALANCE_FETCH_CONCURRENCY, async (pid) => {
     const all = [];
     let page = 1;
     while (true) {
       try {
-        const params = {
-          policyId: pid,
-          Calendar: 'current',
-          page,
-          pageSize: PAGE_SIZE,
-        };
+        const params = { policyId: pid, Calendar: 'current', page, pageSize: PAGE_SIZE };
         if (asOfDate) params.asOfDate = asOfDate;
         const data = await botGet('/apiv2/absences/company/balance', params);
-        const items = data.items || [];
-        all.push(...items.map(item => ({ item, pid })));
+        all.push(...(data.items || []).map(item => ({ item, pid })));
         if (page >= (data.totalPages || 1)) break;
         page++;
       } catch (err) {
@@ -712,61 +727,57 @@ async function tryFetchBalances(userIds, asOfDate = null, prodByUser = new Map()
       }
     }
     return all;
-  }));
+  });
 
-  for (const policyItems of policyResults) {
-    for (const { item, pid } of policyItems) {
-      const uid = item.userId;
-      const policyData = item[pid];
-      if (!policyData) continue;
-      const workdayMinutes = policyData.currentAverageWorkDayLength || WORKDAY_MINUTES_FALLBACK;
-      // For PAST as-of-date queries: prefer Zelt's currentBalanceInDaysAsOfDate
-      // — it's the exact balance on that day. Fall back to live formula otherwise.
-      // Zelt counts PENDING requests INSIDE unitsTaken.upcoming/history, with
-      // *Pending as the awaiting-approval SUBSET (verified live: one 31-day
-      // pending request shows upcoming=14880 AND upcomingPending=14880, while
-      // totalRegularUnits counts it once). Upcoming here = APPROVED only;
-      // pending is reported separately.
-      const upcApprovedMin = Math.max(0, (policyData.unitsTaken?.upcoming || 0) - (policyData.unitsTaken?.upcomingPending || 0));
-      let accrued;
-      if (asOfDate && policyData.currentBalanceInDaysAsOfDate != null) {
-        accrued = policyData.currentBalanceInDaysAsOfDate;
-      } else {
-        // Live "Available now" = holidayAccruedToBookNow + APPROVED upcoming
-        // bookings (don't subtract future bookings — locked rule from
-        // leave-recon; unapproved requests must not inflate it).
-        accrued = ((policyData.holidayAccruedToBookNow || 0) + upcApprovedMin) / workdayMinutes;
+  // Aggregate a set of policy results into `target`. Zelt counts PENDING requests
+  // INSIDE unitsTaken.upcoming/history (with *Pending as the awaiting-approval
+  // subset); upcoming here = APPROVED only, pending reported separately.
+  const aggregateInto = (target, policyResults) => {
+    for (const policyItems of policyResults) {
+      for (const { item, pid } of policyItems) {
+        const uid = item.userId;
+        const policyData = item[pid];
+        if (!policyData) continue;
+        const workdayMinutes = policyData.currentAverageWorkDayLength || WORKDAY_MINUTES_FALLBACK;
+        const upcApprovedMin = Math.max(0, (policyData.unitsTaken?.upcoming || 0) - (policyData.unitsTaken?.upcomingPending || 0));
+        let accrued;
+        if (asOfDate && policyData.currentBalanceInDaysAsOfDate != null) {
+          accrued = policyData.currentBalanceInDaysAsOfDate;
+        } else {
+          accrued = ((policyData.holidayAccruedToBookNow || 0) + upcApprovedMin) / workdayMinutes;
+        }
+        const upcoming = upcApprovedMin / workdayMinutes;
+        const pending = ((policyData.unitsTaken?.historyPending || 0) + (policyData.unitsTaken?.upcomingPending || 0)) / workdayMinutes;
+        const zeltBal = policyData.currentBalanceInDays != null ? policyData.currentBalanceInDays : (policyData.currentBalance || 0) / workdayMinutes;
+        const total = ((policyData.totalAllowanceForCycle || 0) - (policyData.unitsTaken?.totalPublicHolidays || 0) - (policyData.unitsLeft?.unusedPublicHolidays || 0)) / workdayMinutes;
+        const histDays = (policyData.unitsTaken?.history || 0) / workdayMinutes;
+        const upcDays = (policyData.unitsTaken?.upcoming || 0) / workdayMinutes;
+        const eoy = total - histDays - upcDays;
+        const prev = target.get(uid) || { available_now: 0, upcoming_booked: 0, pending: 0, zelt_balance: 0, total: 0, end_of_year: 0, compensatory: 0, policyName: null };
+        target.set(uid, {
+          available_now: prev.available_now + accrued,
+          upcoming_booked: prev.upcoming_booked + upcoming,
+          pending: prev.pending + pending,
+          zelt_balance: prev.zelt_balance + zeltBal,
+          total: prev.total + total,
+          end_of_year: prev.end_of_year + eoy,
+          compensatory: prev.compensatory,
+          policyName: prev.policyName || policyData.policyName || null,
+        });
       }
-      const upcoming = upcApprovedMin / workdayMinutes;
-      const pending = ((policyData.unitsTaken?.historyPending || 0) + (policyData.unitsTaken?.upcomingPending || 0)) / workdayMinutes;
-      // Zelt's headline number (what its own UI shows): full-cycle balance
-      // today, in days. Kept verbatim so the page can be eyeballed against Zelt.
-      const zeltBal = policyData.currentBalanceInDays != null
-        ? policyData.currentBalanceInDays
-        : (policyData.currentBalance || 0) / workdayMinutes;
-      // totalAllowanceForCycle now has public holidays baked in (e.g. 36d shown
-      // for a 21d allowance) — strip them to get the real annual allowance.
-      const total = ((policyData.totalAllowanceForCycle || 0)
-        - (policyData.unitsTaken?.totalPublicHolidays || 0)
-        - (policyData.unitsLeft?.unusedPublicHolidays || 0)) / workdayMinutes;
-      // Projected end-of-year (Dec 31) balance = full-cycle entitlement minus
-      // everything taken/booked this cycle. Mirrors Zelt's "Remaining by Dec 31"
-      // (Allowance − Taken − Booked), assuming no further leave is booked.
-      const histDays = (policyData.unitsTaken?.history || 0) / workdayMinutes;
-      const upcDays = (policyData.unitsTaken?.upcoming || 0) / workdayMinutes;
-      const eoy = total - histDays - upcDays;
-      const prev = balances.get(uid) || { available_now: 0, upcoming_booked: 0, pending: 0, zelt_balance: 0, total: 0, end_of_year: 0, compensatory: 0, policyName: null };
-      balances.set(uid, {
-        available_now: prev.available_now + accrued,
-        upcoming_booked: prev.upcoming_booked + upcoming,
-        pending: prev.pending + pending,
-        zelt_balance: prev.zelt_balance + zeltBal,
-        total: prev.total + total,
-        end_of_year: prev.end_of_year + eoy,
-        compensatory: prev.compensatory,
-        policyName: prev.policyName || policyData.policyName || null,
-      });
     }
+  };
+
+  aggregateInto(balances, await fetchPolicyResults());
+
+  // Recover from a session-wide degraded response: Zelt occasionally returns
+  // unitsTaken=0 for EVERYONE under rate-limit, so nobody shows any upcoming,
+  // pending or taken leave. A fresh session resets the limit — refresh + retry.
+  if (balances.size > 0 && !balancesHaveActivity(balances)) {
+    console.warn('[zelt-bot] balances came back with zero activity for everyone — refreshing session and retrying once');
+    botLogout();
+    balances.clear();
+    aggregateInto(balances, await fetchPolicyResults());
   }
 
   // Compensatory Days balance per user (currentBalanceInDays, summed across the
@@ -830,7 +841,7 @@ async function fetchYearEndBalances() {
   if (!resolvedAnnualPolicyIds || !resolvedAnnualPolicyIds.length) return new Map();
   const dec31 = `${yr}-12-31`;
   const map = new Map();
-  const results = await Promise.all(resolvedAnnualPolicyIds.map(async (pid) => {
+  const results = await mapLimit(resolvedAnnualPolicyIds, BALANCE_FETCH_CONCURRENCY, async (pid) => {
     const all = []; let page = 1;
     while (true) {
       try {
@@ -841,7 +852,7 @@ async function fetchYearEndBalances() {
       } catch { break; }
     }
     return all;
-  }));
+  });
   for (const items of results) {
     for (const { it, pid } of items) {
       const d = it[pid]; if (!d) continue;

@@ -1251,11 +1251,8 @@ export async function debugEmployeeBalance(empId) {
     const wd = cur.currentAverageWorkDayLength || 480;
     perPolicy.push({
       policy: p.name || p.policyName,
-      currentBalanceInDays: cur.currentBalanceInDays,
-      balanceAsOfDec31: dec?.currentBalanceInDaysAsOfDate ?? null,
-      totalAllowanceDays: round1((cur.totalAllowanceForCycle || 0) / wd),
-      holidayAccruedToBookNow: round1((cur.holidayAccruedToBookNow || 0) / wd),
-      unitsTaken: { history: round1((cur.unitsTaken?.history || 0) / wd), upcoming: round1((cur.unitsTaken?.upcoming || 0) / wd), upcomingPending: round1((cur.unitsTaken?.upcomingPending || 0) / wd), historyPending: round1((cur.unitsTaken?.historyPending || 0) / wd) },
+      nowResponse: { currentBalanceInDays: cur.currentBalanceInDays, holidayAccrued: round1((cur.holidayAccruedToBookNow || 0) / wd), upcoming: round1((cur.unitsTaken?.upcoming || 0) / wd), upcPending: round1((cur.unitsTaken?.upcomingPending || 0) / wd) },
+      dec31Response: dec ? { currentBalanceInDays: dec.currentBalanceInDays, currentBalanceInDaysAsOfDate: dec.currentBalanceInDaysAsOfDate, holidayAccrued: round1((dec.holidayAccruedToBookNow || 0) / wd), upcoming: round1((dec.unitsTaken?.upcoming || 0) / wd), upcPending: round1((dec.unitsTaken?.upcomingPending || 0) / wd) } : null,
     });
   }
   return { empId, uid, entity: readEntity(u), annualPolicyCount: annual.length, annualPolicyNames: annual.map(p => p.name || p.policyName), perPolicy };

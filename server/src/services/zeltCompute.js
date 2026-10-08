@@ -22,7 +22,7 @@ import { getDb, persistNow } from '../db/database.js';
 import { isProductionDept, isOfficeDept } from '../../../client/src/utils/caloCanon.js';
 
 const ENTITIES_TTL_MS = 6 * 60 * 60 * 1000; // 6h — entities barely change
-const BALANCES_TTL_MS = 5 * 60 * 1000;
+const BALANCES_TTL_MS = 15 * 60 * 1000; // 15m — the cold pull is ~50s, so a longer warm window makes cold hits ~3x rarer; leave balances don't move minute-to-minute and a healthy cache keeps serving while Zelt briefly degrades. Manual refresh (force=1) bypasses it.
 const PAGE_SIZE = 100;
 const MS_PER_DAY = 86_400_000; // 24h × 60m × 60s × 1000ms
 const ABSENCE_USER_CHUNK_SIZE = 50; // users per /partner/absences batch call
@@ -61,7 +61,7 @@ const cache = {
   // Employee IDs barely change — cache 24h.
   basics: { value: new Map(), expiresAt: 0 },
 };
-const ALL_USERS_TTL_MS = 5 * 60 * 1000;
+const ALL_USERS_TTL_MS = 15 * 60 * 1000; // match BALANCES_TTL_MS so the warm window is uniform (user list barely changes within 15m)
 const BASICS_TTL_MS = 24 * 60 * 60 * 1000;
 
 // ---- Public API ------------------------------------------------------

@@ -1225,34 +1225,40 @@ export async function debugEmployeeBalance(empId) {
   const u = users.find(x => String(readEmployeeId(x) || '').toLowerCase() === String(empId || '').toLowerCase());
   if (!u) return { error: 'employee not found', empId };
   const uid = u.userId || u.id;
-  const [balMap, absMap] = await Promise.all([tryFetchBalances([uid]), fetchAbsencesByUser([uid])]);
-  const lb = balMap.get(uid) || null;
-  const userAbs = absMap.get(uid) || [];
-  const today = new Date();
-  const hy = today.getUTCFullYear();
-  const yearStart = new Date(Date.UTC(hy, 0, 1)), yearEnd = new Date(Date.UTC(hy, 11, 31, 23, 59, 59));
-  let history = 0, upcoming = 0, pending = 0, annual = 0;
-  const byStatus = {};
-  for (const ab of userAbs) {
-    if (!isAnnualLeave(ab)) continue;
-    annual++;
-    const start = parseDateSafe(ab.start || ab.startDate);
-    if (!start) continue;
-    const st = String(ab.status || '').toLowerCase();
-    byStatus[st] = (byStatus[st] || 0) + 1;
-    if (start < yearStart || start > yearEnd) continue;
-    if (/reject|cancel|declin|withdraw/.test(st)) continue;
-    const days = absenceDays(ab);
-    const isPending = /pending|await|request|review/.test(st);
-    if (start <= today) history += days;
-    else if (isPending) pending += days;
-    else upcoming += days;
-  }
-  return {
-    empId, entity: readEntity(u),
-    balanceEndpoint: lb ? { availableNow: round1(lb.available_now), upcomingBooked: round1(lb.upcoming_booked), pending: round1(lb.pending), endOfYear: round1(lb.end_of_year), total: round1(lb.total), zeltBalance: round1(lb.zelt_balance) } : null,
-    absenceDerived: { history: round1(history), upcoming: round1(upcoming), pending: round1(pending), annualAbsencesAllYears: annual, byStatus },
+  // Raw per-annual-policy data for this user, so we can see duplicate/shadow
+  // policies (which would inflate the summed balance) and whether Zelt's direct
+  // as-of-Dec-31 balance is reliable.
+  const policies = await botGet('/apiv2/absence-policies/extended');
+  const arr = Array.isArray(policies) ? policies : (policies?.items || []);
+  const annual = arr.filter(p => { const n = p.name || p.policyName || ''; return /annual|vacation/i.test(n) && !/unpaid/i.test(n); });
+  const dec31 = `${new Date().getUTCFullYear()}-12-31`;
+  const findItem = async (pid, extra) => {
+    let page = 1;
+    while (page <= 25) {
+      let d; try { d = await botGet('/apiv2/absences/company/balance', { policyId: pid, Calendar: 'current', page, pageSize: PAGE_SIZE, ...extra }); } catch { return null; }
+      const it = (d.items || []).find(x => x.userId === uid);
+      if (it) return it[pid];
+      if (page >= (d.totalPages || 1)) break;
+      page++;
+    }
+    return null;
   };
+  const perPolicy = [];
+  for (const p of annual) {
+    const cur = await findItem(p.id, {});
+    if (!cur) continue;
+    const dec = await findItem(p.id, { asOfDate: dec31 });
+    const wd = cur.currentAverageWorkDayLength || 480;
+    perPolicy.push({
+      policy: p.name || p.policyName,
+      currentBalanceInDays: cur.currentBalanceInDays,
+      balanceAsOfDec31: dec?.currentBalanceInDaysAsOfDate ?? null,
+      totalAllowanceDays: round1((cur.totalAllowanceForCycle || 0) / wd),
+      holidayAccruedToBookNow: round1((cur.holidayAccruedToBookNow || 0) / wd),
+      unitsTaken: { history: round1((cur.unitsTaken?.history || 0) / wd), upcoming: round1((cur.unitsTaken?.upcoming || 0) / wd), upcomingPending: round1((cur.unitsTaken?.upcomingPending || 0) / wd), historyPending: round1((cur.unitsTaken?.historyPending || 0) / wd) },
+    });
+  }
+  return { empId, uid, entity: readEntity(u), annualPolicyCount: annual.length, annualPolicyNames: annual.map(p => p.name || p.policyName), perPolicy };
 }
 
 // Per-user basic info — the only place Zelt's partner API exposes employeeId.

@@ -38,6 +38,9 @@ import { getWatchState, runSnapshotAndDiff, sendWeeklyDigestIfDue, sendCompExpir
 import { getDimensions, runReport, warmIndex, getIndexStatus, clearIndex, SENSITIVE_FIELDS } from '../services/zeltReport.js';
 
 const IS_PROD = process.env.NODE_ENV === 'production';
+// Per-process identity — if two requests report different BOOT_IDs, Render is
+// running multiple instances (each with its own in-memory cache + bot session).
+const BOOT_ID = Math.random().toString(36).slice(2, 8);
 
 function logZeltAudit(userId, action, details = {}) {
   try {
@@ -168,6 +171,7 @@ router.get('/departments', dataLimiter, requireAuth, asyncHandler(async (req, re
 }));
 
 router.get('/balances', dataLimiter, requireAuth, asyncHandler(async (req, res) => {
+  res.set('Cache-Control', 'no-store'); // never let a browser/proxy serve a stale balance
   const raw = req.query.entity;
   if (!raw || typeof raw !== 'string') throw badRequest('Missing required query param: entity');
   const entities = raw.split(',').map(s => s.trim()).filter(Boolean);
@@ -236,7 +240,7 @@ router.get('/balances', dataLimiter, requireAuth, asyncHandler(async (req, res) 
   if (targetEntities.length === 1) {
     const d = datas[0];
     const rows = byDept(d.rows);
-    return res.json({ ...d, rows, count: rows.length, departments });
+    return res.json({ ...d, rows, count: rows.length, departments, bootId: BOOT_ID });
   }
 
   // Aggregate multi-entity result
@@ -263,6 +267,7 @@ router.get('/balances', dataLimiter, requireAuth, asyncHandler(async (req, res) 
     rows: allRows,
     multi: true,
     departments,
+    bootId: BOOT_ID,
     failed: failed.length ? failed : undefined,
     sources: datas.map(d => ({
       entity: d.entity,
@@ -341,6 +346,12 @@ router.get('/debug/emp', dataLimiter, requireAuth, requireAdmin, asyncHandler(as
 router.get('/comp-ledger', dataLimiter, requireAuth, requireAdmin, asyncHandler(async (req, res) => {
   res.json(await getCompLedger());
 }));
+
+// Admin-only: which process/instance served this request + uptime.
+router.get('/debug/instance', dataLimiter, requireAuth, requireAdmin, (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.json({ bootId: BOOT_ID, pid: process.pid, uptimeSec: Math.round(process.uptime()) });
+});
 
 // Admin-only: stress-test the balance endpoint (sequential vs parallel).
 router.get('/debug/stress', dataLimiter, requireAuth, requireAdmin, asyncHandler(async (req, res) => {

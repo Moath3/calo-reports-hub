@@ -1073,27 +1073,50 @@ export async function getCompLedger() {
       if ((Number(bal) || 0) !== 0) compHolders.push({ uid: item.userId, pid, wd, isProd: info.get(item.userId).isProduction });
     }
   }
-  await enrichCompAdditions(compHolders, balances, null);
+  // Pull the dated adjustments per holder: credits (value > 0) and debits
+  // (value < 0 = comp used) across this year and last. Concurrency-capped.
+  const years = [new Date().getUTCFullYear(), new Date().getUTCFullYear() - 1];
+  const creditsByUid = new Map(), debitsByUid = new Map();
+  const queue = [...compHolders];
+  const worker = async () => {
+    while (queue.length) {
+      const { uid, pid, wd } = queue.shift();
+      for (const yr of years) {
+        try {
+          const data = await botGet(`/apiv2/absence-policies/${pid}/users/${uid}/allowances/${yr}`);
+          for (const e of (data?.oneOffAdjustmentEntries || [])) {
+            const v = Number(e.value) || 0;
+            if (v === 0) continue;
+            const row = { date: (e.createdAt || '').slice(0, 10), days: round1(Math.abs(v) / (wd || WORKDAY_MINUTES_FALLBACK)), note: e.notes || '' };
+            const m = v > 0 ? creditsByUid : debitsByUid;
+            const arr = m.get(uid) || []; arr.push(row); m.set(uid, arr);
+          }
+        } catch { /* best-effort per user/year */ }
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: 4 }, worker));
 
-  // Comp days taken: the comp-policy absences for each holder.
+  // Comp-policy absences (the other possible "taken" channel), holders only.
+  const holderUids = [...new Set(compHolders.map(h => h.uid))];
   let absMap = new Map();
-  try { absMap = await fetchAbsencesByUser([...balances.keys()]); } catch { /* best-effort */ }
+  try { absMap = await fetchAbsencesByUser(holderUids); } catch { /* best-effort */ }
 
   const summary = [], additions = [], taken = [];
-  for (const [uid, b] of balances) {
+  for (const uid of holderUids) {
     const i = info.get(uid) || {};
-    const adds = Array.isArray(b.compAdditions) ? b.compAdditions : [];
-    const compAbs = (absMap.get(uid) || []).filter(ab => /compensat/i.test(String(ab.policy?.name || ab.policyName || ab.policy || '')));
-    const takenRows = compAbs.map(ab => ({
-      date: String(ab.startDate || ab.start || '').slice(0, 10),
-      days: round1(absenceDays(ab, b.wd)),
-      status: ab.status || null,
-    })).sort((x, y) => (x.date < y.date ? -1 : 1));
-    const totalAdded = round1(adds.reduce((s, a) => s + (a.days || 0), 0));
-    const totalTaken = round1(takenRows.reduce((s, t) => s + (t.days || 0), 0));
+    const b = balances.get(uid) || { compensatory: 0, wd: WORKDAY_MINUTES_FALLBACK };
+    const credits = (creditsByUid.get(uid) || []).sort((x, y) => (x.date < y.date ? -1 : 1));
+    const debits = (debitsByUid.get(uid) || []).map(d => ({ ...d, note: d.note || 'adjustment' }));
+    const compAbs = (absMap.get(uid) || [])
+      .filter(ab => /compensat/i.test(String(ab.policy?.name || ab.policyName || ab.policy || '')))
+      .map(ab => ({ date: String(ab.startDate || ab.start || '').slice(0, 10), days: round1(absenceDays(ab, b.wd)), note: `${ab.status || 'leave'} (absence)` }));
+    const takenRows = [...debits, ...compAbs].sort((x, y) => (x.date < y.date ? -1 : 1));
+    const totalAdded = round1(credits.reduce((s, a) => s + a.days, 0));
+    const totalTaken = round1(takenRows.reduce((s, t) => s + t.days, 0));
     summary.push({ employeeId: i.employeeId, name: i.name, entity: i.entity, department: i.department, isProduction: i.isProduction === true, compBalance: round1(b.compensatory || 0), totalAdded, totalTaken });
-    for (const a of adds) additions.push({ employeeId: i.employeeId, name: i.name, entity: i.entity, addDate: a.addDate, days: a.days, note: a.note || '' });
-    for (const t of takenRows) taken.push({ employeeId: i.employeeId, name: i.name, entity: i.entity, date: t.date, days: t.days, status: t.status });
+    for (const a of credits) additions.push({ employeeId: i.employeeId, name: i.name, entity: i.entity, addDate: a.date, days: a.days, note: a.note });
+    for (const t of takenRows) taken.push({ employeeId: i.employeeId, name: i.name, entity: i.entity, date: t.date, days: t.days, note: t.note });
   }
   summary.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
   return { available: true, asOf, summary, additions, taken };

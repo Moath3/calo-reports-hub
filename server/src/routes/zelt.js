@@ -31,7 +31,7 @@ import {
   zeltGetOauthOnly,
 } from '../services/zeltApi.js';
 import { botGet, botConfigured, getBotStatus } from '../services/zeltBot.js';
-import { listEntities, listDepartments, entitiesForDepartments, getBalancesForEntity, clearCaches, debugSampleUser, probeCompAdditionsAccess, debugEmployeeBalance } from '../services/zeltCompute.js';
+import { listEntities, listDepartments, entitiesForDepartments, getBalancesForEntity, clearCaches, debugSampleUser, probeCompAdditionsAccess } from '../services/zeltCompute.js';
 import { runAudit } from '../services/zeltAudit.js';
 import { getMobility } from '../services/zeltMobility.js';
 import { getWatchState, runSnapshotAndDiff, sendWeeklyDigestIfDue, sendCompExpiryDigestIfDue } from '../services/zeltWatcher.js';
@@ -330,11 +330,6 @@ router.get('/watch/comp-access', dataLimiter, requireAuth, requireAdmin, asyncHa
   const result = await probeCompAdditionsAccess();
   logZeltAudit(req.user.id, 'zelt.watch.compAccess', { allowancesOk: result.allowancesOk, status: result.firstStatus });
   res.json(result);
-}));
-
-// Admin-only: TEMPORARY — one employee's balance vs absence-derived year-end.
-router.get('/debug/emp', dataLimiter, requireAuth, requireAdmin, asyncHandler(async (req, res) => {
-  res.json(await debugEmployeeBalance(req.query.id || ''));
 }));
 
 // ---- Report builder (generate a filtered people report from live Zelt) ----

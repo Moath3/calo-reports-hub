@@ -323,11 +323,10 @@ async function fetchBalancesForEntityFresh(entityName, asOfDate = null, departme
   // contain employeeId (true when bot's /users/cache succeeded).
   const hasEmpIdAlready = targets.length > 0 && targets.every(u => readEmployeeId(u) != null);
 
-  // Run absence fetch + (maybe) basic info + balance probe in parallel. Absence
-  // history is useful, but it should not take down the leave portal when the
-  // live bot balance endpoint is available and OAuth is the only broken layer.
-  const [absencesResult, basicsResult, balancesResult] = await Promise.allSettled([
-    fetchAbsencesByUser(targetUserIds),
+  // Live balances (bot) + basics first. The balance endpoint carries Available
+  // Now, upcoming, pending and the year-end figure reliably (confirmed per
+  // employee), so these drive the columns.
+  const [basicsResult, balancesResult] = await Promise.allSettled([
     hasEmpIdAlready ? Promise.resolve(new Map()) : fetchUserBasics(targetUserIds),
     tryFetchBalances(targetUserIds, asOfDate, prodByUser),
   ]);
@@ -338,19 +337,23 @@ async function fetchBalancesForEntityFresh(entityName, asOfDate = null, departme
     console.warn(`[zelt] live balance fetch failed (${err.status || ''} ${err.message}) - falling back to computed balances`);
   }
 
+  // The partner-OAuth absence list is flaky and slow, so it is only a FALLBACK
+  // for employees with no live balance (usually none). Fetching it just for them
+  // means a bad or slow absence call no longer slows every report or zeroes
+  // everyone's upcoming/pending.
+  const noBalanceUids = targetUserIds.filter(id => !balancesByUser.get(id));
   let absencesByUser = new Map();
-  if (absencesResult.status === 'fulfilled') {
-    absencesByUser = absencesResult.value;
-  } else if (balancesByUser.size > 0) {
-    const err = absencesResult.reason;
-    console.warn(`[zelt] absence fetch failed (${err.status || ''} ${err.message}) - continuing with live balances only`);
-  } else {
-    throw absencesResult.reason;
+  let absencesDegraded = false;
+  if (noBalanceUids.length) {
+    try {
+      absencesByUser = await fetchAbsencesByUser(noBalanceUids);
+      absencesDegraded = absencesByUser.incomplete === true;
+    } catch (err) {
+      if (balancesByUser.size === 0) throw err; // nothing to show at all
+      absencesDegraded = true;
+      console.warn(`[zelt] absence fallback failed (${err.status || ''} ${err.message})`);
+    }
   }
-  // When the absence fetch failed or came back partial, upcoming/pending are
-  // understated for some employees — don't cache that so the next request
-  // recomputes instead of serving wrong zeros for 5 minutes.
-  const absencesDegraded = absencesResult.status === 'rejected' || absencesByUser.incomplete === true;
 
   const basicsByUser = basicsResult.status === 'fulfilled' ? basicsResult.value : new Map();
   if (basicsResult.status === 'rejected') {
@@ -375,13 +378,9 @@ async function fetchBalancesForEntityFresh(entityName, asOfDate = null, departme
     );
     const userAbs = absencesByUser.get(userId) || [];
 
-    // Upcoming/pending leave comes from the ACTUAL absence requests, not the
-    // balance aggregate — Zelt's balance endpoint reports unitsTaken.upcoming=0
-    // here even when approved future leave exists, so relying on it zeroed the
-    // column for everyone. We split annual absences by date + approval status.
-    // Scope to the current holiday year (calendar), matching Zelt's balance tab —
-    // the absence list spans multiple years, so unscoped history/upcoming would
-    // pull in old and far-future leave.
+    // Fallback only (no live balance): derive upcoming/pending from the absence
+    // requests, split by date + approval status and scoped to the current
+    // holiday year. When a live balance exists we use its figures instead.
     const hy = today.getUTCFullYear();
     const yearStart = new Date(Date.UTC(hy, 0, 1, 0, 0, 0));
     const yearEnd = new Date(Date.UTC(hy, 11, 31, 23, 59, 59));
@@ -411,6 +410,9 @@ async function fetchBalancesForEntityFresh(entityName, asOfDate = null, departme
     const liveBalance = balancesByUser.get(userId);
     if (liveBalance) {
       availableNow = round1(liveBalance.available_now);
+      // Reliable bot figures — approved upcoming and pending from Zelt's balance.
+      upcoming = round1(liveBalance.upcoming_booked);
+      pendingDays = round1(liveBalance.pending);
       confidence = 'high';
     } else if (allowance != null) {
       availableNow = round1(allowance + carryOver - history - upcoming);

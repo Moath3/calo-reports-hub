@@ -381,8 +381,8 @@ class ApiClient {
   async zeltWatchCompEmails() {
     return this.request('/zelt/watch/comp-emails', { method: 'POST' });
   }
-  async zeltCompEmailTest() {
-    return this.request('/zelt/watch/comp-email-test', { method: 'POST' });
+  async zeltCompEmailTest(to) {
+    return this.request('/zelt/watch/comp-email-test', { method: 'POST', body: JSON.stringify(to ? { to } : {}) });
   }
   // Zelt report builder
   async zeltReportDimensions() {

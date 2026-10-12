@@ -92,8 +92,23 @@ export default function EntityAdminsPage() {
     return parts.join(' ');
   });
 
-  const sendTestEmail = () => runAction('test', api.zeltCompEmailTest.bind(api), (r) =>
-    r.sent ? `Test email sent to ${r.to}. Check your inbox.` : `Not sent: ${r.skipped || r.error || 'unknown'}`);
+  const shortErr = (r) => {
+    const e = r.skipped || r.error || 'unknown';
+    if (/verify a domain|testing emails to your own/i.test(e)) {
+      return 'Resend is on the sandbox sender — it only delivers to the Resend account-owner address. Verify a domain + set COMP_FROM_EMAIL to reach anyone else (see the setup guide).';
+    }
+    return String(e).slice(0, 200);
+  };
+
+  const sendTestEmail = () => {
+    const to = window.prompt(
+      'Send a sample reminder email to which address?\n\nUntil you verify a domain in Resend, only the Resend account-owner address is accepted.',
+      ''
+    );
+    if (to === null) return; // cancelled
+    return runAction('test', () => api.zeltCompEmailTest(to.trim() || undefined), (r) =>
+      r.sent ? `Test email sent to ${r.to}. Check that inbox.` : `Not sent: ${shortErr(r)}`);
+  };
 
   const sendReminderEmails = () => runAction('emails', api.zeltWatchCompEmails.bind(api), (r) =>
     r.skipped ? `Not sent: ${r.skipped}` : `Sent ${r.sent} reminder email${r.sent === 1 ? '' : 's'}${r.skippedNoEmail ? ` · ${r.skippedNoEmail} had no work email` : ''}${r.errors ? ` · ${r.errors} failed` : ''}.`);

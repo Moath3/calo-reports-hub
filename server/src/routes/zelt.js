@@ -382,9 +382,13 @@ router.post('/watch/comp-emails', dataLimiter, requireAuth, requireAdmin, asyncH
   res.json(result);
 }));
 
-// Admin-only: send a sample reminder email to the signed-in admin to preview it.
+// Admin-only: send a sample reminder email to preview it. Defaults to the
+// signed-in admin; an explicit `to` (e.g. the Resend account-owner address while
+// still on the sandbox sender) overrides so you can preview before verifying a domain.
 router.post('/watch/comp-email-test', dataLimiter, requireAuth, requireAdmin, asyncHandler(async (req, res) => {
-  const to = req.user?.email || req.body?.to;
+  const override = req.body?.to && String(req.body.to).trim();
+  if (override && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(override)) throw badRequest('to is not a valid email');
+  const to = override || req.user?.email;
   const result = await sendCompEmailTest(to);
   logZeltAudit(req.user.id, 'zelt.watch.compEmailTest', { sent: result.sent, skipped: result.skipped || null });
   res.json({ ...result, to });

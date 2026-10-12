@@ -911,15 +911,16 @@ function addMonths(iso, n) {
   return d.toISOString().slice(0, 10);
 }
 
-// Transition rule (the per-batch expiry policy is not operational yet): every
-// compensatory addition dated ON OR BEFORE the policy start keeps a single
-// grace expiry — 9 months after 15 Oct 2026 = 15 Jul 2027 — instead of being
-// retroactively expired on its own add-date + 3/9 months. Grants created AFTER
-// the start follow the real per-type rule. Drop/extend COMP_POLICY_START once
-// the policy goes live.
-const COMP_POLICY_START = '2026-10-15';
-const COMP_POLICY_GRACE_MONTHS = 9;
-const COMP_OLD_EXPIRY = addMonths(`${COMP_POLICY_START}T00:00:00Z`, COMP_POLICY_GRACE_MONTHS); // '2027-07-15'
+// Grace transition (per-batch expiry goes live on the policy-start date). To
+// avoid retroactively expiring a pile of old days the moment the rule turns on,
+// every EXISTING addition (dated before go-live) whose natural per-type expiry
+// has ALREADY passed OR lands within the first 3 months is consolidated to a
+// single grace date — 31 Jan 2027 — giving holders until then to burn them.
+// Existing days that naturally expire later keep their own date, and anything
+// added from go-live onward follows the plain 3/9-month rule with no grace.
+const COMP_POLICY_START = '2026-10-13';           // go-live anchor; additions dated before this are "existing"
+const COMP_GRACE_EXPIRY = '2027-01-31';           // consolidated expiry for soon-lapsing existing days
+const COMP_GRACE_WINDOW_END = addMonths(`${COMP_POLICY_START}T00:00:00Z`, 3); // '2027-01-13' — "expired or expiring in the next 3 months"
 
 // Fetch each comp holder's one-off adjustment entries and attach compAdditions
 // (with 9-month expiry) to their balance summary. Concurrency-capped for the WAF.
@@ -940,11 +941,14 @@ async function enrichCompAdditions(holders, balances, asOfDate) {
         if (!entries.length) continue;
         const additions = entries.map(e => {
           const addDate = (e.createdAt || '').slice(0, 10);
-          // Grace for existing days: anything added on/before the policy start
-          // all expires together on 15 Jul 2027. Newer grants use the per-type
-          // window (3mo non-production / 9mo production) from the add date.
-          const grace = !!addDate && addDate <= COMP_POLICY_START;
-          const expiresOn = grace ? COMP_OLD_EXPIRY : addMonths(e.createdAt, expiryMonths);
+          const naturalExpiry = addMonths(e.createdAt, expiryMonths); // per-type: 3mo non-prod / 9mo prod from add date
+          // Grace for existing days: an addition dated BEFORE go-live whose
+          // natural expiry has already passed or falls within the first 3 months
+          // is consolidated to 31 Jan 2027. Existing-but-far and go-live-onward
+          // additions keep their natural per-type date.
+          const grace = !!addDate && addDate < COMP_POLICY_START
+            && !!naturalExpiry && naturalExpiry <= COMP_GRACE_WINDOW_END;
+          const expiresOn = grace ? COMP_GRACE_EXPIRY : naturalExpiry;
           const days = +((e.value || 0) / (wd || WORKDAY_MINUTES_FALLBACK)).toFixed(2);
           const exp = expiresOn ? new Date(expiresOn + 'T00:00:00Z') : null;
           const daysToExpiry = exp ? Math.round((exp - refNow) / 86400000) : null;

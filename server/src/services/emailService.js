@@ -3,6 +3,78 @@ import fetch from 'node-fetch';
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'm.alghoniman@calo.app';
 const APP_URL = process.env.RENDER_EXTERNAL_URL || process.env.FRONTEND_URL || 'https://calo-reports-hub.onrender.com';
+// Sender for staff-facing mail. `onboarding@resend.dev` is Resend's sandbox and
+// only delivers to verified addresses, so to email real employees set
+// COMP_FROM_EMAIL to an address on a domain verified in Resend (e.g.
+// "CALO People <people@notify.calo.app>").
+const COMP_FROM_EMAIL = process.env.COMP_FROM_EMAIL || 'CALO Reports <onboarding@resend.dev>';
+
+function escapeHtmlShared(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+// Generic Resend send. Returns { sent, skipped?, error? } — never throws, so a
+// bad address or a transport blip can't crash the watcher tick.
+export async function sendEmail({ to, subject, html, from = COMP_FROM_EMAIL }) {
+  if (!RESEND_API_KEY) return { sent: false, skipped: 'RESEND_API_KEY not set' };
+  const recipients = (Array.isArray(to) ? to : [to]).filter(Boolean);
+  if (!recipients.length) return { sent: false, skipped: 'no recipient' };
+  try {
+    const res = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ from, to: recipients, subject, html }),
+    });
+    if (!res.ok) {
+      const err = (await res.text().catch(() => '')).slice(0, 300);
+      console.error('[Email] Resend error:', res.status, err);
+      return { sent: false, error: `${res.status} ${err}` };
+    }
+    return { sent: true };
+  } catch (err) {
+    console.error('[Email] send failed:', err.message);
+    return { sent: false, error: err.message };
+  }
+}
+
+const MONTHS_E = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+function fmtDate(iso) {
+  if (!iso) return '';
+  const d = new Date(iso.length === 10 ? `${iso}T00:00:00Z` : iso);
+  if (Number.isNaN(d.getTime())) return escapeHtmlShared(iso);
+  return `${d.getUTCDate()} ${MONTHS_E[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
+}
+
+// 30-day comp-expiry reminder to an employee's work email. `additions` =
+// [{ days, expiresOn, daysToExpiry }]. CALO-green, mirrors the admin templates.
+export function buildCompReminderHtml({ name, additions = [] }) {
+  const rows = additions.map((a) => `
+    <tr>
+      <td style="padding:8px 0;color:#111827;font-weight:600;">${escapeHtmlShared(a.days)} day${Number(a.days) === 1 ? '' : 's'}</td>
+      <td style="padding:8px 0;color:#374151;text-align:right;">expires <strong>${fmtDate(a.expiresOn)}</strong>${a.daysToExpiry != null ? ` <span style="color:#9ca3af;">(${a.daysToExpiry}d left)</span>` : ''}</td>
+    </tr>`).join('');
+  const total = additions.reduce((s, a) => s + (Number(a.days) || 0), 0);
+  return `
+    <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:520px;margin:0 auto;padding:24px;">
+      <div style="background:#02B376;color:#fff;padding:16px 24px;border-radius:12px 12px 0 0;">
+        <h2 style="margin:0;font-size:18px;">Your compensatory days are expiring soon</h2>
+      </div>
+      <div style="border:1px solid #e5e7eb;border-top:none;padding:24px;border-radius:0 0 12px 12px;">
+        <p style="margin:0 0 16px;color:#374151;">Hi ${escapeHtmlShared((name || '').split(' ')[0] || 'there')}, you have <strong>${Number(total.toFixed(1))}</strong> compensatory day${total === 1 ? '' : 's'} expiring within the next 30 days. Please plan to use ${total === 1 ? 'it' : 'them'} before ${total === 1 ? 'it lapses' : 'they lapse'}, or speak to your People &amp; Culture contact.</p>
+        <table style="width:100%;border-collapse:collapse;border-top:1px solid #eef2f0;">${rows}</table>
+        <p style="margin:20px 0 0;font-size:12px;color:#9ca3af;">This is an automated reminder from the CALO People team. Balances are read live from Zelt; book leave in Zelt to use your days.</p>
+      </div>
+    </div>`;
+}
+
+export async function sendCompExpiryReminder({ to, name, additions }) {
+  const total = (additions || []).reduce((s, a) => s + (Number(a.days) || 0), 0);
+  return sendEmail({
+    to,
+    subject: `Reminder: ${Number(total.toFixed(1))} compensatory day${total === 1 ? '' : 's'} expiring soon`,
+    html: buildCompReminderHtml({ name, additions }),
+  });
+}
 
 // Escape public-form input before interpolating into the admin notification
 // email — a registrant could otherwise inject markup/links the admin acts on.

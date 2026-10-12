@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { diffSnapshots, buildAggregates, SEVERITY, formatCompExpirySlack } from './zeltWatcher.js';
+import { diffSnapshots, buildAggregates, SEVERITY, formatCompExpirySlack, formatCompEntitySlack } from './zeltWatcher.js';
 import { generateHygieneDigest } from './aiService.js';
 
 // ---- diffSnapshots (pure) ----------------------------------------------
@@ -219,4 +219,26 @@ test('formatCompExpirySlack: empty and unavailable states are safe', () => {
   const down = formatCompExpirySlack({ available: false, reason: 'Zelt bot not configured' });
   assert.match(down, /Could not compute this week — Zelt bot not configured/);
   assert.doesNotThrow(() => formatCompExpirySlack(null));
+});
+
+// ---- formatCompEntitySlack (pure, per-entity DM) -----------------------
+
+test('formatCompEntitySlack: lists people, header names the entity + window, totals the days', () => {
+  const people = [
+    { name: 'Ahmed Ali', employeeId: 'FTE0123', expiringDays: 4, nextExpiry: '2027-01-31', daysToExpiry: 25 },
+    { name: 'Noura S', employeeId: 'FTE0456', expiringDays: 2, nextExpiry: '2026-11-05', daysToExpiry: 8 },
+  ];
+  const txt = formatCompEntitySlack('Mountain Peak KSA', people, '2026-10-13');
+  assert.match(txt, /Mountain Peak KSA/);
+  assert.match(txt, /within 30 days/);
+  assert.match(txt, /2 people, 6d/);            // total expiring days
+  assert.match(txt, /Ahmed Ali \(FTE0123\)/);
+  assert.match(txt, /expires 31 Jan 2027/);     // friendly date
+  assert.match(txt, /8d left/);                 // days-to-expiry badge
+});
+
+test('formatCompEntitySlack: empty entity → clean all-clear, never throws', () => {
+  const txt = formatCompEntitySlack('Basecamp Bahrain', [], '2026-10-13');
+  assert.match(txt, /No one in this entity has comp days expiring/);
+  assert.doesNotThrow(() => formatCompEntitySlack('X', null, null));
 });

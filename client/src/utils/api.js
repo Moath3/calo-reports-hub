@@ -365,6 +365,25 @@ class ApiClient {
   async zeltWatchCompAccess() {
     return this.request('/zelt/watch/comp-access');
   }
+  // Entity → HR-admin mapping + per-entity comp notifications
+  async zeltEntityAdmins() {
+    return this.request('/zelt/entity-admins');
+  }
+  async zeltSaveEntityAdmin(payload) {
+    return this.request('/zelt/entity-admins', { method: 'POST', body: JSON.stringify(payload) });
+  }
+  async zeltDeleteEntityAdmin(entity) {
+    return this.request(`/zelt/entity-admins/${encodeURIComponent(entity)}`, { method: 'DELETE' });
+  }
+  async zeltWatchCompEntityReport() {
+    return this.request('/zelt/watch/comp-entity-report', { method: 'POST' });
+  }
+  async zeltWatchCompEmails() {
+    return this.request('/zelt/watch/comp-emails', { method: 'POST' });
+  }
+  async zeltCompEmailTest() {
+    return this.request('/zelt/watch/comp-email-test', { method: 'POST' });
+  }
   // Zelt report builder
   async zeltReportDimensions() {
     return this.request('/zelt/report/dimensions');

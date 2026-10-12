@@ -8,10 +8,12 @@
  * Privacy rule: the digest and the AI prompt carry CHECK-LEVEL COUNTS ONLY —
  * no employee names ever leave the snapshot table.
  */
-import { getDb, persistNow, kvGet, kvSet } from '../db/database.js';
+import { getDb, persistNow, kvGet, kvSet, listEntityAdmins } from '../db/database.js';
 import { runAudit } from './zeltAudit.js';
 import { generateHygieneDigest } from './aiService.js';
-import { getCompExpiryAggregates } from './zeltCompute.js';
+import { getCompExpiryAggregates, getCompExpiryByEntity } from './zeltCompute.js';
+import { postSlackDM, slackBotConfigured } from './slackBot.js';
+import { sendCompExpiryReminder } from './emailService.js';
 
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
@@ -23,6 +25,14 @@ const TOP_CHECKS_LIMIT = 10;
 const SLACK_TIMEOUT_MS = 10000;
 const LAST_DIGEST_KEY = 'watcher_last_digest_at';
 const LAST_COMP_DIGEST_KEY = 'watcher_last_comp_digest_at';
+// Monthly per-entity comp reports (DM to each entity's HR admin) + the 30-day
+// employee reminder emails.
+const LAST_COMP_ENTITY_KEY = 'watcher_last_comp_entity_at';
+const LAST_COMP_EMAIL_KEY = 'watcher_last_comp_email_at';
+const COMP_EMAIL_SENT_KEY = 'comp_email_sent_keys';   // JSON array of "empId:expiresOn" already emailed
+const MONTHLY_MIN_AGE_MS = 28 * DAY_MS;               // "monthly" with slack for drift
+const EMAIL_SCAN_MIN_AGE_MS = 20 * HOUR_MS;           // scan for new 30-day crossings ~daily
+const COMP_EXPIRY_WINDOW_DAYS = 30;                   // "expiring in a month"
 
 // Severity per check — mirrors the client's SEVERITY map in ZeltAuditPage.jsx
 // (single server-side source for the watcher). 'info' checks are displayed
@@ -284,6 +294,8 @@ export function getWatchState() {
   const prev = rows.length > 1 ? rows[rows.length - 2] : null;
   const lastDigestAt = kvGet(LAST_DIGEST_KEY);
   const lastCompDigestAt = kvGet(LAST_COMP_DIGEST_KEY);
+  const lastCompEntityAt = kvGet(LAST_COMP_ENTITY_KEY);
+  const lastCompEmailAt = kvGet(LAST_COMP_EMAIL_KEY);
   return {
     snapshots: rows.map(s => ({
       capturedAt: s.capturedAt,
@@ -309,7 +321,12 @@ export function getWatchState() {
     lastRun: latest ? new Date(latest.capturedAt).toISOString() : null,
     lastDigestAt: lastDigestAt || null,
     lastCompDigestAt: lastCompDigestAt || null,
+    lastCompEntityAt: lastCompEntityAt || null,
+    lastCompEmailAt: lastCompEmailAt || null,
     slackConfigured: Boolean(process.env.SLACK_WEBHOOK_URL),
+    slackBotConfigured: slackBotConfigured(),
+    compEmailRemindersEnabled: /^(1|true|on|yes)$/i.test(process.env.COMP_EMAIL_REMINDERS || ''),
+    entityAdminCount: (() => { try { return listEntityAdmins().length; } catch { return 0; } })(),
   };
 }
 
@@ -524,6 +541,151 @@ export async function sendCompExpiryDigestIfDue({ force = false } = {}) {
   }
 }
 
+// ---- Per-entity monthly comp reports (DM) + 30-day reminder emails ---------
+
+const _MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+function fmtDay(iso) {
+  if (!iso) return '';
+  const d = new Date(iso.length === 10 ? `${iso}T00:00:00Z` : iso);
+  if (Number.isNaN(d.getTime())) return String(iso);
+  return `${d.getUTCDate()} ${_MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
+}
+const d1 = (n) => Math.round((Number(n) || 0) * 10) / 10;
+
+// Pure: one entity's comp-expiry DM text. `people` = the getCompExpiryByEntity
+// rows for that entity (name, employeeId, expiringDays, nextExpiry, daysToExpiry).
+export function formatCompEntitySlack(entity, people, asOf, windowDays = COMP_EXPIRY_WINDOW_DAYS) {
+  const rows = Array.isArray(people) ? people : [];
+  const lines = [];
+  lines.push(`*Comp days expiring within ${windowDays} days — ${entity}*${asOf ? ` (as of ${asOf})` : ''}`);
+  if (!rows.length) {
+    lines.push('');
+    lines.push('No one in this entity has comp days expiring this month. :white_check_mark:');
+    return lines.join('\n');
+  }
+  const totalDays = d1(rows.reduce((s, p) => s + (Number(p.expiringDays) || 0), 0));
+  lines.push(`_${rows.length} ${rows.length === 1 ? 'person' : 'people'}, ${totalDays}d expiring. Ask them to book the time in Zelt before it lapses._`);
+  lines.push('');
+  const CAP = 50;
+  for (const p of rows.slice(0, CAP)) {
+    const id = p.employeeId ? ` (${p.employeeId})` : '';
+    const left = p.daysToExpiry != null ? ` — ${p.daysToExpiry}d left` : '';
+    lines.push(`• ${p.name}${id} — ${d1(p.expiringDays)}d, expires ${fmtDay(p.nextExpiry)}${left}`);
+  }
+  if (rows.length > CAP) lines.push(`…and ${rows.length - CAP} more.`);
+  return lines.join('\n');
+}
+
+/**
+ * Monthly: DM each configured entity's HR admin the list of their people with
+ * comp days expiring within 30 days. Needs SLACK_BOT_TOKEN (a webhook can't DM).
+ * Own kv gate (28-day); `force` bypasses. Always resolves to a summary object.
+ */
+export async function sendCompEntityReportsIfDue({ force = false } = {}) {
+  if (!force) {
+    const last = kvGet(LAST_COMP_ENTITY_KEY);
+    if (last && Date.now() - Date.parse(last) < MONTHLY_MIN_AGE_MS) {
+      return { sent: false, skipped: 'monthly entity report not due yet' };
+    }
+  }
+  if (!slackBotConfigured()) return { sent: false, skipped: 'SLACK_BOT_TOKEN not set (per-user DMs need a bot token)' };
+  const admins = listEntityAdmins();
+  if (!admins.length) return { sent: false, skipped: 'no entity → HR-admin mappings configured' };
+
+  let byEntity, asOf;
+  try {
+    const res = await getCompExpiryByEntity(null, COMP_EXPIRY_WINDOW_DAYS);
+    if (!res.available) return { sent: false, skipped: `comp data unavailable: ${res.reason || ''}` };
+    byEntity = res.byEntity; asOf = res.asOf;
+  } catch (err) {
+    return { sent: false, skipped: `comp fetch failed: ${err.message}` };
+  }
+
+  const results = [];
+  for (const a of admins) {
+    const people = byEntity[a.entity] || [];
+    if (!people.length) { results.push({ entity: a.entity, skipped: 'no one expiring this month' }); continue; }
+    if (!a.hr_admin_email && !a.slack_user_id) { results.push({ entity: a.entity, people: people.length, skipped: 'admin has no email or slack id' }); continue; }
+    const text = formatCompEntitySlack(a.entity, people, asOf);
+    const r = await postSlackDM({ slackUserId: a.slack_user_id, email: a.hr_admin_email, text });
+    results.push({ entity: a.entity, admin: a.hr_admin_name || a.hr_admin_email, people: people.length, ...r });
+  }
+  const anySent = results.some(r => r.sent);
+  if (anySent) kvSet(LAST_COMP_ENTITY_KEY, new Date().toISOString());
+  return { sent: anySent, asOf, results };
+}
+
+/**
+ * ~Daily: email each employee whose comp day has crossed into the 30-day window,
+ * to the work email on their Zelt profile. Deduped per (empId, expiresOn) so each
+ * batch reminds once. OFF unless COMP_EMAIL_REMINDERS is truthy (or `force`), and
+ * needs a Resend sender that can reach staff (COMP_FROM_EMAIL on a verified domain).
+ */
+export async function sendCompEntityEmailsIfDue({ force = false } = {}) {
+  const enabled = /^(1|true|on|yes)$/i.test(process.env.COMP_EMAIL_REMINDERS || '');
+  if (!enabled && !force) return { sent: 0, skipped: 'COMP_EMAIL_REMINDERS not enabled' };
+  if (!force) {
+    const last = kvGet(LAST_COMP_EMAIL_KEY);
+    if (last && Date.now() - Date.parse(last) < EMAIL_SCAN_MIN_AGE_MS) return { sent: 0, skipped: 'email scan not due yet' };
+  }
+
+  let byEntity, asOf;
+  try {
+    const res = await getCompExpiryByEntity(null, COMP_EXPIRY_WINDOW_DAYS);
+    if (!res.available) return { sent: 0, skipped: `comp data unavailable: ${res.reason || ''}` };
+    byEntity = res.byEntity; asOf = res.asOf;
+  } catch (err) {
+    return { sent: 0, skipped: `comp fetch failed: ${err.message}` };
+  }
+
+  let sentKeys;
+  try { sentKeys = new Set(JSON.parse(kvGet(COMP_EMAIL_SENT_KEY) || '[]')); } catch { sentKeys = new Set(); }
+
+  // flatten + dedupe people by employeeId (a person sits in one entity, but be safe)
+  const seenPerson = new Set();
+  const people = [];
+  for (const arr of Object.values(byEntity)) {
+    for (const p of arr) {
+      const pk = p.employeeId || p.email || p.name;
+      if (seenPerson.has(pk)) continue;
+      seenPerson.add(pk); people.push(p);
+    }
+  }
+
+  let sent = 0, errors = 0, skippedNoEmail = 0;
+  for (const p of people) {
+    if (!p.email) { skippedNoEmail++; continue; }
+    const fresh = (p.additions || []).filter(a => a.expiresOn && !sentKeys.has(`${p.employeeId || p.name}:${a.expiresOn}`));
+    if (!fresh.length) continue;
+    const r = await sendCompExpiryReminder({ to: p.email, name: p.name, additions: fresh });
+    if (r.sent) {
+      sent++;
+      for (const a of fresh) sentKeys.add(`${p.employeeId || p.name}:${a.expiresOn}`);
+    } else if (r.skipped) {
+      // transport not configured — stop, don't record anything as sent
+      return { sent, skipped: r.skipped, asOf };
+    } else {
+      errors++;
+    }
+  }
+
+  // keep the dedup set bounded (recent 800 keys; comp holders number in the low hundreds)
+  kvSet(COMP_EMAIL_SENT_KEY, JSON.stringify(Array.from(sentKeys).slice(-800)));
+  kvSet(LAST_COMP_EMAIL_KEY, new Date().toISOString());
+  return { sent, errors, skippedNoEmail, asOf };
+}
+
+// Send a sample reminder to one address so an admin can preview the email before
+// going live. Does not touch the dedup store.
+export async function sendCompEmailTest(toEmail) {
+  if (!toEmail) return { sent: false, skipped: 'no recipient' };
+  const additions = [
+    { days: 2, expiresOn: '2027-01-31', daysToExpiry: 25 },
+    { days: 1, expiresOn: new Date(Date.now() + 8 * DAY_MS).toISOString().slice(0, 10), daysToExpiry: 8 },
+  ];
+  return sendCompExpiryReminder({ to: toEmail, name: 'there', additions });
+}
+
 // ---- Scheduler ---------------------------------------------------------
 
 let schedulerStarted = false;
@@ -540,6 +702,12 @@ async function watcherTick(label) {
     // Separate weekly comp-expiry alert (own cadence; swallows its own errors).
     const compDigest = await sendCompExpiryDigestIfDue();
     if (compDigest.sent) console.log('[zelt-watcher] weekly comp-expiry alert sent to Slack');
+    // Monthly per-entity comp reports DMed to each entity's HR admin.
+    const compEntity = await sendCompEntityReportsIfDue();
+    if (compEntity.sent) console.log('[zelt-watcher] per-entity comp reports DMed to HR admins');
+    // ~Daily 30-day employee reminder emails (off unless COMP_EMAIL_REMINDERS set).
+    const compEmails = await sendCompEntityEmailsIfDue();
+    if (compEmails.sent) console.log(`[zelt-watcher] comp reminder emails sent: ${compEmails.sent}`);
   } catch (err) {
     console.warn(`[zelt-watcher] ${label} skipped: ${err.message}`);
   }

@@ -1033,6 +1033,8 @@ export async function getCompExpiryAggregates(asOfDate = null) {
   const prodByUser = new Map();
   const nameByUser = new Map();
   const empIdByUser = new Map();
+  const entityByUser = new Map();
+  const emailByUser = new Map();
   for (const u of seen.values()) {
     const status = u?.accountStatus || u?.status || u?.lifecycle?.status;
     if (status === 'Deactivated' || status === 'Terminated') continue;
@@ -1043,6 +1045,8 @@ export async function getCompExpiryAggregates(asOfDate = null) {
     prodByUser.set(uid, isProductionEmployee(u));
     nameByUser.set(uid, readName(u));
     empIdByUser.set(uid, readEmployeeId(u) ?? null);
+    entityByUser.set(uid, readEntity(u) || null);
+    emailByUser.set(uid, u?.emailAddress || u?.workEmail || u?.email || null);
   }
 
   // Comp balance per policy (paginated), employed users only.
@@ -1100,10 +1104,18 @@ export async function getCompExpiryAggregates(asOfDate = null) {
     list.push({
       name: nameByUser.get(uid) || '(unknown)',
       employeeId: empIdByUser.get(uid) || null,
+      entity: entityByUser.get(uid) || null,
+      email: emailByUser.get(uid) || null,
       isProduction: b.isProduction === true,
       compDays: round1(b.compensatory || 0),
       nextExpiry: expiries[0] || null,
       status,
+      // Per-addition rows (dated only) so per-entity / 30-day consumers can
+      // filter by days-to-expiry without re-fetching. Kept out of the counts-only
+      // summary; email is PII and must never be sent to the Claude API.
+      additions: adds
+        .filter(a => a.expiresOn)
+        .map(a => ({ days: a.days, expiresOn: a.expiresOn, daysToExpiry: a.daysToExpiry, status: a.status, grace: !!a.grace })),
     });
   }
   // Soonest expiry first; employees with no dated expiry sort to the end.
@@ -1114,6 +1126,35 @@ export async function getCompExpiryAggregates(asOfDate = null) {
     return b.compDays - a.compDays;
   });
   return { available: true, asOf, ...summarizeCompExpiry(holders), list };
+}
+
+// Per-entity view of who holds compensatory days expiring within `withinDays`.
+// Reuses the company-wide aggregate, then groups the named list by payroll
+// entity — the input to the monthly per-entity HR-admin DMs and the 30-day
+// employee email. Carries work email (PII): keep it OFF the Claude API.
+export async function getCompExpiryByEntity(asOfDate = null, withinDays = 30) {
+  const agg = await getCompExpiryAggregates(asOfDate);
+  if (!agg.available) return { available: false, reason: agg.reason, asOf: agg.asOf, withinDays, byEntity: {} };
+  const byEntity = {};
+  for (const r of agg.list || []) {
+    // soonest-expiring additions still ahead of us, within the window
+    const soon = (r.additions || []).filter(a => a.daysToExpiry != null && a.daysToExpiry <= withinDays && a.daysToExpiry >= 0);
+    if (!soon.length) continue;
+    const entity = r.entity || 'Unassigned';
+    const soonDays = round1(soon.reduce((s, a) => s + (Number(a.days) || 0), 0));
+    const next = soon.map(a => a.expiresOn).filter(Boolean).sort()[0] || r.nextExpiry || null;
+    const minDTE = Math.min(...soon.map(a => a.daysToExpiry));
+    (byEntity[entity] ||= []).push({
+      name: r.name, employeeId: r.employeeId, email: r.email,
+      isProduction: r.isProduction, compDays: r.compDays,
+      expiringDays: soonDays, nextExpiry: next, daysToExpiry: minDTE,
+      additions: soon,
+    });
+  }
+  for (const k of Object.keys(byEntity)) {
+    byEntity[k].sort((a, b) => (a.daysToExpiry - b.daysToExpiry) || (b.expiringDays - a.expiringDays));
+  }
+  return { available: true, asOf: agg.asOf, withinDays, byEntity };
 }
 
 // Company-wide compensatory ledger for an HR report: per employee, the dated

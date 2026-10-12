@@ -346,6 +346,14 @@ function initSchema() {
       key TEXT PRIMARY KEY,
       value TEXT
     );
+
+    CREATE TABLE IF NOT EXISTS zelt_entity_admins (
+      entity TEXT PRIMARY KEY,
+      hr_admin_name TEXT,
+      hr_admin_email TEXT,
+      slack_user_id TEXT,
+      updated_at TEXT
+    );
   `);
 
   // Create indexes individually (sql.js exec doesn't support multiple statements well with IF NOT EXISTS)
@@ -393,6 +401,38 @@ export function kvSet(key, value) {
     INSERT INTO kv (key, value) VALUES (?, ?)
     ON CONFLICT(key) DO UPDATE SET value = excluded.value
   `).run(key, String(value));
+}
+
+// --- Entity → HR-admin mapping (drives the per-entity comp-expiry DMs) --------
+// One row per Zelt payroll entity: who the People-Ops owner is, their work email
+// (used to resolve a Slack user via users.lookupByEmail), and an optional Slack
+// user ID override. Admin-managed from the Entity Admins page.
+export function listEntityAdmins() {
+  return getDb().prepare('SELECT entity, hr_admin_name, hr_admin_email, slack_user_id, updated_at FROM zelt_entity_admins ORDER BY entity').all();
+}
+
+export function getEntityAdmin(entity) {
+  return getDb().prepare('SELECT entity, hr_admin_name, hr_admin_email, slack_user_id, updated_at FROM zelt_entity_admins WHERE entity = ?').get(entity);
+}
+
+export function upsertEntityAdmin({ entity, hr_admin_name = '', hr_admin_email = '', slack_user_id = '' }) {
+  getDb().prepare(`
+    INSERT INTO zelt_entity_admins (entity, hr_admin_name, hr_admin_email, slack_user_id, updated_at)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(entity) DO UPDATE SET
+      hr_admin_name = excluded.hr_admin_name,
+      hr_admin_email = excluded.hr_admin_email,
+      slack_user_id = excluded.slack_user_id,
+      updated_at = excluded.updated_at
+  `).run(entity, hr_admin_name, hr_admin_email, slack_user_id, new Date().toISOString());
+  persistNow();
+  return getEntityAdmin(entity);
+}
+
+export function deleteEntityAdmin(entity) {
+  const { changes } = getDb().prepare('DELETE FROM zelt_entity_admins WHERE entity = ?').run(entity);
+  persistNow();
+  return changes > 0;
 }
 
 export function closeDb() {

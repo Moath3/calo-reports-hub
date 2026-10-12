@@ -19,6 +19,7 @@ const navGroups = [
     { to: '/time-attendance', icon: 'Clock',          label: 'Time & Attendance' },
     { to: '/data-hygiene',    icon: 'ShieldCheck',    label: 'Data Hygiene', adminOnly: true, beta: true },
     { to: '/mobility',        icon: 'TrendingUp',     label: 'Mobility', adminOnly: true, beta: true },
+    { to: '/entity-admins',   icon: 'Users',          label: 'Entity Admins', adminOnly: true },
   ]},
   { label: 'Reports', items: [
     { to: '/new',             icon: 'Plus',           label: 'New Report', accent: true },

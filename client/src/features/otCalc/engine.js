@@ -12,6 +12,10 @@ export const DEFAULTS = {
   gap: 4, win: 18, maxShift: 14, minSpan: 30, lenient: 'strict', dateOrder: 'DMY',
   showNoTx: false, rateBasis: '30', rateHours: 8, otMult: 1.25, cycleStart: 1,
   dupWin: 15, schedTol: 4, buffer: 10,
+  // Salary is for production crew. When the master has a Job Family column and
+  // prodOnly is on, only employees whose family matches prodFamily get OT pay;
+  // others are paid 0 (hours still shown). No family column → sheet is trusted.
+  prodOnly: true, prodFamily: 'Production',
 };
 
 export function mergeSettings(partial) { return { ...DEFAULTS, ...(partial || {}) }; }
@@ -110,6 +114,7 @@ export const MTESTS = {
   desig: (h) => /designation|job\s*title|position/.test(h),
   hire: (h) => /hire\s*date|joining\s*date|date\s*of\s*join|^doj$/.test(h),
   lwd: (h) => /last\s*working|termination|exit\s*date|resignation\s*date/.test(h),
+  family: (h) => /job\s*family|^family$|^category$|^cadre$|worker\s*category|staff\s*category/.test(h),
 };
 export function scoreHeader(row) {
   if (!row) return 0; let s = 0; const seen = {};
@@ -202,14 +207,16 @@ export function buildMaster(sheets, companyTab, dateOrder = 'DMY', fileName = 'm
   const want = companyTab;
   if (want) { const only = sheets.filter((sh) => nh(sh.sn) === nh(want)); if (only.length) sheets = only; }
   const list = [], byId = {}, used = [];
+  let hasFamily = false;
   sheets.forEach((sh) => {
     let hi = -1, bs = 0;
     for (let i = 0; i < Math.min(sh.rows.length, 25); i++) { const row = sh.rows[i] || []; const sc = scoreHeader(row) + (row.some((c) => MTESTS.basic(nh(c))) ? 2 : 0); if (sc > bs) { bs = sc; hi = i; } }
     if (hi < 0) return;
     const H = (sh.rows[hi] || []).map(nh); const m = detectMap(sh.rows[hi]);
     const f = (t) => H.findIndex((h) => h && MTESTS[t](h));
-    const c = { basic: f('basic'), gross: f('gross'), status: f('status'), desig: f('desig'), hire: f('hire'), lwd: f('lwd') };
+    const c = { basic: f('basic'), gross: f('gross'), status: f('status'), desig: f('desig'), hire: f('hire'), lwd: f('lwd'), family: f('family') };
     if (m.id < 0 || c.basic < 0) return; used.push(sh.sn);
+    if (c.family >= 0) hasFamily = true;
     const val = (r, i) => i >= 0 && !isBlank(r[i]) ? String(r[i]).trim() : '';
     const dk = (v) => { const d = parseDT(v, false, dateOrder).date; return d ? d.y + '-' + pad(d.m) + '-' + pad(d.d) : ''; };
     for (let k = hi + 1; k < sh.rows.length; k++) {
@@ -221,7 +228,7 @@ export function buildMaster(sheets, companyTab, dateOrder = 'DMY', fileName = 'm
         id, name: nm, dept: val(r, m.dept), desig: val(r, c.desig), status: status || '—',
         active: !/inactive|resign|terminat|abscond|left|exit|cancel/i.test(status),
         basic: c.basic >= 0 ? num(r[c.basic]) : null, gross: c.gross >= 0 ? num(r[c.gross]) : null,
-        hire: c.hire >= 0 ? dk(r[c.hire]) : '', lwd: c.lwd >= 0 ? dk(r[c.lwd]) : '', sheet: sh.sn,
+        hire: c.hire >= 0 ? dk(r[c.hire]) : '', lwd: c.lwd >= 0 ? dk(r[c.lwd]) : '', family: c.family >= 0 ? val(r, c.family) : '', sheet: sh.sn,
       };
       list.push(e);
       const o = byId[id];
@@ -234,7 +241,7 @@ export function buildMaster(sheets, companyTab, dateOrder = 'DMY', fileName = 'm
       }
     }
   });
-  return used.length ? { file: fileName, list: Object.values(byId), byId, sheets: used, rows: list.length } : null;
+  return used.length ? { file: fileName, list: Object.values(byId), byId, sheets: used, rows: list.length, hasFamily } : null;
 }
 
 // Core compute: rows + map (+ optional master) -> processed data D.
@@ -355,6 +362,15 @@ export function payFactor(id, { master, excl }) {
   return PAYF[x.pay] != null ? PAYF[x.pay] : 0;
 }
 
+// Case-insensitive substring match of the production-family keyword against an
+// employee's job family (e.g. 'Production' matches 'Production Crew'). Blank
+// keyword → everyone passes.
+export function famMatches(fam, prodFamily) {
+  const p = String(prodFamily || '').trim();
+  if (!p) return true;
+  return String(fam || '').toLowerCase().includes(p.toLowerCase());
+}
+
 // Aggregate daily rows into a per-employee summary + apply salary/eligibility.
 export function buildView(D, { settings, master, excl = {}, special = {}, dec = 2 }) {
   const S = settings; if (!D) return { summary: [], kpis: {} };
@@ -375,11 +391,16 @@ export function buildView(D, { settings, master, excl = {}, special = {}, dec = 
     const m = master ? master.byId[s.id] : null;
     const basic = m ? m.basic : null;
     const rate = basic != null ? hourly(basic, S) : null;
-    const factor = payFactor(s.id, { master, excl });
+    const fam = m ? (m.family || '') : '';
+    let factor = payFactor(s.id, { master, excl });
+    // Production-only guardrail: when the master carries a Job Family column and
+    // prodOnly is on, non-production families get no OT pay (hours still shown).
+    let prodExcluded = false;
+    if (S.prodOnly && master && master.hasFamily && m && fam && !famMatches(fam, S.prodFamily)) { factor = 0; prodExcluded = true; }
     const amount = (master && rate != null) ? (otAmt(s.ot, basic, S, dec) || 0) * factor : null;
     const sp = +special[s.id] || 0;
     summary.push({
-      ...s, desig: m ? m.desig : '', status: m ? m.status : '', basic, rate,
+      ...s, desig: m ? m.desig : '', status: m ? m.status : '', basic, rate, family: fam, prodExcluded,
       otRate: rate != null ? rate * (+S.otMult || 1.25) : null,
       eligible: factor > 0, factor, special: sp,
       amount: amount != null ? Math.round(amount * Math.pow(10, dec)) / Math.pow(10, dec) : null,

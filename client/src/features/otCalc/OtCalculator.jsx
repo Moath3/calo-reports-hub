@@ -12,6 +12,7 @@ const SUBTABS = [
   { k: 'daily', label: 'Daily Attendance', icon: 'CalendarDays' },
   { k: 'summary', label: 'Employee Summary', icon: 'Users' },
   { k: 'exceptions', label: 'Exceptions', icon: 'AlertTriangle' },
+  { k: 'raw', label: 'Raw Transactions', icon: 'List' },
   { k: 'history', label: 'OT History', icon: 'History', always: true },
 ];
 
@@ -164,8 +165,40 @@ export default function OtCalculator() {
       {tab === 'daily' && D && <DailyTab {...{ D, view, comp, settings: committed.settings, canSeeSalary }} />}
       {tab === 'summary' && D && <SummaryTab {...{ view, comp, settings: committed.settings, excl, setExcl, special, setSpecial, master: committed.master, canSeeSalary }} />}
       {tab === 'exceptions' && D && <ExceptionsTab {...{ D }} />}
+      {tab === 'raw' && D && <RawTab {...{ D }} />}
       {tab === 'history' && <HistoryTab {...{ runs, loadingRuns, loadRuns, savedRun, setMsg }} />}
     </div>
+  );
+}
+
+// ---- Raw Transactions (the uploaded punches + how each was used) ----
+function RawTab({ D }) {
+  const [q, setQ] = useState('');
+  const rows = useMemo(() => {
+    const t = q.trim().toLowerCase();
+    return D.recs.filter((r) => !t || (r.name + ' ' + r.id + ' ' + r.dept).toLowerCase().includes(t));
+  }, [D, q]);
+  return (
+    <Card>
+      <Toolbar q={q} setQ={setQ} count={rows.length} label="punches" />
+      <div style={{ overflowX: 'auto' }}>
+        <table style={tbl}>
+          <thead><tr style={thr}>{['Row', 'ID', 'Name', 'Dept', 'Date', 'Time', 'Punch type', 'How used'].map((h, i) => <th key={i} style={th('left')}>{h}</th>)}</tr></thead>
+          <tbody>
+            {rows.slice(0, 1000).map((r, i) => (
+              <tr key={i} style={{ borderTop: '1px solid var(--ink-100)', background: r.bad ? '#FDECEC' : r.use?.startsWith('Duplicate') ? 'var(--ink-50)' : 'transparent' }}>
+                <td style={td}>{r.rowNo}</td><td style={td}>{r.id}</td><td style={td}>{r.name}</td><td style={td}>{r.dept}</td>
+                <td style={td}>{r.dateKey || '—'}</td>
+                <td style={td}>{r.ts != null ? tsTime(r.ts) : '—'}</td>
+                <td style={td}>{r.state === 'ANY' ? 'punch' : r.state}</td>
+                <td style={{ ...td, color: r.bad ? 'var(--danger)' : 'var(--ink-500)', fontSize: 12 }}>{r.bad ? 'Excluded: ' + r.bad : (r.use || 'Used')}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {rows.length > 1000 && <div style={{ padding: 10, color: 'var(--ink-500)', fontSize: 13 }}>Showing first 1000 of {rows.length}.</div>}
+      </div>
+    </Card>
   );
 }
 
@@ -309,7 +342,10 @@ function UploadRules({ punch, setPunch, pickPunch, master, masterName, setMaster
           {canSeeSalary && <SelF label="Hourly rate basis" v={settings.rateBasis} on={setS('rateBasis')} opts={[['30', 'Basic ÷ 30 ÷ hpd'], ['365', 'Basic × 12 ÷ 365 ÷ hpd']]} />}
           {canSeeSalary && <NumF label="Rate hours / day (hpd)" v={settings.rateHours} on={setS('rateHours')} />}
           {canSeeSalary && <NumF label="OT multiplier" v={settings.otMult} on={setS('otMult')} step="0.05" />}
+          {canSeeSalary && <SelF label="OT pay scope" v={settings.prodOnly ? 'prod' : 'all'} on={(v) => setS('prodOnly')(v === 'prod')} opts={[['prod', 'Production job families only'], ['all', 'All employees in the sheet']]} />}
+          {canSeeSalary && settings.prodOnly && <TxtF label="Production family keyword" v={settings.prodFamily} on={setS('prodFamily')} />}
         </div>
+        {canSeeSalary && settings.prodOnly && <div style={{ fontSize: 12.5, color: 'var(--ink-500)', marginTop: 10, lineHeight: 1.5 }}>Only paid when the salary master has a <b>Job Family</b> column. Employees whose family doesn't contain "{settings.prodFamily}" get hours but no OT pay. No Job Family column → the whole sheet is treated as eligible.</div>}
         <div style={{ display: 'flex', gap: 10, marginTop: 16, alignItems: 'center' }}>
           <Btn icon="Calculator" onClick={calculate} disabled={!punch || busy}>{busy ? 'Reading…' : 'Calculate'}</Btn>
           <Btn variant="ghost" size="sm" onClick={() => setSettings(mergeSettings({}))}>Reset rules to defaults</Btn>
@@ -421,7 +457,7 @@ function SummaryTab({ view, comp, settings, excl, setExcl, special, setSpecial, 
           <tbody>
             {rows.slice(0, 600).map((s) => {
               const ex = typeof excl[s.id] === 'string' ? { pay: 'none', reason: excl[s.id] } : (excl[s.id] || {});
-              const pay = ex.pay || 'full'; const noBasic = sal && !(s.basic > 0);
+              const pay = ex.pay || 'full'; const noBasic = sal && !(s.basic > 0); const prodEx = s.prodExcluded;
               return (
                 <tr key={s.id} style={{ borderTop: '1px solid var(--ink-100)' }}>
                   <td style={td}>{s.id}</td><td style={td}>{s.name}</td><td style={td}>{s.dept}</td>
@@ -431,9 +467,9 @@ function SummaryTab({ view, comp, settings, excl, setExcl, special, setSpecial, 
                   <td style={tdR}>{s.missIn || ''}</td><td style={tdR}>{s.missOut || ''}</td><td style={tdR}>{s.exc || ''}</td>
                   {sal && <td style={tdR}>{noBasic ? <Pill tone="amber" size="sm">No basic</Pill> : fmtMoney(s.basic, comp.dec)}</td>}
                   {sal && <td style={tdR}>{s.otRate != null ? fmtMoney(s.otRate, comp.dec) : '—'}</td>}
-                  {sal && <td style={td}><input type="checkbox" checked={!ex.noElig && !noBasic} disabled={noBasic} onChange={(e) => toggleElig(s.id, e.target.checked)} /></td>}
+                  {sal && <td style={td}>{prodEx ? <Pill tone="neutral" size="sm">Non-prod</Pill> : <input type="checkbox" checked={!ex.noElig && !noBasic} disabled={noBasic} onChange={(e) => toggleElig(s.id, e.target.checked)} />}</td>}
                   {sal && <td style={td}>
-                    <select className="input-field" style={{ padding: '4px 6px', fontSize: 12, width: 'auto' }} value={pay} disabled={noBasic || ex.noElig} onChange={(e) => setPay(s.id, e.target.value)}>
+                    <select className="input-field" style={{ padding: '4px 6px', fontSize: 12, width: 'auto' }} value={pay} disabled={noBasic || ex.noElig || prodEx} onChange={(e) => setPay(s.id, e.target.value)}>
                       {PAYOPT.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
                     </select>
                     {pay !== 'full' && !ex.noElig && !noBasic && (
@@ -499,6 +535,7 @@ const tdC = { ...td, textAlign: 'center' };
 const tdR = { ...td, textAlign: 'right' };
 
 function NumF({ label, v, on, step }) { return (<div><label className="label">{label}</label><input className="input-field" type="number" step={step || '1'} value={v} onChange={(e) => on(e.target.value === '' ? '' : +e.target.value)} /></div>); }
+function TxtF({ label, v, on }) { return (<div><label className="label">{label}</label><input className="input-field" type="text" value={v} onChange={(e) => on(e.target.value)} /></div>); }
 function SelF({ label, v, on, opts }) { return (<div><label className="label">{label}</label><select className="input-field" value={v} onChange={(e) => on(e.target.value)}>{opts.map(([val, l]) => <option key={val} value={val}>{l}</option>)}</select></div>); }
 function Toolbar({ q, setQ, count, label, inline }) { return (<div style={{ display: inline ? 'contents' : 'flex', alignItems: 'center', gap: 10, marginBottom: inline ? 0 : 12 }}><input className="input-field" style={{ maxWidth: 280 }} placeholder="Search name / ID / dept…" value={q} onChange={(e) => setQ(e.target.value)} /><span style={{ fontSize: 13, color: 'var(--ink-500)' }}>{count} {label}</span></div>); }
 function Empty({ children }) { return <div style={{ color: 'var(--ink-400)', fontSize: 14, padding: '8px 0' }}>{children}</div>; }

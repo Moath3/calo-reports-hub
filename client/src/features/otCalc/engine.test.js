@@ -2,7 +2,7 @@
 // engine.js is pure ESM with no browser deps, so it runs under node directly.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mergeSettings, detectMap, compute, buildMaster, buildView, roundOT, hourly, otAmt, payFactor } from './engine.js';
+import { mergeSettings, detectMap, compute, buildMaster, buildView, roundOT, hourly, otAmt, payFactor, famMatches } from './engine.js';
 
 const HEAD = ['Emp ID', 'Name', 'Department', 'Date', 'Time', 'Punch State'];
 const MAP = detectMap(HEAD);
@@ -94,4 +94,37 @@ test('no basic salary in master → factor 0, no OT amount', () => {
 test('roundOT respects minimum-OT threshold', () => {
   assert.equal(roundOT(5, mergeSettings({ minOT: 10 })), 0);
   assert.equal(roundOT(20, mergeSettings({ minOT: 10 })), 20);
+});
+
+test('famMatches: substring, case-insensitive, blank keyword passes all', () => {
+  assert.equal(famMatches('Production Crew', 'Production'), true);
+  assert.equal(famMatches('Office', 'production'), false);
+  assert.equal(famMatches('anything', ''), true);
+});
+
+test('production guardrail: Job Family column excludes non-production from OT pay', () => {
+  const rows = [
+    ['P1', 'Cook', 'Kitchen', '2026-09-01', '08:00', 'Check In'],
+    ['P1', 'Cook', 'Kitchen', '2026-09-01', '19:00', 'Check Out'],
+    ['O1', 'Manager', 'Admin', '2026-09-01', '08:00', 'Check In'],
+    ['O1', 'Manager', 'Admin', '2026-09-01', '19:00', 'Check Out'],
+  ];
+  const D = compute({ rows: [HEAD, ...rows], hdrIdx: 0, map: MAP, settings: S });
+  const master = buildMaster([{ sn: 'Calo UAE MP', rows: [
+    ['Emp ID', 'Basic Salary', 'Status', 'Job Family'],
+    ['P1', 3000, 'Active', 'Production'],
+    ['O1', 6000, 'Active', 'Office'],
+  ] }], 'Calo UAE MP');
+  assert.equal(master.hasFamily, true);
+  // prodOnly ON (default): P1 paid, O1 excluded (no pay, flagged)
+  let V = buildView(D, { settings: S, master, dec: 2 });
+  const p1 = V.summary.find((x) => x.id === 'P1');
+  const o1 = V.summary.find((x) => x.id === 'O1');
+  assert.ok(p1.amount > 0);
+  assert.equal(o1.factor, 0);
+  assert.equal(o1.prodExcluded, true);
+  assert.equal(o1.amount, 0);
+  // prodOnly OFF: O1 now paid
+  V = buildView(D, { settings: mergeSettings({ prodOnly: false }), master, dec: 2 });
+  assert.ok(V.summary.find((x) => x.id === 'O1').amount > 0);
 });

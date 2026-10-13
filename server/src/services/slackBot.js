@@ -34,12 +34,14 @@ async function slackCall(method, body) {
   }
 }
 
-// Resolve a work email to a Slack user ID. Returns null on any failure.
+// Resolve a work email to a Slack user ID. Returns { id, error } so callers can
+// tell a genuine "not in workspace" (users_not_found) from a scope/auth problem
+// (missing_scope, invalid_auth) instead of a blanket null.
 export async function slackLookupUserByEmail(email) {
-  if (!email) return null;
+  if (!email) return { id: null, error: 'no email' };
   const r = await slackCall('users.lookupByEmail', { email });
-  if (r.ok && r.user?.id) return r.user.id;
-  return null;
+  if (r.ok && r.user?.id) return { id: r.user.id, error: null };
+  return { id: null, error: r.error || 'lookup failed' };
 }
 
 // DM a user, identified by Slack user ID (preferred) or work email. Posting to a
@@ -48,9 +50,18 @@ export async function postSlackDM({ slackUserId = '', email = '', text }) {
   if (!slackBotConfigured()) return { sent: false, skipped: 'SLACK_BOT_TOKEN not set' };
   if (!text) return { sent: false, skipped: 'empty text' };
   let userId = (slackUserId || '').trim();
-  if (!userId && email) userId = await slackLookupUserByEmail(email);
-  if (!userId) return { sent: false, error: email ? `no Slack user for ${email}` : 'no slackUserId or email' };
+  if (!userId && email) {
+    const look = await slackLookupUserByEmail(email);
+    if (!look.id) {
+      const hint = look.error === 'missing_scope' ? ' (bot is missing the users:read.email scope — add it and reinstall)'
+        : look.error === 'users_not_found' ? ` (no Slack member has the email ${email} — check their Slack email or paste their Slack user ID)`
+        : '';
+      return { sent: false, error: `Slack lookup failed: ${look.error}${hint}` };
+    }
+    userId = look.id;
+  }
+  if (!userId) return { sent: false, error: 'no slackUserId or email' };
   const r = await slackCall('chat.postMessage', { channel: userId, text, unfurl_links: false, unfurl_media: false });
   if (r.ok) return { sent: true, userId };
-  return { sent: false, error: r.error || 'postMessage failed', userId };
+  return { sent: false, error: `Slack postMessage failed: ${r.error || 'unknown'}`, userId };
 }

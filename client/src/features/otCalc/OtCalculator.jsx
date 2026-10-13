@@ -26,7 +26,7 @@ const LS = {
 
 export default function OtCalculator() {
   const { user } = useAuth();
-  const canSeeSalary = user?.role === 'admin';
+  const canSeeSalary = user?.role === 'admin' || user?.role === 'hr';
 
   const [company, setCompany] = useState(() => LS.get('otcalc.company', DEFAULT_COMPANY));
   const [settings, setSettings] = useState(() => mergeSettings(LS.get('otcalc.rules.v1', {})));

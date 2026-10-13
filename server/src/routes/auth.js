@@ -154,7 +154,7 @@ router.get('/users', requireAuth, requireAdmin, (req, res) => {
 // PATCH /api/auth/users/:id/role (admin only - change role)
 router.patch('/users/:id/role', requireAuth, requireAdmin, asyncHandler((req, res) => {
   const { role } = req.body;
-  if (!['admin', 'employee'].includes(role)) throw badRequest('Invalid role');
+  if (!['admin', 'hr', 'employee'].includes(role)) throw badRequest('Invalid role');
   const db = getDb();
   const user = db.prepare('SELECT id FROM users WHERE id = ?').get(req.params.id);
   if (!user) throw notFound('User not found');

@@ -53,6 +53,15 @@ export function requireAdmin(req, res, next) {
   next();
 }
 
+// People-tools tier: HR and admin. Used for the salary/leave/hygiene tools that
+// HR owns, while user management + integration settings stay requireAdmin.
+export function requireHrOrAdmin(req, res, next) {
+  if (req.user.role !== 'admin' && req.user.role !== 'hr') {
+    return res.status(403).json({ error: 'HR or admin access required' });
+  }
+  next();
+}
+
 export function auditLog(action, resourceType) {
   return (req, res, next) => {
     const originalJson = res.json.bind(res);

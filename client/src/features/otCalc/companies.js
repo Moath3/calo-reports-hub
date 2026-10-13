@@ -2,6 +2,8 @@
 // formatting, `tab` pins which sheet of the salary master to use (blank = any
 // sheet that has an ID + Basic column). Ported from the standalone calculator.
 export const COMPANIES = [
+  { key: 'ksa-mp', name: 'Calo KSA MP', cur: 'SAR', dec: 2, tab: '' },
+  { key: 'ksa-retail', name: 'Calo KSA Retail', cur: 'SAR', dec: 2, tab: '' },
   { key: 'uae-mp', name: 'Calo UAE MP', cur: 'AED', dec: 2, tab: 'Calo UAE MP' },
   { key: 'uae-retail', name: 'Calo UAE Retail', cur: 'AED', dec: 2, tab: 'Calo UAE Retail' },
   { key: 'bh-mp', name: 'Calo Bahrain MP', cur: 'BHD', dec: 3, tab: '' },

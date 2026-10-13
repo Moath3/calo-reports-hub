@@ -94,9 +94,7 @@ export default function SettingsPage() {
     }
   };
 
-  const toggleRole = async (uid, currentRole) => {
-    const next = currentRole === 'admin' ? 'employee' : 'admin';
-    if (!confirm(`Set this user's role to ${next}?`)) return;
+  const setRole = async (uid, next) => {
     try {
       const res = await api.setUserRole(uid, next);
       toast.success(res.message);
@@ -267,14 +265,17 @@ export default function SettingsPage() {
                           <div className="text-xs text-gray-500">{u.email} &middot; {u.department || 'No department'}</div>
                         </div>
                         {u.id !== user.id ? (
-                          <button
-                            onClick={() => toggleRole(u.id, u.role)}
-                            className={u.role === 'admin' ? 'badge-green' : 'badge-blue'}
-                            style={{ cursor: 'pointer', border: 'none' }}
-                            title={`Click to ${u.role === 'admin' ? 'demote to employee' : 'promote to admin'}`}
+                          <select
+                            value={u.role}
+                            onChange={(e) => setRole(u.id, e.target.value)}
+                            className="text-xs rounded-full px-2 py-1 border border-gray-300 bg-white"
+                            style={{ cursor: 'pointer' }}
+                            title="Change role (HR gets the People tools; admin also manages users + settings)"
                           >
-                            {u.role}
-                          </button>
+                            <option value="employee">employee</option>
+                            <option value="hr">hr</option>
+                            <option value="admin">admin</option>
+                          </select>
                         ) : (
                           <span className={u.role === 'admin' ? 'badge-green' : 'badge-blue'}>{u.role}</span>
                         )}

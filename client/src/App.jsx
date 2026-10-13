@@ -41,6 +41,15 @@ function AdminRoute({ children }) {
   return children;
 }
 
+// People-tools tier: HR + admin (salary/hygiene/mobility/entity tools).
+function HrRoute({ children }) {
+  const { user, loading } = useAuth();
+  if (loading) return null;
+  if (!user) return <Navigate to="/login" replace />;
+  if (user.role !== 'admin' && user.role !== 'hr') return <Navigate to="/" replace />;
+  return children;
+}
+
 function PublicRoute({ children }) {
   const { user, loading } = useAuth();
   if (loading) {
@@ -70,9 +79,9 @@ export default function App() {
         <Route path="guide" element={<GuidePage />} />
         <Route path="leave-balances" element={<ZeltLeavePage />} />
         <Route path="time-attendance" element={<TimeAttendancePage />} />
-        <Route path="data-hygiene" element={<AdminRoute><ZeltAuditPage /></AdminRoute>} />
-        <Route path="mobility" element={<AdminRoute><MobilityPage /></AdminRoute>} />
-        <Route path="entity-admins" element={<AdminRoute><EntityAdminsPage /></AdminRoute>} />
+        <Route path="data-hygiene" element={<HrRoute><ZeltAuditPage /></HrRoute>} />
+        <Route path="mobility" element={<HrRoute><MobilityPage /></HrRoute>} />
+        <Route path="entity-admins" element={<HrRoute><EntityAdminsPage /></HrRoute>} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

@@ -17,9 +17,9 @@ const navGroups = [
   { label: 'People tools', items: [
     { to: '/leave-balances',  icon: 'CalendarCheck',  label: 'Leave Balances' },
     { to: '/time-attendance', icon: 'Clock',          label: 'Time & Attendance' },
-    { to: '/data-hygiene',    icon: 'ShieldCheck',    label: 'Data Hygiene', adminOnly: true, beta: true },
-    { to: '/mobility',        icon: 'TrendingUp',     label: 'Mobility', adminOnly: true, beta: true },
-    { to: '/entity-admins',   icon: 'Users',          label: 'Entity Admins', adminOnly: true },
+    { to: '/data-hygiene',    icon: 'ShieldCheck',    label: 'Data Hygiene', hrOrAdmin: true, beta: true },
+    { to: '/mobility',        icon: 'TrendingUp',     label: 'Mobility', hrOrAdmin: true, beta: true },
+    { to: '/entity-admins',   icon: 'Users',          label: 'Entity Admins', hrOrAdmin: true },
   ]},
   { label: 'Reports', items: [
     { to: '/new',             icon: 'Plus',           label: 'New Report', accent: true },
@@ -167,7 +167,9 @@ export default function Layout() {
         {/* Main nav */}
         <nav style={{ padding: '8px 12px', display: 'flex', flexDirection: 'column', gap: 2 }}>
           {navGroups.map((g, gi) => {
-            const items = g.items.filter(n => !n.adminOnly || user?.role === 'admin');
+            const items = g.items.filter(n =>
+              (!n.adminOnly || user?.role === 'admin') &&
+              (!n.hrOrAdmin || user?.role === 'admin' || user?.role === 'hr'));
             if (!items.length) return null;
             return (
               <div key={g.label || gi} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
@@ -230,7 +232,7 @@ export default function Layout() {
                     {user?.name || 'User'}
                   </div>
                   <div style={{ fontSize: 11, color: 'var(--ink-500)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                    {user?.role === 'admin' ? 'Admin' : 'Employee'}{user?.department ? ` · ${user.department}` : ''}
+                    {user?.role === 'admin' ? 'Admin' : user?.role === 'hr' ? 'HR' : 'Employee'}{user?.department ? ` · ${user.department}` : ''}
                   </div>
                 </div>
               )}

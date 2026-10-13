@@ -15,8 +15,8 @@ import OtCalculator from '../features/otCalc/OtCalculator';
  */
 export default function TimeAttendancePage() {
   const { user } = useAuth();
-  const isAdmin = user?.role === 'admin';
-  const [topTab, setTopTab] = useState('zelt');         // 'zelt' (existing hours flow) | 'calc' (OT calculator, admin)
+  const isAdmin = user?.role === 'admin' || user?.role === 'hr'; // OT calculator + salary = HR tier
+  const [topTab, setTopTab] = useState('zelt');         // 'zelt' (existing hours flow) | 'calc' (OT calculator, HR/admin)
   const [attendance, setAttendance] = useState(null);   // File
   const [masters, setMasters] = useState([]);           // [{ file, sheet }]
   const [schedule, setSchedule] = useState(null);       // File — HR Ops monthly schedule

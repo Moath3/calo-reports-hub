@@ -16,7 +16,7 @@
  */
 import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
-import { requireAuth, requireAdmin } from '../middleware/auth.js';
+import { requireAuth, requireAdmin, requireHrOrAdmin } from '../middleware/auth.js';
 import { getDb, listEntityAdmins, upsertEntityAdmin, deleteEntityAdmin } from '../db/database.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { HttpError, badRequest } from '../utils/httpError.js';
@@ -298,40 +298,40 @@ router.get('/audit', dataLimiter, requireAuth, asyncHandler(async (req, res) => 
 
 // Admin-only: mobility & turnover analytics — trailing-12-month joiner/leaver
 // series, tenure buckets, per-entity/dept splits and the leaver list.
-router.get('/mobility', dataLimiter, requireAuth, requireAdmin, asyncHandler(async (req, res) => {
+router.get('/mobility', dataLimiter, requireAuth, requireHrOrAdmin, asyncHandler(async (req, res) => {
   const report = await getMobility().catch(zeltUpstream('Mobility fetch failed'));
   res.json(report);
 }));
 
 // Admin-only: hygiene watcher state — snapshot history, latest summary,
 // diff vs the previous snapshot, and digest metadata.
-router.get('/watch', dataLimiter, requireAuth, requireAdmin, asyncHandler(async (req, res) => {
+router.get('/watch', dataLimiter, requireAuth, requireHrOrAdmin, asyncHandler(async (req, res) => {
   res.json(getWatchState());
 }));
 
 // Admin-only: take a fresh audit snapshot now, then return the updated state.
-router.post('/watch/run', dataLimiter, requireAuth, requireAdmin, asyncHandler(async (req, res) => {
+router.post('/watch/run', dataLimiter, requireAuth, requireHrOrAdmin, asyncHandler(async (req, res) => {
   await runSnapshotAndDiff().catch(zeltUpstream('Watcher snapshot failed'));
   logZeltAudit(req.user.id, 'zelt.watch.run');
   res.json(getWatchState());
 }));
 
 // Admin-only: force-send the weekly Slack digest (bypasses the 6.5-day gate).
-router.post('/watch/digest', dataLimiter, requireAuth, requireAdmin, asyncHandler(async (req, res) => {
+router.post('/watch/digest', dataLimiter, requireAuth, requireHrOrAdmin, asyncHandler(async (req, res) => {
   const result = await sendWeeklyDigestIfDue({ force: true });
   logZeltAudit(req.user.id, 'zelt.watch.digest', { sent: result.sent, skipped: result.skipped || null });
   res.json(result);
 }));
 
 // Admin-only: force-send the weekly compensatory-expiry alert (counts only).
-router.post('/watch/comp-digest', dataLimiter, requireAuth, requireAdmin, asyncHandler(async (req, res) => {
+router.post('/watch/comp-digest', dataLimiter, requireAuth, requireHrOrAdmin, asyncHandler(async (req, res) => {
   const result = await sendCompExpiryDigestIfDue({ force: true });
   logZeltAudit(req.user.id, 'zelt.watch.compDigest', { sent: result.sent, skipped: result.skipped || null });
   res.json(result);
 }));
 
 // Admin-only: can the bot read the dated comp-addition ledger? Non-PII probe.
-router.get('/watch/comp-access', dataLimiter, requireAuth, requireAdmin, asyncHandler(async (req, res) => {
+router.get('/watch/comp-access', dataLimiter, requireAuth, requireHrOrAdmin, asyncHandler(async (req, res) => {
   const result = await probeCompAdditionsAccess();
   logZeltAudit(req.user.id, 'zelt.watch.compAccess', { allowancesOk: result.allowancesOk, status: result.firstStatus });
   res.json(result);
@@ -339,14 +339,14 @@ router.get('/watch/comp-access', dataLimiter, requireAuth, requireAdmin, asyncHa
 
 // ---- Entity → HR-admin mapping (drives per-entity comp DMs) -----------------
 // Admin-only: current mappings + the live entity list to choose from.
-router.get('/entity-admins', dataLimiter, requireAuth, requireAdmin, asyncHandler(async (req, res) => {
+router.get('/entity-admins', dataLimiter, requireAuth, requireHrOrAdmin, asyncHandler(async (req, res) => {
   const admins = listEntityAdmins();
   const entities = await listEntities().catch(() => []);
   res.json({ admins, entities });
 }));
 
 // Admin-only: upsert one entity → HR-admin row.
-router.post('/entity-admins', dataLimiter, requireAuth, requireAdmin, asyncHandler(async (req, res) => {
+router.post('/entity-admins', dataLimiter, requireAuth, requireHrOrAdmin, asyncHandler(async (req, res) => {
   const entity = String(req.body?.entity || '').trim();
   if (!entity) throw badRequest('entity is required');
   const email = String(req.body?.hr_admin_email || '').trim();
@@ -362,21 +362,21 @@ router.post('/entity-admins', dataLimiter, requireAuth, requireAdmin, asyncHandl
 }));
 
 // Admin-only: remove one entity mapping.
-router.delete('/entity-admins/:entity', dataLimiter, requireAuth, requireAdmin, asyncHandler(async (req, res) => {
+router.delete('/entity-admins/:entity', dataLimiter, requireAuth, requireHrOrAdmin, asyncHandler(async (req, res) => {
   const ok = deleteEntityAdmin(String(req.params.entity || ''));
   logZeltAudit(req.user.id, 'zelt.entityAdmin.delete', { entity: req.params.entity });
   res.json({ deleted: ok });
 }));
 
 // Admin-only: force-send the monthly per-entity comp reports (DM each HR admin).
-router.post('/watch/comp-entity-report', dataLimiter, requireAuth, requireAdmin, asyncHandler(async (req, res) => {
+router.post('/watch/comp-entity-report', dataLimiter, requireAuth, requireHrOrAdmin, asyncHandler(async (req, res) => {
   const result = await sendCompEntityReportsIfDue({ force: true });
   logZeltAudit(req.user.id, 'zelt.watch.compEntity', { sent: result.sent, skipped: result.skipped || null });
   res.json(result);
 }));
 
 // Admin-only: force the 30-day employee reminder email scan (respects dedup).
-router.post('/watch/comp-emails', dataLimiter, requireAuth, requireAdmin, asyncHandler(async (req, res) => {
+router.post('/watch/comp-emails', dataLimiter, requireAuth, requireHrOrAdmin, asyncHandler(async (req, res) => {
   const result = await sendCompEntityEmailsIfDue({ force: true });
   logZeltAudit(req.user.id, 'zelt.watch.compEmails', { sent: result.sent, skipped: result.skipped || null });
   res.json(result);
@@ -385,7 +385,7 @@ router.post('/watch/comp-emails', dataLimiter, requireAuth, requireAdmin, asyncH
 // Admin-only: send a sample reminder email to preview it. Defaults to the
 // signed-in admin; an explicit `to` (e.g. the Resend account-owner address while
 // still on the sandbox sender) overrides so you can preview before verifying a domain.
-router.post('/watch/comp-email-test', dataLimiter, requireAuth, requireAdmin, asyncHandler(async (req, res) => {
+router.post('/watch/comp-email-test', dataLimiter, requireAuth, requireHrOrAdmin, asyncHandler(async (req, res) => {
   const override = req.body?.to && String(req.body.to).trim();
   if (override && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(override)) throw badRequest('to is not a valid email');
   const to = override || req.user?.email;
@@ -397,7 +397,7 @@ router.post('/watch/comp-email-test', dataLimiter, requireAuth, requireAdmin, as
 // Admin-only: DM a sample per-entity report to preview the Slack path. Defaults
 // to the signed-in admin's email (looked up in Slack); pass `to` for a different
 // work email or a raw Slack user ID.
-router.post('/watch/comp-dm-test', dataLimiter, requireAuth, requireAdmin, asyncHandler(async (req, res) => {
+router.post('/watch/comp-dm-test', dataLimiter, requireAuth, requireHrOrAdmin, asyncHandler(async (req, res) => {
   const to = (req.body?.to && String(req.body.to).trim()) || req.user?.email;
   const result = await sendCompDMTest(to);
   logZeltAudit(req.user.id, 'zelt.watch.compDmTest', { sent: result.sent, skipped: result.skipped || null });
@@ -405,14 +405,14 @@ router.post('/watch/comp-dm-test', dataLimiter, requireAuth, requireAdmin, async
 }));
 
 // Admin-only: company-wide compensatory ledger (additions + taken per employee).
-router.get('/comp-ledger', dataLimiter, requireAuth, requireAdmin, asyncHandler(async (req, res) => {
+router.get('/comp-ledger', dataLimiter, requireAuth, requireHrOrAdmin, asyncHandler(async (req, res) => {
   res.json(await getCompLedger());
 }));
 
 // Admin-only: which process/instance served this request + uptime.
-router.get('/debug/instance', dataLimiter, requireAuth, requireAdmin, (req, res) => {
+router.get('/debug/instance', dataLimiter, requireAuth, requireHrOrAdmin, (req, res) => {
   res.set('Cache-Control', 'no-store');
-  res.json({ bootId: BOOT_ID, pid: process.pid, uptimeSec: Math.round(process.uptime()) });
+  res.json({ bootId: BOOT_ID, pid: process.pid, uptimeSec: Math.round(process.uptime()), role: req.user.role });
 });
 
 // ---- Report builder (generate a filtered people report from live Zelt) ----

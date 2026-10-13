@@ -409,6 +409,29 @@ router.get('/comp-ledger', dataLimiter, requireAuth, requireHrOrAdmin, asyncHand
   res.json(await getCompLedger());
 }));
 
+// HR/admin: per-employee salary + Job Family from Zelt, to feed the OT calculator
+// without a salary sheet. Scope to entities (comma-joined) to bound the salary
+// fanout — a blank entity pulls company-wide (heavier). Reuses runReport so the
+// salary enrichment + sensitive gating are the same as the report builder.
+router.get('/ot-roster', dataLimiter, requireAuth, requireHrOrAdmin, asyncHandler(async (req, res) => {
+  const raw = typeof req.query.entity === 'string' ? req.query.entity : '';
+  const entities = raw.split(',').map((s) => s.trim()).filter(Boolean);
+  const filters = entities.length ? { entities } : {};
+  const rep = await runReport({ filters, fields: ['employeeId', 'name', 'department', 'entity', 'jobFamily', 'site', 'basicSalary', 'currency'], isAdmin: true })
+    .catch(zeltUpstream('OT roster fetch failed'));
+  const employees = rep.rows.map((r) => ({
+    employeeId: r.employeeId || r._employeeId || null,
+    name: r.name || r._name || '',
+    department: r.department || '',
+    entity: r.entity || '',
+    jobFamily: r.jobFamily || '',
+    basicSalary: r.basicSalary ?? null,
+    currency: r.currency || '',
+  })).filter((e) => e.employeeId);
+  logZeltAudit(req.user.id, 'zelt.otRoster', { entities: entities.join(',') || 'all', count: employees.length });
+  res.json({ employees, count: employees.length, currency: employees.find((e) => e.currency)?.currency || '' });
+}));
+
 // Admin-only: which process/instance served this request + uptime.
 router.get('/debug/instance', dataLimiter, requireAuth, requireHrOrAdmin, (req, res) => {
   res.set('Cache-Control', 'no-store');

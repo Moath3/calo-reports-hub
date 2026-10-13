@@ -327,6 +327,20 @@ export function buildMaster(sheets, companyTab, dateOrder = 'DMY', fileName = 'm
   return used.length ? { file: fileName, list: Object.values(byId), byId, sheets: used, rows: list.length, hasFamily } : null;
 }
 
+// Build a master directory from the Zelt OT-roster endpoint (same shape as
+// buildMaster, so the calculator uses it identically). Job Family feeds the
+// production guardrail; basic salary feeds OT amounts.
+export function buildMasterFromRoster(employees, fileName = 'Zelt') {
+  const byId = {}, list = []; let hasFamily = false;
+  for (const e of employees || []) {
+    const id = String(e.employeeId || '').trim(); if (!id) continue;
+    const fam = e.jobFamily || ''; if (fam) hasFamily = true;
+    const row = { id, name: e.name || '', dept: e.department || '', desig: '', status: 'Active', active: true, basic: e.basicSalary != null ? Number(e.basicSalary) : null, gross: null, hire: '', lwd: '', family: fam, sheet: 'Zelt' };
+    byId[id] = row; list.push(row);
+  }
+  return { file: fileName, list, byId, sheets: ['Zelt'], rows: list.length, hasFamily, source: 'zelt' };
+}
+
 // Core compute: rows + map (+ optional master) -> processed data D.
 export function compute({ rows, hdrIdx = 0, rowOffset = 0, map, master = null, sched = null, settings }) {
   const S = settings; const hasState = map.state >= 0;

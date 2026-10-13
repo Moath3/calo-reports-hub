@@ -387,6 +387,9 @@ class ApiClient {
   async zeltCompDmTest(to) {
     return this.request('/zelt/watch/comp-dm-test', { method: 'POST', body: JSON.stringify(to ? { to } : {}) });
   }
+  async zeltOtRoster(entity) {
+    return this.request('/zelt/ot-roster' + (entity ? `?entity=${encodeURIComponent(entity)}` : ''));
+  }
   // Saved OT calculator runs (history)
   async otRunsList() {
     return this.request('/ot-runs');

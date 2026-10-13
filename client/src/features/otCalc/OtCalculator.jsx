@@ -1,7 +1,7 @@
 import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { Icon, Btn, Card, Pill, KpiTile } from '../../components/ui';
-import { mergeSettings, DEFAULTS, ROLES, compute, buildView, PAYOPT, EXCL_REASONS } from './engine';
+import { mergeSettings, DEFAULTS, ROLES, compute, buildView, buildMasterFromRoster, PAYOPT, EXCL_REASONS } from './engine';
 import { readPunchFile, readMasterFile, readScheduleFile } from './files';
 import { COMPANIES, companyByKey, fmtMoney, DEFAULT_COMPANY } from './companies';
 import { buildOtWorkbook } from './exportXlsx';
@@ -38,6 +38,8 @@ export default function OtCalculator() {
   const [masterName, setMasterName] = useState('');
   const [sched, setSched] = useState(null);     // schedule fill map
   const [schedName, setSchedName] = useState('');
+  const [entityOpts, setEntityOpts] = useState([]);   // Zelt entities for the pull
+  const [pickedEntities, setPickedEntities] = useState([]);
   const [committed, setCommitted] = useState(null); // { punch, master, settings }
   const [tab, setTab] = useState('upload');
   const [busy, setBusy] = useState(false);
@@ -83,6 +85,23 @@ export default function OtCalculator() {
     catch (e) { setMsg({ tone: 'bad', text: e.message || 'Could not read the master file.' }); }
     finally { setBusy(false); }
   };
+  useEffect(() => { if (!canSeeSalary) return; api.zeltEntities().then((r) => setEntityOpts(r.entities || [])).catch(() => {}); }, [canSeeSalary]);
+
+  const pullFromZelt = async () => {
+    if (!pickedEntities.length) { setMsg({ tone: 'warn', text: 'Pick at least one Zelt entity to pull salary + job family.' }); return; }
+    setBusy(true); setMsg(null);
+    try {
+      const r = await api.zeltOtRoster(pickedEntities.join(','));
+      if (!r.employees?.length) { setMsg({ tone: 'warn', text: 'Zelt returned no employees for those entities.' }); return; }
+      const m = buildMasterFromRoster(r.employees);
+      setMaster(m); setMasterName(`Zelt · ${pickedEntities.length} ${pickedEntities.length === 1 ? 'entity' : 'entities'} · ${m.rows} staff${m.hasFamily ? ' · job family' : ''}`);
+      setMsg({ tone: 'ok', text: `Pulled ${m.rows} employees from Zelt (salary${m.hasFamily ? ' + job family' : ''}). Re-run Calculate.` });
+    } catch (e) {
+      const txt = /index is still building/i.test(e.message || '') ? 'Zelt people index is warming up — try again in a moment.' : (e.message || 'Zelt pull failed');
+      setMsg({ tone: 'bad', text: txt });
+    } finally { setBusy(false); }
+  };
+
   const pickSched = async (file) => {
     if (!file) return; setBusy(true); setMsg(null);
     try { const sc = await readScheduleFile(file); if (!sc) { setMsg({ tone: 'warn', text: 'No month tab (e.g. "September 2026") with ≥20 day columns was found in that schedule.' }); return; } setSched(sc); setSchedName(file.name); }
@@ -181,7 +200,7 @@ export default function OtCalculator() {
 
       {msg && <div style={{ marginBottom: 16, padding: '10px 14px', borderRadius: 10, background: 'var(--ink-50)', border: '1px solid var(--ink-200)', color: msg.tone === 'bad' ? 'var(--danger)' : msg.tone === 'warn' ? '#92700A' : 'var(--calo-700)', fontSize: 14, fontWeight: 600 }}>{msg.text}</div>}
 
-      {tab === 'upload' && <UploadRules {...{ punch, setPunch, pickPunch, master, masterName, setMaster, pickMaster, sched, schedName, setSched, pickSched, settings, setS, setSettings, calculate, busy, canSeeSalary }} />}
+      {tab === 'upload' && <UploadRules {...{ punch, setPunch, pickPunch, master, masterName, setMaster, pickMaster, sched, schedName, setSched, pickSched, settings, setS, setSettings, calculate, busy, canSeeSalary, entityOpts, pickedEntities, setPickedEntities, pullFromZelt }} />}
       {tab === 'dashboard' && D && <Dashboard {...{ view, comp, canSeeSalary, settings: committed.settings }} />}
       {tab === 'daily' && D && <DailyTab {...{ D, view, comp, settings: committed.settings, canSeeSalary }} />}
       {tab === 'summary' && D && <SummaryTab {...{ view, comp, settings: committed.settings, excl, setExcl, special, setSpecial, master: committed.master, canSeeSalary }} />}
@@ -306,7 +325,7 @@ function HistoryTab({ runs, loadingRuns, loadRuns, savedRun, setMsg }) {
 }
 
 // ---- Upload & Rules ----
-function UploadRules({ punch, setPunch, pickPunch, master, masterName, setMaster, pickMaster, sched, schedName, setSched, pickSched, settings, setS, setSettings, calculate, busy, canSeeSalary }) {
+function UploadRules({ punch, setPunch, pickPunch, master, masterName, setMaster, pickMaster, sched, schedName, setSched, pickSched, settings, setS, setSettings, calculate, busy, canSeeSalary, entityOpts, pickedEntities, setPickedEntities, pullFromZelt }) {
   return (
     <div style={{ display: 'grid', gap: 18 }}>
       <Card>
@@ -321,6 +340,17 @@ function UploadRules({ punch, setPunch, pickPunch, master, masterName, setMaster
               <FileBtn accept=".csv,.xlsx,.xls,.xlsm,.txt" label="Add salary master (optional)" onPick={pickMaster} />
               {master && <Chip name={`${masterName} · ${master.rows} rows`} onRemove={() => { setMaster(null); }} />}
               <div style={{ fontSize: 12, color: 'var(--ink-400)', marginTop: 6 }}>Salary stays in your browser. Needed for OT amounts + eligibility.</div>
+              <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px dashed var(--ink-200)' }}>
+                <label className="label">…or pull salary + Job Family from Zelt</label>
+                <select multiple className="input-field" style={{ height: 96, fontSize: 13 }} value={pickedEntities}
+                  onChange={(e) => setPickedEntities([...e.target.selectedOptions].map((o) => o.value))}>
+                  {entityOpts.map((en) => <option key={en} value={en}>{en}</option>)}
+                </select>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 8 }}>
+                  <Btn variant="secondary" size="sm" icon="Cloud" onClick={pullFromZelt} disabled={busy || !pickedEntities.length}>Pull from Zelt</Btn>
+                  <span style={{ fontSize: 12, color: 'var(--ink-400)' }}>{pickedEntities.length ? `${pickedEntities.length} selected` : 'pick entities (Ctrl/Cmd-click for several)'}</span>
+                </div>
+              </div>
             </div>
           )}
           <div>

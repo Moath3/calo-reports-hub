@@ -110,6 +110,16 @@ export default function EntityAdminsPage() {
       r.sent ? `Test email sent to ${r.to}. Check that inbox.` : `Not sent: ${shortErr(r)}`);
   };
 
+  const sendTestDM = () => {
+    const to = window.prompt(
+      'Send a sample per-entity report as a Slack DM to whom?\n\nEnter a work email (looked up in Slack) or a Slack user ID (U...).',
+      ''
+    );
+    if (to === null) return; // cancelled
+    return runAction('dmtest', () => api.zeltCompDmTest(to.trim() || undefined), (r) =>
+      r.sent ? `Test DM sent to ${r.to}. Check Slack.` : `Not sent: ${r.skipped || r.error || 'unknown'}`);
+  };
+
   const sendReminderEmails = () => runAction('emails', api.zeltWatchCompEmails.bind(api), (r) =>
     r.skipped ? `Not sent: ${r.skipped}` : `Sent ${r.sent} reminder email${r.sent === 1 ? '' : 's'}${r.skippedNoEmail ? ` · ${r.skippedNoEmail} had no work email` : ''}${r.errors ? ` · ${r.errors} failed` : ''}.`);
 
@@ -207,6 +217,9 @@ export default function EntityAdminsPage() {
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             <Btn variant="leaf" size="sm" icon="Send" onClick={sendEntityReports} disabled={busy === 'entity'}>
               {busy === 'entity' ? 'Sending…' : 'Send entity reports now'}
+            </Btn>
+            <Btn variant="secondary" size="sm" icon="MessageSquare" onClick={sendTestDM} disabled={busy === 'dmtest'}>
+              {busy === 'dmtest' ? 'Sending…' : 'Slack me a test'}
             </Btn>
             <Btn variant="secondary" size="sm" icon="Mail" onClick={sendTestEmail} disabled={busy === 'test'}>
               {busy === 'test' ? 'Sending…' : 'Email me a test'}

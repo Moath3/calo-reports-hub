@@ -686,6 +686,23 @@ export async function sendCompEmailTest(toEmail) {
   return sendCompExpiryReminder({ to: toEmail, name: 'there', additions });
 }
 
+// DM a SAMPLE per-entity report to one recipient so an admin can confirm the
+// Slack DM path (bot token + email→ID lookup) works now, without waiting for a
+// month that actually has expiring days. `recipient` is a work email (looked up
+// in Slack) or a raw Slack user ID. Ignores the monthly gate and dedup.
+export async function sendCompDMTest(recipient) {
+  if (!slackBotConfigured()) return { sent: false, skipped: 'SLACK_BOT_TOKEN not set' };
+  const r = String(recipient || '').trim();
+  if (!r) return { sent: false, skipped: 'no recipient' };
+  const sample = [
+    { name: 'Ahmed Ali', employeeId: 'FTE0123', expiringDays: 4, nextExpiry: '2027-01-31', daysToExpiry: 25 },
+    { name: 'Noura S', employeeId: 'FTE0456', expiringDays: 2, nextExpiry: new Date(Date.now() + 8 * DAY_MS).toISOString().slice(0, 10), daysToExpiry: 8 },
+  ];
+  const text = ':test_tube: *Sample per-entity comp report (test)*\n' + formatCompEntitySlack('Your Entity', sample, new Date().toISOString().slice(0, 10));
+  const isSlackId = /^[UW][A-Z0-9]{6,}$/.test(r);
+  return postSlackDM(isSlackId ? { slackUserId: r, text } : { email: r, text });
+}
+
 // ---- Scheduler ---------------------------------------------------------
 
 let schedulerStarted = false;

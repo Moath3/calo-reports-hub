@@ -31,10 +31,10 @@ import {
   zeltGetOauthOnly,
 } from '../services/zeltApi.js';
 import { botGet, botConfigured, getBotStatus } from '../services/zeltBot.js';
-import { listEntities, listDepartments, entitiesForDepartments, getBalancesForEntity, clearCaches, debugSampleUser, probeCompAdditionsAccess, debugEmployeeBalance, getCompLedger, debugStress } from '../services/zeltCompute.js';
+import { listEntities, listDepartments, entitiesForDepartments, getBalancesForEntity, clearCaches, debugSampleUser, probeCompAdditionsAccess, getCompLedger } from '../services/zeltCompute.js';
 import { runAudit } from '../services/zeltAudit.js';
 import { getMobility } from '../services/zeltMobility.js';
-import { getWatchState, runSnapshotAndDiff, sendWeeklyDigestIfDue, sendCompExpiryDigestIfDue, sendCompEntityReportsIfDue, sendCompEntityEmailsIfDue, sendCompEmailTest } from '../services/zeltWatcher.js';
+import { getWatchState, runSnapshotAndDiff, sendWeeklyDigestIfDue, sendCompExpiryDigestIfDue, sendCompEntityReportsIfDue, sendCompEntityEmailsIfDue, sendCompEmailTest, sendCompDMTest } from '../services/zeltWatcher.js';
 import { getDimensions, runReport, warmIndex, getIndexStatus, clearIndex, SENSITIVE_FIELDS } from '../services/zeltReport.js';
 
 const IS_PROD = process.env.NODE_ENV === 'production';
@@ -394,9 +394,14 @@ router.post('/watch/comp-email-test', dataLimiter, requireAuth, requireAdmin, as
   res.json({ ...result, to });
 }));
 
-// Admin-only: reconcile one employee's balance fields vs Zelt (?id=FTE####).
-router.get('/debug/emp', dataLimiter, requireAuth, requireAdmin, asyncHandler(async (req, res) => {
-  res.json(await debugEmployeeBalance(req.query.id || ''));
+// Admin-only: DM a sample per-entity report to preview the Slack path. Defaults
+// to the signed-in admin's email (looked up in Slack); pass `to` for a different
+// work email or a raw Slack user ID.
+router.post('/watch/comp-dm-test', dataLimiter, requireAuth, requireAdmin, asyncHandler(async (req, res) => {
+  const to = (req.body?.to && String(req.body.to).trim()) || req.user?.email;
+  const result = await sendCompDMTest(to);
+  logZeltAudit(req.user.id, 'zelt.watch.compDmTest', { sent: result.sent, skipped: result.skipped || null });
+  res.json({ ...result, to });
 }));
 
 // Admin-only: company-wide compensatory ledger (additions + taken per employee).
@@ -409,11 +414,6 @@ router.get('/debug/instance', dataLimiter, requireAuth, requireAdmin, (req, res)
   res.set('Cache-Control', 'no-store');
   res.json({ bootId: BOOT_ID, pid: process.pid, uptimeSec: Math.round(process.uptime()) });
 });
-
-// Admin-only: stress-test the balance endpoint (sequential vs parallel).
-router.get('/debug/stress', dataLimiter, requireAuth, requireAdmin, asyncHandler(async (req, res) => {
-  res.json(await debugStress(req.query.id || '', { count: Number(req.query.count) || 12, parallel: req.query.parallel === '1' }));
-}));
 
 // ---- Report builder (generate a filtered people report from live Zelt) ----
 

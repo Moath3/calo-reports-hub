@@ -27,12 +27,22 @@ const LS = {
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* quota/private */ } },
 };
 
+// Per-company (per-country) rule defaults. UAE = the original calculator's
+// values; KSA seeds the statutory 1.5x OT multiplier. All editable + saved per
+// company, so each country's OT rules + multiplier can differ ("per-group pay").
+function companyDefaults(key) {
+  const base = mergeSettings({});
+  if (String(key).startsWith('ksa')) base.otMult = 1.5; // KSA OT = 150% (confirm vs policy)
+  return base;
+}
+const loadRules = (key) => mergeSettings(LS.get('otcalc.rules.' + key, null) || companyDefaults(key));
+
 export default function OtCalculator() {
   const { user } = useAuth();
   const canSeeSalary = user?.role === 'admin' || user?.role === 'hr';
 
   const [company, setCompany] = useState(() => LS.get('otcalc.company', DEFAULT_COMPANY));
-  const [settings, setSettings] = useState(() => mergeSettings(LS.get('otcalc.rules.v1', {})));
+  const [settings, setSettings] = useState(() => loadRules(LS.get('otcalc.company', DEFAULT_COMPANY)));
   const [punch, setPunch] = useState(null);     // { fileName, rows, hdrIdx, rowOffset, headers, map }
   const [master, setMaster] = useState(null);   // built master directory
   const [masterName, setMasterName] = useState('');
@@ -44,6 +54,7 @@ export default function OtCalculator() {
   const [tab, setTab] = useState('upload');
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState(null);
+  const [filters, setFilters] = useState({ q: '', dept: '', otOnly: false });
   const [savedRun, setSavedRun] = useState(null);   // { id, status } of the run this calc is saved as
   const [runs, setRuns] = useState([]);             // saved-run list
   const [loadingRuns, setLoadingRuns] = useState(false);
@@ -54,8 +65,8 @@ export default function OtCalculator() {
   const [excl, setExcl] = useState(() => LS.get('otcalc.excl.' + company, {}));
   const [special, setSpecial] = useState(() => LS.get('otcalc.special.' + company, {}));
   useEffect(() => { setExcl(LS.get('otcalc.excl.' + company, {})); setSpecial(LS.get('otcalc.special.' + company, {})); }, [company]);
-  useEffect(() => { LS.set('otcalc.company', company); }, [company]);
-  useEffect(() => { LS.set('otcalc.rules.v1', settings); }, [settings]);
+  useEffect(() => { LS.set('otcalc.company', company); setSettings(loadRules(company)); }, [company]);
+  useEffect(() => { LS.set('otcalc.rules.' + company, settings); }, [settings, company]);
   useEffect(() => { LS.set('otcalc.excl.' + company, excl); }, [excl, company]);
   useEffect(() => { LS.set('otcalc.special.' + company, special); }, [special, company]);
 
@@ -200,27 +211,26 @@ export default function OtCalculator() {
 
       {msg && <div style={{ marginBottom: 16, padding: '10px 14px', borderRadius: 10, background: 'var(--ink-50)', border: '1px solid var(--ink-200)', color: msg.tone === 'bad' ? 'var(--danger)' : msg.tone === 'warn' ? '#92700A' : 'var(--calo-700)', fontSize: 14, fontWeight: 600 }}>{msg.text}</div>}
 
-      {tab === 'upload' && <UploadRules {...{ punch, setPunch, pickPunch, master, masterName, setMaster, pickMaster, sched, schedName, setSched, pickSched, settings, setS, setSettings, calculate, busy, canSeeSalary, entityOpts, pickedEntities, setPickedEntities, pullFromZelt }} />}
+      {tab === 'upload' && <UploadRules {...{ company, comp, punch, setPunch, pickPunch, master, masterName, setMaster, pickMaster, sched, schedName, setSched, pickSched, settings, setS, setSettings, calculate, busy, canSeeSalary, entityOpts, pickedEntities, setPickedEntities, pullFromZelt }} />}
+      {['daily', 'summary', 'exceptions', 'raw'].includes(tab) && D && (
+        <FilterBar filters={filters} setFilters={setFilters} departments={[...new Set((view.summary || []).map((s) => s.dept).filter(Boolean))].sort()} showOt={tab === 'daily' || tab === 'summary'} />
+      )}
       {tab === 'dashboard' && D && <Dashboard {...{ view, comp, canSeeSalary, settings: committed.settings }} />}
-      {tab === 'daily' && D && <DailyTab {...{ D, view, comp, settings: committed.settings, canSeeSalary }} />}
-      {tab === 'summary' && D && <SummaryTab {...{ view, comp, settings: committed.settings, excl, setExcl, special, setSpecial, master: committed.master, canSeeSalary }} />}
-      {tab === 'exceptions' && D && <ExceptionsTab {...{ D }} />}
-      {tab === 'raw' && D && <RawTab {...{ D }} />}
+      {tab === 'daily' && D && <DailyTab {...{ D, view, comp, settings: committed.settings, canSeeSalary, filters }} />}
+      {tab === 'summary' && D && <SummaryTab {...{ view, comp, settings: committed.settings, excl, setExcl, special, setSpecial, master: committed.master, canSeeSalary, filters }} />}
+      {tab === 'exceptions' && D && <ExceptionsTab {...{ D, filters }} />}
+      {tab === 'raw' && D && <RawTab {...{ D, filters }} />}
       {tab === 'history' && <HistoryTab {...{ runs, loadingRuns, loadRuns, savedRun, setMsg }} />}
     </div>
   );
 }
 
 // ---- Raw Transactions (the uploaded punches + how each was used) ----
-function RawTab({ D }) {
-  const [q, setQ] = useState('');
-  const rows = useMemo(() => {
-    const t = q.trim().toLowerCase();
-    return D.recs.filter((r) => !t || (r.name + ' ' + r.id + ' ' + r.dept).toLowerCase().includes(t));
-  }, [D, q]);
+function RawTab({ D, filters }) {
+  const rows = useMemo(() => D.recs.filter((r) => matchFilters({ name: r.name, id: r.id, dept: r.dept }, filters)), [D, filters]);
   return (
     <Card>
-      <Toolbar q={q} setQ={setQ} count={rows.length} label="punches" />
+      <CountLine count={rows.length} label="punches" />
       <div style={{ overflowX: 'auto' }}>
         <table style={tbl}>
           <thead><tr style={thr}>{['Row', 'ID', 'Name', 'Dept', 'Date', 'Time', 'Punch type', 'How used'].map((h, i) => <th key={i} style={th('left')}>{h}</th>)}</tr></thead>
@@ -325,7 +335,7 @@ function HistoryTab({ runs, loadingRuns, loadRuns, savedRun, setMsg }) {
 }
 
 // ---- Upload & Rules ----
-function UploadRules({ punch, setPunch, pickPunch, master, masterName, setMaster, pickMaster, sched, schedName, setSched, pickSched, settings, setS, setSettings, calculate, busy, canSeeSalary, entityOpts, pickedEntities, setPickedEntities, pullFromZelt }) {
+function UploadRules({ company, comp, punch, setPunch, pickPunch, master, masterName, setMaster, pickMaster, sched, schedName, setSched, pickSched, settings, setS, setSettings, calculate, busy, canSeeSalary, entityOpts, pickedEntities, setPickedEntities, pullFromZelt }) {
   return (
     <div style={{ display: 'grid', gap: 18 }}>
       <Card>
@@ -379,7 +389,7 @@ function UploadRules({ punch, setPunch, pickPunch, master, masterName, setMaster
       )}
 
       <Card>
-        <h3 style={h3}>2. Rules</h3>
+        <h3 style={h3}>2. Rules <span style={{ fontWeight: 500, color: 'var(--ink-400)', fontSize: 13 }}>— saved per company ({comp?.name})</span></h3>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(190px,1fr))', gap: 14 }}>
           <NumF label="Standard hours / day" v={settings.std} on={setS('std')} />
           <NumF label="Break (minutes)" v={settings.breakMin} on={setS('breakMin')} />
@@ -404,7 +414,7 @@ function UploadRules({ punch, setPunch, pickPunch, master, masterName, setMaster
         {canSeeSalary && settings.prodOnly && <div style={{ fontSize: 12.5, color: 'var(--ink-500)', marginTop: 10, lineHeight: 1.5 }}>Only paid when the salary master has a <b>Job Family</b> column. Employees whose family doesn't contain "{settings.prodFamily}" get hours but no OT pay. No Job Family column → the whole sheet is treated as eligible.</div>}
         <div style={{ display: 'flex', gap: 10, marginTop: 16, alignItems: 'center' }}>
           <Btn icon="Calculator" onClick={calculate} disabled={!punch || busy}>{busy ? 'Reading…' : 'Calculate'}</Btn>
-          <Btn variant="ghost" size="sm" onClick={() => setSettings(mergeSettings({}))}>Reset rules to defaults</Btn>
+          <Btn variant="ghost" size="sm" onClick={() => setSettings(companyDefaults(company))}>Reset {comp?.name} rules</Btn>
         </div>
       </Card>
     </div>
@@ -453,17 +463,13 @@ function Dashboard({ view, comp, canSeeSalary, settings }) {
 }
 
 // ---- Daily Attendance ----
-function DailyTab({ D, view, comp, settings, canSeeSalary }) {
-  const [q, setQ] = useState('');
+function DailyTab({ D, view, comp, settings, canSeeSalary, filters }) {
   const sal = canSeeSalary && !!view.summary.some((s) => s.rate != null);
   const rateById = useMemo(() => { const m = {}; view.summary.forEach((s) => { m[s.id] = s; }); return m; }, [view]);
-  const rows = useMemo(() => {
-    const t = q.trim().toLowerCase();
-    return D.daily.filter((d) => !t || (d.name + ' ' + d.id + ' ' + d.dept).toLowerCase().includes(t));
-  }, [D, q]);
+  const rows = useMemo(() => D.daily.filter((d) => matchFilters({ name: d.name, id: d.id, dept: d.dept, ot: d.ot }, filters)), [D, filters]);
   return (
     <Card>
-      <Toolbar q={q} setQ={setQ} count={rows.length} label="shifts" />
+      <CountLine count={rows.length} label="shifts" />
       <div style={{ overflowX: 'auto' }}>
         <table style={tbl}>
           <thead><tr style={thr}>{['ID', 'Name', 'Dept', 'Date', 'IN', 'OUT', 'Total', 'Break', 'Buffer', 'Normal', 'OT', ...(sal ? ['OT amt'] : []), 'Status', 'Notes'].map((h, i) => <th key={i} style={th(i > 5 && i < (sal ? 12 : 11) ? 'right' : 'left')}>{h}</th>)}</tr></thead>
@@ -495,10 +501,9 @@ function DailyTab({ D, view, comp, settings, canSeeSalary }) {
 }
 
 // ---- Employee Summary (with eligibility controls) ----
-function SummaryTab({ view, comp, settings, excl, setExcl, special, setSpecial, master, canSeeSalary }) {
-  const [q, setQ] = useState('');
+function SummaryTab({ view, comp, settings, excl, setExcl, special, setSpecial, master, canSeeSalary, filters }) {
   const sal = canSeeSalary && !!master;
-  const rows = useMemo(() => { const t = q.trim().toLowerCase(); return view.summary.filter((s) => !t || (s.name + ' ' + s.id + ' ' + s.dept).toLowerCase().includes(t)); }, [view, q]);
+  const rows = useMemo(() => view.summary.filter((s) => matchFilters(s, filters)), [view, filters]);
   const setPay = (id, pay) => setExcl((x) => { const n = { ...x }; const cur = typeof n[id] === 'string' ? { pay: 'none', reason: n[id] } : { ...(n[id] || {}) }; cur.pay = pay; if (pay === 'full') { delete cur.pay; delete cur.reason; } if (!cur.pay && !cur.reason && !cur.noElig) delete n[id]; else n[id] = cur; return n; });
   const setReason = (id, reason) => setExcl((x) => { const n = { ...x }; const cur = typeof n[id] === 'string' ? { pay: 'none', reason: n[id] } : { ...(n[id] || {}) }; cur.reason = reason; n[id] = cur; return n; });
   const toggleElig = (id, on) => setExcl((x) => { const n = { ...x }; const cur = typeof n[id] === 'string' ? { pay: 'none', reason: n[id] } : { ...(n[id] || {}) }; cur.noElig = !on; if (!cur.noElig) delete cur.noElig; if (!cur.pay && !cur.reason && !cur.noElig) delete n[id]; else n[id] = cur; return n; });
@@ -506,7 +511,7 @@ function SummaryTab({ view, comp, settings, excl, setExcl, special, setSpecial, 
 
   return (
     <Card>
-      <Toolbar q={q} setQ={setQ} count={rows.length} label="employees" />
+      <CountLine count={rows.length} label="employees" />
       <div style={{ overflowX: 'auto' }}>
         <table style={tbl}>
           <thead><tr style={thr}>{['ID', 'Name', 'Dept', 'Days', 'OT days', 'Total', 'Normal', 'OT', 'Miss IN', 'Miss OUT', 'Exc', ...(sal ? ['Basic', 'OT rate', 'Eligible', 'Allowance', 'Special', 'Payable'] : [])].map((h, i) => <th key={i} style={th('left')}>{h}</th>)}</tr></thead>
@@ -547,21 +552,16 @@ function SummaryTab({ view, comp, settings, excl, setExcl, special, setSpecial, 
 }
 
 // ---- Exceptions ----
-function ExceptionsTab({ D }) {
+function ExceptionsTab({ D, filters }) {
   const [sev, setSev] = useState('all');
-  const [q, setQ] = useState('');
-  const rows = useMemo(() => {
-    const t = q.trim().toLowerCase();
-    return D.exc.filter((x) => (sev === 'all' || x.sev === sev) && (!t || (x.name + ' ' + x.id + ' ' + x.type + ' ' + x.dept).toLowerCase().includes(t)))
-      .sort((a, b) => (a.sev === b.sev ? 0 : a.sev === 'action' ? -1 : 1));
-  }, [D, sev, q]);
+  const rows = useMemo(() => D.exc.filter((x) => (sev === 'all' || x.sev === sev) && matchFilters({ name: x.name, id: x.id, dept: x.dept }, filters)).sort((a, b) => (a.sev === b.sev ? 0 : a.sev === 'action' ? -1 : 1)), [D, sev, filters]);
   return (
     <Card>
       <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 12, flexWrap: 'wrap' }}>
-        <Toolbar q={q} setQ={setQ} count={rows.length} label="exceptions" inline />
         <select className="input-field" style={{ width: 'auto' }} value={sev} onChange={(e) => setSev(e.target.value)}>
           <option value="all">All priorities</option><option value="action">Action needed</option><option value="info">Info</option>
         </select>
+        <span style={{ fontSize: 13, color: 'var(--ink-500)' }}>{rows.length} exceptions</span>
       </div>
       <div style={{ overflowX: 'auto' }}>
         <table style={tbl}>
@@ -593,7 +593,30 @@ const tdR = { ...td, textAlign: 'right' };
 function NumF({ label, v, on, step }) { return (<div><label className="label">{label}</label><input className="input-field" type="number" step={step || '1'} value={v} onChange={(e) => on(e.target.value === '' ? '' : +e.target.value)} /></div>); }
 function TxtF({ label, v, on }) { return (<div><label className="label">{label}</label><input className="input-field" type="text" value={v} onChange={(e) => on(e.target.value)} /></div>); }
 function SelF({ label, v, on, opts }) { return (<div><label className="label">{label}</label><select className="input-field" value={v} onChange={(e) => on(e.target.value)}>{opts.map(([val, l]) => <option key={val} value={val}>{l}</option>)}</select></div>); }
-function Toolbar({ q, setQ, count, label, inline }) { return (<div style={{ display: inline ? 'contents' : 'flex', alignItems: 'center', gap: 10, marginBottom: inline ? 0 : 12 }}><input className="input-field" style={{ maxWidth: 280 }} placeholder="Search name / ID / dept…" value={q} onChange={(e) => setQ(e.target.value)} /><span style={{ fontSize: 13, color: 'var(--ink-500)' }}>{count} {label}</span></div>); }
+function CountLine({ count, label }) { return <div style={{ fontSize: 13, color: 'var(--ink-500)', marginBottom: 10 }}>{count} {label}</div>; }
+// Shared employee filter (search + department + OT-only).
+export function matchFilters(r, filters) {
+  const t = (filters?.q || '').trim().toLowerCase();
+  if (t && !(`${r.name || ''} ${r.id || ''} ${r.dept || ''}`).toLowerCase().includes(t)) return false;
+  if (filters?.dept && r.dept !== filters.dept) return false;
+  if (filters?.otOnly && !((r.ot > 0) || (r.otDays > 0))) return false;
+  return true;
+}
+function FilterBar({ filters, setFilters, departments, showOt }) {
+  const set = (k, v) => setFilters((f) => ({ ...f, [k]: v }));
+  const active = filters.q || filters.dept || filters.otOnly;
+  return (
+    <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center', marginBottom: 14 }}>
+      <input className="input-field" style={{ maxWidth: 240 }} placeholder="Search name / ID / dept…" value={filters.q} onChange={(e) => set('q', e.target.value)} />
+      <select className="input-field" style={{ width: 'auto' }} value={filters.dept} onChange={(e) => set('dept', e.target.value)}>
+        <option value="">All departments</option>
+        {departments.map((d) => <option key={d} value={d}>{d}</option>)}
+      </select>
+      {showOt && <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13, color: 'var(--ink-700)' }}><input type="checkbox" checked={filters.otOnly} onChange={(e) => set('otOnly', e.target.checked)} /> OT only</label>}
+      {active && <Btn variant="ghost" size="sm" icon="X" onClick={() => setFilters({ q: '', dept: '', otOnly: false })}>Clear</Btn>}
+    </div>
+  );
+}
 function Empty({ children }) { return <div style={{ color: 'var(--ink-400)', fontSize: 14, padding: '8px 0' }}>{children}</div>; }
 function Table({ cols, rows }) {
   return (<table style={tbl}><thead><tr style={thr}>{cols.map((c, i) => <th key={i} style={th(c[1] === 'r' ? 'right' : 'left')}>{c[0]}</th>)}</tr></thead>

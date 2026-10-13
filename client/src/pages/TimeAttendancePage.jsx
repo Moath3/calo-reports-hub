@@ -13,6 +13,11 @@ import OtCalculator from '../features/otCalc/OtCalculator';
  * Masters are uploaded each run (not stored). Country is resolved from the
  * attendance Department, falling back to the master entity/location.
  */
+// The OT Calculator is now the single attendance tool. The original server-side
+// Zelt-hours flow below is kept in source (flag off) so its per-country rollups,
+// Zelt roster auto-pull and AI narrative can be ported into the calculator later.
+const LEGACY_ZELT_HOURS = false;
+
 export default function TimeAttendancePage() {
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin' || user?.role === 'hr'; // OT calculator + salary = HR tier
@@ -127,21 +132,13 @@ export default function TimeAttendancePage() {
       <PageHeader
         eyebrow="HR · Time & Attendance"
         title="Overtime"
-        subtitle="Turn a biometric export into an overtime report. OT is counted after 9h/day for all countries (temporary flat rule)."
+        subtitle="Upload a biometric punch export, review overtime per employee, and (with a salary source) compute OT pay."
       />
 
-      {isAdmin && (
-        <div style={{ display: 'flex', gap: 8, marginBottom: 18, borderBottom: '1px solid var(--ink-100)', paddingBottom: 10, flexWrap: 'wrap' }}>
-          {[['zelt', 'Zelt Hours'], ['calc', 'OT Calculator']].map(([k, label]) => (
-            <button key={k} onClick={() => setTopTab(k)}
-              style={{ padding: '8px 16px', borderRadius: 'var(--r-pill)', border: 'none', cursor: 'pointer', fontWeight: 700, fontSize: 14, background: topTab === k ? 'var(--calo-500)' : 'transparent', color: topTab === k ? '#fff' : 'var(--ink-700)' }}>
-              {label}
-            </button>
-          ))}
-        </div>
-      )}
+      <OtCalculator />
 
-      <div style={{ display: topTab === 'zelt' ? 'flex' : 'none', flexDirection: 'column', gap: 20 }}>
+      {LEGACY_ZELT_HOURS && (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
         {error && <ErrorBanner message={error} onClose={() => setError(null)} />}
 
         {/* Upload + options */}
@@ -405,11 +402,6 @@ export default function TimeAttendancePage() {
           </>
         )}
       </div>
-
-      {isAdmin && (
-        <div style={{ display: topTab === 'calc' ? 'block' : 'none' }}>
-          <OtCalculator />
-        </div>
       )}
     </div>
   );

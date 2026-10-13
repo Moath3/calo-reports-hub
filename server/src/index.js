@@ -21,6 +21,7 @@ import exportRoutes from './routes/export.js';
 import dashboardRoutes from './routes/dashboard.js';
 import zeltRoutes from './routes/zelt.js';
 import tnaRoutes from './routes/timeAttendance.js';
+import otRunRoutes from './routes/otRuns.js';
 import diagnosticsRoutes from './routes/diagnostics.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -117,6 +118,7 @@ const apiRoutes = [
   ['/api/dashboard', dashboardRoutes],
   ['/api/zelt',      zeltRoutes],
   ['/api/time-attendance', tnaRoutes],
+  ['/api/ot-runs',   otRunRoutes],
   ['/api/diagnostics', diagnosticsRoutes],
 ];
 for (const [path, router] of apiRoutes) app.use(path, router);

@@ -12,6 +12,7 @@ const SUBTABS = [
   { k: 'daily', label: 'Daily Attendance', icon: 'CalendarDays' },
   { k: 'summary', label: 'Employee Summary', icon: 'Users' },
   { k: 'exceptions', label: 'Exceptions', icon: 'AlertTriangle' },
+  { k: 'history', label: 'OT History', icon: 'History', always: true },
 ];
 
 // ---- small format helpers ----
@@ -37,6 +38,9 @@ export default function OtCalculator() {
   const [tab, setTab] = useState('upload');
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState(null);
+  const [savedRun, setSavedRun] = useState(null);   // { id, status } of the run this calc is saved as
+  const [runs, setRuns] = useState([]);             // saved-run list
+  const [loadingRuns, setLoadingRuns] = useState(false);
 
   const comp = companyByKey(company);
 
@@ -80,7 +84,38 @@ export default function OtCalculator() {
     if (!punch) { setMsg({ tone: 'bad', text: 'Choose a punch/transaction file first.' }); return; }
     if (punch.map.id < 0 || punch.map.date < 0 || punch.map.time < 0) { setMsg({ tone: 'bad', text: 'Employee ID, Date and Time columns must all be mapped.' }); return; }
     setCommitted({ punch, master, settings });
+    setSavedRun(null);
     setMsg(null); setTab('dashboard');
+  };
+
+  const loadRuns = useCallback(async () => {
+    setLoadingRuns(true);
+    try { const r = await api.otRunsList(); setRuns(r.runs || []); }
+    catch (e) { setMsg({ tone: 'bad', text: e.message || 'Could not load saved runs.' }); }
+    finally { setLoadingRuns(false); }
+  }, []);
+  useEffect(() => { if (tab === 'history') loadRuns(); }, [tab, loadRuns]);
+
+  // Build the save payload from the current view (amounts/totals only, no raw basic pay).
+  const runPayload = () => ({
+    company, company_name: comp.name, currency: comp.cur,
+    label: `${comp.name} · ${D.period?.min || ''}${D.period?.max ? ' → ' + D.period.max : ''}`,
+    period_from: D.period?.min || '', period_to: D.period?.max || '',
+    totals: view.kpis, rules: committed.settings,
+    data: view.summary.map((s) => ({ id: s.id, name: s.name, dept: s.dept, desig: s.desig, days: s.days, otDays: s.otDays, ot: s.ot, amount: s.amount, special: s.special, total: s.total, factor: s.factor })),
+  });
+
+  const saveRun = async (asNew = false) => {
+    if (!D) return; setBusy(true); setMsg(null);
+    try {
+      const payload = runPayload();
+      let saved;
+      if (savedRun?.id && savedRun.status === 'draft' && !asNew) saved = await api.otRunUpdate(savedRun.id, payload);
+      else saved = await api.otRunSave(payload);
+      setSavedRun({ id: saved.id, status: saved.status });
+      setMsg({ tone: 'ok', text: `Run saved as a draft (${saved.label}). See the OT History tab.` });
+    } catch (e) { setMsg({ tone: 'bad', text: 'Save failed: ' + (e.message || e) }); }
+    finally { setBusy(false); }
   };
 
   const exportExcel = async () => {
@@ -104,13 +139,15 @@ export default function OtCalculator() {
           {COMPANIES.map((c) => <option key={c.key} value={c.key}>{c.name} ({c.cur})</option>)}
         </select>
         {D && <Pill tone="green" size="sm">{D.period?.min} → {D.period?.max}</Pill>}
+        {savedRun && <Pill tone={savedRun.status === 'final' ? 'blue' : 'amber'} size="sm">{savedRun.status === 'final' ? 'finalized' : 'draft saved'}</Pill>}
         <div style={{ flex: 1 }} />
+        {D && <Btn variant="secondary" size="sm" icon="Save" onClick={() => saveRun(false)} disabled={busy}>{savedRun?.status === 'draft' ? 'Update draft' : 'Save run'}</Btn>}
         {D && <Btn variant="secondary" size="sm" icon="Download" onClick={exportExcel} disabled={busy}>Export Excel</Btn>}
       </div>
 
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 18, borderBottom: '1px solid var(--ink-100)', paddingBottom: 10 }}>
         {SUBTABS.map((t) => {
-          const active = tab === t.k; const disabled = t.k !== 'upload' && !D;
+          const active = tab === t.k; const disabled = !t.always && t.k !== 'upload' && !D;
           return (
             <button key={t.k} onClick={() => !disabled && setTab(t.k)} disabled={disabled}
               style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 14px', borderRadius: 'var(--r-pill)', border: 'none', cursor: disabled ? 'not-allowed' : 'pointer', fontWeight: 700, fontSize: 13, background: active ? 'var(--calo-500)' : 'transparent', color: active ? '#fff' : disabled ? 'var(--ink-300)' : 'var(--ink-700)' }}>
@@ -127,6 +164,89 @@ export default function OtCalculator() {
       {tab === 'daily' && D && <DailyTab {...{ D, view, comp, settings: committed.settings, canSeeSalary }} />}
       {tab === 'summary' && D && <SummaryTab {...{ view, comp, settings: committed.settings, excl, setExcl, special, setSpecial, master: committed.master, canSeeSalary }} />}
       {tab === 'exceptions' && D && <ExceptionsTab {...{ D }} />}
+      {tab === 'history' && <HistoryTab {...{ runs, loadingRuns, loadRuns, savedRun, setMsg }} />}
+    </div>
+  );
+}
+
+// ---- OT History (saved runs) ----
+function HistoryTab({ runs, loadingRuns, loadRuns, savedRun, setMsg }) {
+  const [open, setOpen] = useState(null);     // loaded full run
+  const [busyId, setBusyId] = useState('');
+  const act = async (id, fn, okText) => {
+    setBusyId(id); setMsg(null);
+    try { await fn(); setMsg({ tone: 'ok', text: okText }); await loadRuns(); if (open?.id === id) setOpen(null); }
+    catch (e) { setMsg({ tone: 'bad', text: e.message || 'Action failed' }); }
+    finally { setBusyId(''); }
+  };
+  const openRun = async (id) => { try { setOpen(await api.otRunGet(id)); } catch (e) { setMsg({ tone: 'bad', text: e.message }); } };
+  const fmtWhen = (iso) => { if (!iso) return ''; const d = new Date(iso); return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString(); };
+
+  return (
+    <div style={{ display: 'grid', gap: 18 }}>
+      <Card>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, flexWrap: 'wrap', gap: 10 }}>
+          <h3 style={h3}>Saved runs <span style={{ color: 'var(--ink-400)', fontWeight: 600 }}>({runs.length})</span></h3>
+          <Btn variant="secondary" size="sm" icon="RefreshCw" onClick={loadRuns} disabled={loadingRuns}>Refresh</Btn>
+        </div>
+        {loadingRuns ? <Empty>Loading…</Empty> : runs.length === 0 ? <Empty>No saved runs yet. Run a month and hit "Save run" to keep it here.</Empty> : (
+          <div style={{ overflowX: 'auto' }}>
+            <table style={tbl}>
+              <thead><tr style={thr}>{['Label', 'Company', 'Period', 'OT hours', 'Payable', 'Status', 'Saved by', 'When', ''].map((h, i) => <th key={i} style={th('left')}>{h}</th>)}</tr></thead>
+              <tbody>
+                {runs.map((r) => (
+                  <tr key={r.id} style={{ borderTop: '1px solid var(--ink-100)', background: savedRun?.id === r.id ? 'var(--calo-50)' : 'transparent' }}>
+                    <td style={{ ...td, fontWeight: 600 }}>{r.label}</td>
+                    <td style={td}>{r.company_name}</td>
+                    <td style={td}>{r.period_from}{r.period_to ? ' → ' + r.period_to : ''}</td>
+                    <td style={tdR}>{r.totals?.otH != null ? (r.totals.otH / 60).toFixed(1) : '—'}</td>
+                    <td style={tdR}>{r.totals?.totalPayable != null ? fmtMoney(r.totals.totalPayable, 2) + ' ' + (r.currency || '') : '—'}</td>
+                    <td style={td}><Pill tone={r.status === 'final' ? 'blue' : 'amber'} size="sm">{r.status}</Pill></td>
+                    <td style={td}>{r.created_by_name}</td>
+                    <td style={td}>{fmtWhen(r.created_at)}</td>
+                    <td style={{ ...td, textAlign: 'right', whiteSpace: 'nowrap' }}>
+                      <Btn variant="ghost" size="sm" icon="Eye" onClick={() => openRun(r.id)}>Open</Btn>
+                      {r.status === 'draft' && <Btn variant="ghost" size="sm" icon="Lock" onClick={() => act(r.id, () => api.otRunFinalize(r.id), 'Run finalized (locked).')} disabled={busyId === r.id}>Finalize</Btn>}
+                      {r.status === 'draft' && <Btn variant="ghost" size="sm" icon="Trash2" onClick={() => { if (window.confirm('Delete this draft run?')) act(r.id, () => api.otRunDelete(r.id), 'Draft deleted.'); }} disabled={busyId === r.id} style={{ color: 'var(--danger)' }}>Delete</Btn>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+
+      {open && (
+        <Card>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+            <h3 style={h3}>{open.label} <Pill tone={open.status === 'final' ? 'blue' : 'amber'} size="sm">{open.status}</Pill></h3>
+            <Btn variant="ghost" size="sm" icon="X" onClick={() => setOpen(null)}>Close</Btn>
+          </div>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 14 }}>
+            <Pill tone="neutral" size="sm">{open.totals?.emps ?? '—'} employees</Pill>
+            <Pill tone="green" size="sm">{open.totals?.otH != null ? (open.totals.otH / 60).toFixed(1) : '—'} OT hours</Pill>
+            {open.totals?.totalPayable != null && <Pill tone="blue" size="sm">{fmtMoney(open.totals.totalPayable, 2)} {open.currency} payable</Pill>}
+          </div>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={tbl}>
+              <thead><tr style={thr}>{['ID', 'Name', 'Dept', 'Days', 'OT days', 'OT min', 'Allowance %', 'OT amount', 'Special', 'Payable'].map((h, i) => <th key={i} style={th('left')}>{h}</th>)}</tr></thead>
+              <tbody>
+                {(open.data || []).slice(0, 800).map((s, i) => (
+                  <tr key={i} style={{ borderTop: '1px solid var(--ink-100)' }}>
+                    <td style={td}>{s.id}</td><td style={td}>{s.name}</td><td style={td}>{s.dept}</td>
+                    <td style={tdR}>{s.days}</td><td style={tdR}>{s.otDays}</td><td style={tdR}>{s.ot}</td>
+                    <td style={tdR}>{Math.round((s.factor || 0) * 100)}%</td>
+                    <td style={tdR}>{s.amount != null ? fmtMoney(s.amount, 2) : '—'}</td>
+                    <td style={tdR}>{s.special || ''}</td>
+                    <td style={{ ...tdR, fontWeight: 700 }}>{s.total != null ? fmtMoney(s.total, 2) : '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      )}
     </div>
   );
 }

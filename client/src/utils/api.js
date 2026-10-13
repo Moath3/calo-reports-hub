@@ -387,6 +387,25 @@ class ApiClient {
   async zeltCompDmTest(to) {
     return this.request('/zelt/watch/comp-dm-test', { method: 'POST', body: JSON.stringify(to ? { to } : {}) });
   }
+  // Saved OT calculator runs (history)
+  async otRunsList() {
+    return this.request('/ot-runs');
+  }
+  async otRunGet(id) {
+    return this.request(`/ot-runs/${id}`);
+  }
+  async otRunSave(payload) {
+    return this.request('/ot-runs', { method: 'POST', body: JSON.stringify(payload) });
+  }
+  async otRunUpdate(id, payload) {
+    return this.request(`/ot-runs/${id}`, { method: 'PUT', body: JSON.stringify(payload) });
+  }
+  async otRunFinalize(id) {
+    return this.request(`/ot-runs/${id}/finalize`, { method: 'POST' });
+  }
+  async otRunDelete(id) {
+    return this.request(`/ot-runs/${id}`, { method: 'DELETE' });
+  }
   // Zelt report builder
   async zeltReportDimensions() {
     return this.request('/zelt/report/dimensions');

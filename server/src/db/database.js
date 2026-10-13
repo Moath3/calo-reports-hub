@@ -354,6 +354,27 @@ function initSchema() {
       slack_user_id TEXT,
       updated_at TEXT
     );
+
+    CREATE TABLE IF NOT EXISTS ot_runs (
+      id TEXT PRIMARY KEY,
+      company TEXT,
+      company_name TEXT,
+      currency TEXT,
+      label TEXT,
+      period_from TEXT,
+      period_to TEXT,
+      status TEXT DEFAULT 'draft',
+      source_file TEXT,
+      master_file TEXT,
+      totals TEXT,
+      rules TEXT,
+      data TEXT,
+      created_by INTEGER,
+      created_by_name TEXT,
+      created_at TEXT,
+      updated_at TEXT,
+      finalized_at TEXT
+    );
   `);
 
   // Create indexes individually (sql.js exec doesn't support multiple statements well with IF NOT EXISTS)
@@ -431,6 +452,56 @@ export function upsertEntityAdmin({ entity, hr_admin_name = '', hr_admin_email =
 
 export function deleteEntityAdmin(entity) {
   const { changes } = getDb().prepare('DELETE FROM zelt_entity_admins WHERE entity = ?').run(entity);
+  persistNow();
+  return changes > 0;
+}
+
+// --- Saved OT calculator runs (shared history, draft/final) -------------------
+// `totals`, `rules`, `data` are JSON strings. `data` holds per-employee summary
+// rows (amounts/totals, NOT raw basic pay). Admin/HR managed.
+export function listOtRuns() {
+  return getDb().prepare(
+    `SELECT id, company, company_name, currency, label, period_from, period_to, status,
+            source_file, master_file, totals, created_by, created_by_name, created_at, updated_at, finalized_at
+     FROM ot_runs ORDER BY datetime(created_at) DESC`
+  ).all();
+}
+export function getOtRun(id) {
+  return getDb().prepare('SELECT * FROM ot_runs WHERE id = ?').get(id);
+}
+export function createOtRun(r) {
+  const now = new Date().toISOString();
+  getDb().prepare(
+    `INSERT INTO ot_runs (id, company, company_name, currency, label, period_from, period_to, status,
+       source_file, master_file, totals, rules, data, created_by, created_by_name, created_at, updated_at, finalized_at)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+  ).run(
+    r.id, r.company || '', r.company_name || '', r.currency || '', r.label || '',
+    r.period_from || '', r.period_to || '', r.status || 'draft', r.source_file || '', r.master_file || '',
+    r.totals || '{}', r.rules || '{}', r.data || '[]', r.created_by ?? null, r.created_by_name || '', now, now, null,
+  );
+  persistNow();
+  return getOtRun(r.id);
+}
+export function updateOtRun(id, r) {
+  getDb().prepare(
+    `UPDATE ot_runs SET label=?, totals=?, rules=?, data=?, source_file=?, master_file=?,
+       period_from=?, period_to=?, company=?, company_name=?, currency=?, updated_at=? WHERE id=?`
+  ).run(
+    r.label || '', r.totals || '{}', r.rules || '{}', r.data || '[]', r.source_file || '', r.master_file || '',
+    r.period_from || '', r.period_to || '', r.company || '', r.company_name || '', r.currency || '', new Date().toISOString(), id,
+  );
+  persistNow();
+  return getOtRun(id);
+}
+export function finalizeOtRun(id) {
+  const now = new Date().toISOString();
+  getDb().prepare("UPDATE ot_runs SET status='final', finalized_at=?, updated_at=? WHERE id=?").run(now, now, id);
+  persistNow();
+  return getOtRun(id);
+}
+export function deleteOtRun(id) {
+  const { changes } = getDb().prepare('DELETE FROM ot_runs WHERE id = ?').run(id);
   persistNow();
   return changes > 0;
 }

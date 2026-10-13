@@ -1,7 +1,9 @@
 import { useState, useMemo, useCallback, useRef, useEffect, Fragment } from 'react';
 import api from '../utils/api';
+import { useAuth } from '../contexts/AuthContext';
 import { Icon, Btn, Card, Pill, Eyebrow, KpiTile, PageHeader } from '../components/ui';
 import { buildBrandedWorkbook } from '../utils/tnaWorkbook';
+import OtCalculator from '../features/otCalc/OtCalculator';
 
 /**
  * TimeAttendancePage — upload an attendance export (+ optional HR master files),
@@ -12,6 +14,9 @@ import { buildBrandedWorkbook } from '../utils/tnaWorkbook';
  * attendance Department, falling back to the master entity/location.
  */
 export default function TimeAttendancePage() {
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
+  const [topTab, setTopTab] = useState('zelt');         // 'zelt' (existing hours flow) | 'calc' (OT calculator, admin)
   const [attendance, setAttendance] = useState(null);   // File
   const [masters, setMasters] = useState([]);           // [{ file, sheet }]
   const [schedule, setSchedule] = useState(null);       // File — HR Ops monthly schedule
@@ -125,7 +130,18 @@ export default function TimeAttendancePage() {
         subtitle="Turn a biometric export into an overtime report. OT is counted after 9h/day for all countries (temporary flat rule)."
       />
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+      {isAdmin && (
+        <div style={{ display: 'flex', gap: 8, marginBottom: 18, borderBottom: '1px solid var(--ink-100)', paddingBottom: 10, flexWrap: 'wrap' }}>
+          {[['zelt', 'Zelt Hours'], ['calc', 'OT Calculator']].map(([k, label]) => (
+            <button key={k} onClick={() => setTopTab(k)}
+              style={{ padding: '8px 16px', borderRadius: 'var(--r-pill)', border: 'none', cursor: 'pointer', fontWeight: 700, fontSize: 14, background: topTab === k ? 'var(--calo-500)' : 'transparent', color: topTab === k ? '#fff' : 'var(--ink-700)' }}>
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+
+      <div style={{ display: topTab === 'zelt' ? 'flex' : 'none', flexDirection: 'column', gap: 20 }}>
         {error && <ErrorBanner message={error} onClose={() => setError(null)} />}
 
         {/* Upload + options */}
@@ -389,6 +405,12 @@ export default function TimeAttendancePage() {
           </>
         )}
       </div>
+
+      {isAdmin && (
+        <div style={{ display: topTab === 'calc' ? 'block' : 'none' }}>
+          <OtCalculator />
+        </div>
+      )}
     </div>
   );
 }

@@ -14,15 +14,22 @@ export function slackBotConfigured() {
   return Boolean(SLACK_BOT_TOKEN);
 }
 
-async function slackCall(method, body) {
+// `encoding`: 'json' for methods that accept a JSON body (chat.postMessage), or
+// 'form' for the older methods that only read x-www-form-urlencoded args
+// (users.lookupByEmail returns invalid_arguments if sent JSON).
+async function slackCall(method, body, encoding = 'json') {
   if (!SLACK_BOT_TOKEN) return { ok: false, error: 'SLACK_BOT_TOKEN not set' };
   const controller = new AbortController();
   const t = setTimeout(() => controller.abort(), TIMEOUT_MS);
   try {
+    const form = encoding === 'form';
     const res = await fetch(`${SLACK_API}/${method}`, {
       method: 'POST',
-      headers: { 'Authorization': `Bearer ${SLACK_BOT_TOKEN}`, 'Content-Type': 'application/json; charset=utf-8' },
-      body: JSON.stringify(body),
+      headers: {
+        'Authorization': `Bearer ${SLACK_BOT_TOKEN}`,
+        'Content-Type': form ? 'application/x-www-form-urlencoded' : 'application/json; charset=utf-8',
+      },
+      body: form ? new URLSearchParams(body).toString() : JSON.stringify(body),
       signal: controller.signal,
     });
     const json = await res.json().catch(() => ({ ok: false, error: `bad_response_${res.status}` }));
@@ -39,7 +46,7 @@ async function slackCall(method, body) {
 // (missing_scope, invalid_auth) instead of a blanket null.
 export async function slackLookupUserByEmail(email) {
   if (!email) return { id: null, error: 'no email' };
-  const r = await slackCall('users.lookupByEmail', { email });
+  const r = await slackCall('users.lookupByEmail', { email }, 'form');
   if (r.ok && r.user?.id) return { id: r.user.id, error: null };
   return { id: null, error: r.error || 'lookup failed' };
 }

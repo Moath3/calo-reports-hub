@@ -5,6 +5,7 @@ import { mergeSettings, DEFAULTS, ROLES, compute, buildView, PAYOPT, EXCL_REASON
 import { readPunchFile, readMasterFile } from './files';
 import { COMPANIES, companyByKey, fmtMoney, DEFAULT_COMPANY } from './companies';
 import { buildOtWorkbook } from './exportXlsx';
+import { buildOtPdf } from './exportPdf';
 
 const SUBTABS = [
   { k: 'upload', label: 'Upload & Rules', icon: 'Upload' },
@@ -119,6 +120,17 @@ export default function OtCalculator() {
     finally { setBusy(false); }
   };
 
+  const exportPdf = async () => {
+    if (!D) return; setBusy(true);
+    try {
+      const { jsPDF } = await import('jspdf');
+      const autoTable = (await import('jspdf-autotable')).default;
+      const doc = buildOtPdf(jsPDF, autoTable, { D, view, company: comp, showSalary: canSeeSalary, status: savedRun?.status });
+      doc.save(`${comp.name.replace(/\s+/g, '_')}_OT_${D.period?.min || 'period'}.pdf`);
+    } catch (e) { setMsg({ tone: 'bad', text: 'PDF export failed: ' + (e.message || e) }); }
+    finally { setBusy(false); }
+  };
+
   const exportExcel = async () => {
     if (!D) return; setBusy(true);
     try {
@@ -144,6 +156,7 @@ export default function OtCalculator() {
         <div style={{ flex: 1 }} />
         {D && <Btn variant="secondary" size="sm" icon="Save" onClick={() => saveRun(false)} disabled={busy}>{savedRun?.status === 'draft' ? 'Update draft' : 'Save run'}</Btn>}
         {D && <Btn variant="secondary" size="sm" icon="Download" onClick={exportExcel} disabled={busy}>Export Excel</Btn>}
+        {D && <Btn variant="secondary" size="sm" icon="FileText" onClick={exportPdf} disabled={busy}>Export PDF</Btn>}
       </div>
 
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 18, borderBottom: '1px solid var(--ink-100)', paddingBottom: 10 }}>

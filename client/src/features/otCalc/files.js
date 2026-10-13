@@ -2,7 +2,9 @@
 // engine stays dependency-free and unit-testable under node; this module is the
 // only place that touches XLSX. SheetJS is lazy-loaded (the calculator is
 // admin-only) so it stays out of the main app bundle.
-import { scoreHeader, detectMap, isBlank, buildMaster } from './engine.js';
+import { scoreHeader, detectMap, isBlank, buildMaster, buildSched, MONRX } from './engine.js';
+
+const MON = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
 
 let _XLSX = null;
 async function xlsx() { if (!_XLSX) _XLSX = await import('xlsx'); return _XLSX; }
@@ -64,4 +66,30 @@ export async function readMasterFile(file, companyTab, dateOrder) {
   const buf = await file.arrayBuffer();
   const sheets = await masterSheets(buf, file.name);
   return buildMaster(sheets, companyTab, dateOrder, file.name);
+}
+
+// Read a weekly/monthly schedule workbook (tabs named like "September 2026") and
+// build the fill map. Returns null if no month tab / schedule data is found.
+export async function readScheduleFile(file) {
+  const XLSX = await xlsx();
+  const buf = await file.arrayBuffer();
+  const out = []; let txt = null;
+  if (!/\.(xlsx|xls|xlsm)$/i.test(file.name)) { try { txt = new TextDecoder().decode(buf); } catch { /* binary */ } }
+  const mk = (sn, rows) => { const mm = sn.match(MONRX); if (!mm) return; out.push({ sn: sn.trim(), y: +mm[2], m: MON[mm[1].toLowerCase().slice(0, 3)], rows }); };
+  if (txt && /^## Sheet name:/m.test(txt)) {
+    const parts = txt.split(/^## Sheet name:[ \t]*(.*)$/m);
+    for (let i = 1; i < parts.length; i += 2) {
+      if (!MONRX.test(parts[i])) continue;
+      const wb = XLSX.read(parts[i + 1].replace(/^\s+/, ''), { type: 'string', raw: true });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      if (ws && ws['!ref']) mk(parts[i], XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: null }));
+    }
+  } else {
+    const names = XLSX.read(buf, { type: 'array', bookSheets: true }).SheetNames.filter((n) => MONRX.test(n));
+    if (names.length) {
+      const wb = XLSX.read(buf, { type: 'array', sheets: names });
+      names.forEach((sn) => { const ws = wb.Sheets[sn]; if (ws && ws['!ref']) mk(sn, XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: null })); });
+    }
+  }
+  return buildSched(out, file.name);
 }

@@ -2,7 +2,7 @@ import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { Icon, Btn, Card, Pill, KpiTile } from '../../components/ui';
 import { mergeSettings, DEFAULTS, ROLES, compute, buildView, PAYOPT, EXCL_REASONS } from './engine';
-import { readPunchFile, readMasterFile } from './files';
+import { readPunchFile, readMasterFile, readScheduleFile } from './files';
 import { COMPANIES, companyByKey, fmtMoney, DEFAULT_COMPANY } from './companies';
 import { buildOtWorkbook } from './exportXlsx';
 import { buildOtPdf } from './exportPdf';
@@ -36,6 +36,8 @@ export default function OtCalculator() {
   const [punch, setPunch] = useState(null);     // { fileName, rows, hdrIdx, rowOffset, headers, map }
   const [master, setMaster] = useState(null);   // built master directory
   const [masterName, setMasterName] = useState('');
+  const [sched, setSched] = useState(null);     // schedule fill map
+  const [schedName, setSchedName] = useState('');
   const [committed, setCommitted] = useState(null); // { punch, master, settings }
   const [tab, setTab] = useState('upload');
   const [busy, setBusy] = useState(false);
@@ -60,7 +62,7 @@ export default function OtCalculator() {
   // D recomputes only from the committed snapshot (click Calculate to commit).
   const D = useMemo(() => {
     if (!committed?.punch) return null;
-    try { return compute({ rows: committed.punch.rows, hdrIdx: committed.punch.hdrIdx, rowOffset: committed.punch.rowOffset, map: committed.punch.map, master: committed.master, settings: committed.settings }); }
+    try { return compute({ rows: committed.punch.rows, hdrIdx: committed.punch.hdrIdx, rowOffset: committed.punch.rowOffset, map: committed.punch.map, master: committed.master, sched: committed.sched, settings: committed.settings }); }
     catch (e) { console.error(e); return null; }
   }, [committed]);
 
@@ -81,11 +83,17 @@ export default function OtCalculator() {
     catch (e) { setMsg({ tone: 'bad', text: e.message || 'Could not read the master file.' }); }
     finally { setBusy(false); }
   };
+  const pickSched = async (file) => {
+    if (!file) return; setBusy(true); setMsg(null);
+    try { const sc = await readScheduleFile(file); if (!sc) { setMsg({ tone: 'warn', text: 'No month tab (e.g. "September 2026") with ≥20 day columns was found in that schedule.' }); return; } setSched(sc); setSchedName(file.name); }
+    catch (e) { setMsg({ tone: 'bad', text: e.message || 'Could not read the schedule file.' }); }
+    finally { setBusy(false); }
+  };
 
   const calculate = () => {
     if (!punch) { setMsg({ tone: 'bad', text: 'Choose a punch/transaction file first.' }); return; }
     if (punch.map.id < 0 || punch.map.date < 0 || punch.map.time < 0) { setMsg({ tone: 'bad', text: 'Employee ID, Date and Time columns must all be mapped.' }); return; }
-    setCommitted({ punch, master, settings });
+    setCommitted({ punch, master, sched, settings });
     setSavedRun(null);
     setMsg(null); setTab('dashboard');
   };
@@ -173,7 +181,7 @@ export default function OtCalculator() {
 
       {msg && <div style={{ marginBottom: 16, padding: '10px 14px', borderRadius: 10, background: 'var(--ink-50)', border: '1px solid var(--ink-200)', color: msg.tone === 'bad' ? 'var(--danger)' : msg.tone === 'warn' ? '#92700A' : 'var(--calo-700)', fontSize: 14, fontWeight: 600 }}>{msg.text}</div>}
 
-      {tab === 'upload' && <UploadRules {...{ punch, setPunch, pickPunch, master, masterName, setMaster, pickMaster, settings, setS, setSettings, calculate, busy, canSeeSalary }} />}
+      {tab === 'upload' && <UploadRules {...{ punch, setPunch, pickPunch, master, masterName, setMaster, pickMaster, sched, schedName, setSched, pickSched, settings, setS, setSettings, calculate, busy, canSeeSalary }} />}
       {tab === 'dashboard' && D && <Dashboard {...{ view, comp, canSeeSalary, settings: committed.settings }} />}
       {tab === 'daily' && D && <DailyTab {...{ D, view, comp, settings: committed.settings, canSeeSalary }} />}
       {tab === 'summary' && D && <SummaryTab {...{ view, comp, settings: committed.settings, excl, setExcl, special, setSpecial, master: committed.master, canSeeSalary }} />}
@@ -298,7 +306,7 @@ function HistoryTab({ runs, loadingRuns, loadRuns, savedRun, setMsg }) {
 }
 
 // ---- Upload & Rules ----
-function UploadRules({ punch, setPunch, pickPunch, master, masterName, setMaster, pickMaster, settings, setS, setSettings, calculate, busy, canSeeSalary }) {
+function UploadRules({ punch, setPunch, pickPunch, master, masterName, setMaster, pickMaster, sched, schedName, setSched, pickSched, settings, setS, setSettings, calculate, busy, canSeeSalary }) {
   return (
     <div style={{ display: 'grid', gap: 18 }}>
       <Card>
@@ -315,6 +323,11 @@ function UploadRules({ punch, setPunch, pickPunch, master, masterName, setMaster
               <div style={{ fontSize: 12, color: 'var(--ink-400)', marginTop: 6 }}>Salary stays in your browser. Needed for OT amounts + eligibility.</div>
             </div>
           )}
+          <div>
+            <FileBtn accept=".csv,.xlsx,.xls,.xlsm,.txt" label="Add schedule (optional)" onPick={pickSched} />
+            {sched && <Chip name={`${schedName} · ${sched.emps} staff, ${sched.cells} days`} onRemove={() => setSched(null)} />}
+            <div style={{ fontSize: 12, color: 'var(--ink-400)', marginTop: 6 }}>Month tabs (e.g. "September 2026"). Fills one missing punch when a recorded punch matches the scheduled start/end.</div>
+          </div>
         </div>
       </Card>
 

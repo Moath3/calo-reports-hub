@@ -2,7 +2,7 @@
 // engine.js is pure ESM with no browser deps, so it runs under node directly.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mergeSettings, detectMap, compute, buildMaster, buildView, roundOT, hourly, otAmt, payFactor, famMatches } from './engine.js';
+import { mergeSettings, detectMap, compute, buildMaster, buildView, buildSched, roundOT, hourly, otAmt, payFactor, famMatches } from './engine.js';
 
 const HEAD = ['Emp ID', 'Name', 'Department', 'Date', 'Time', 'Punch State'];
 const MAP = detectMap(HEAD);
@@ -94,6 +94,27 @@ test('no basic salary in master → factor 0, no OT amount', () => {
 test('roundOT respects minimum-OT threshold', () => {
   assert.equal(roundOT(5, mergeSettings({ minOT: 10 })), 0);
   assert.equal(roundOT(20, mergeSettings({ minOT: 10 })), 20);
+});
+
+test('schedule-fill: a Missing OUT is completed from a matching scheduled shift', () => {
+  // schedule: "September 2026" tab, header row of day numbers + ID col, EMP01 day 1 = 8am-5pm
+  const dayHeader = ['ID', ...Array.from({ length: 31 }, (_, i) => i + 1)];
+  const empRow = ['EMP01', '8am-5pm', ...Array(30).fill(null)];
+  const sched = buildSched([{ sn: 'September 2026', y: 2026, m: 9, rows: [dayHeader, empRow] }], 'sched.xlsx');
+  assert.ok(sched && sched.map['EMP01']['2026-09-01'] === '8am-5pm');
+
+  // punch file: EMP01 checks IN at 08:00 but never OUT → Missing OUT
+  const D = compute({
+    rows: [HEAD, ['EMP01', 'Ali', 'Kitchen', '2026-09-01', '08:00', 'Check In']],
+    hdrIdx: 0, map: MAP, settings: S, sched,
+  });
+  const d = D.daily[0];
+  assert.equal(d.issue, null);            // the Missing OUT was resolved
+  assert.equal(d.filled, 'OUT');
+  assert.equal(d.span, 540);              // 08:00 → scheduled 17:00 = 9h
+  assert.ok(d.flags.some((f) => f.type === 'Filled from schedule'));
+  // and no Missing OUT exception survives
+  assert.ok(!D.exc.some((x) => x.type === 'Missing OUT'));
 });
 
 test('famMatches: substring, case-insensitive, blank keyword passes all', () => {

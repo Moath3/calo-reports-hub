@@ -202,6 +202,89 @@ function evalShift(e, ps, hasState, stdMin, minTs, maxTs, S) {
   return row;
 }
 
+// ---- optional weekly/monthly schedule (fills ONE missing punch) ----
+export const MONRX = /^\s*(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sept?(?:ember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+(\d{4})\s*$/i;
+export const IDRX = /^[A-Za-z]{2,5}\d{2,}$/;
+
+// Build the schedule map from parsed month sheets ([{sn,y,m,rows}]). Pure: finds
+// the header row with ≥20 day-number columns, the ID column, and maps
+// id → { 'YYYY-MM-DD': shiftString }.
+export function buildSched(sheets, fileName = 'schedule') {
+  const map = {}, months = []; let cells = 0;
+  sheets.forEach((sh) => {
+    const rows = sh.rows; let hi = -1, dayCols = null;
+    for (let i = 0; i < Math.min(rows.length, 10); i++) {
+      const row = rows[i] || []; const dc = [];
+      row.forEach((v, j) => {
+        let d = null;
+        if (typeof v === 'number') { if (v >= 1 && v <= 31 && Math.floor(v) === v) d = v; else if (v > 40000) d = serialParts(v).date.d; }
+        else if (v != null && /^\s*\d{1,2}\s*$/.test(String(v))) d = +String(v).trim();
+        if (d && d <= 31) dc.push([j, d]);
+      });
+      if (dc.length >= 20) { hi = i; dayCols = dc; break; }
+    }
+    if (hi < 0) return;
+    const first = dayCols[0][0], cnt = {};
+    for (let k = hi + 1; k < rows.length; k++) { (rows[k] || []).forEach((v, j) => { if (j < first && v != null && IDRX.test(String(v).trim())) cnt[j] = (cnt[j] || 0) + 1; }); }
+    let idc = -1, best = 0; for (const j in cnt) if (cnt[j] > best) { best = cnt[j]; idc = +j; }
+    if (idc < 0) return; months.push(sh.sn);
+    for (let k = hi + 1; k < rows.length; k++) {
+      const row = rows[k] || []; const id = row[idc] == null ? '' : String(row[idc]).trim();
+      if (!IDRX.test(id)) continue;
+      dayCols.forEach(([j, d]) => { const v = row[j]; if (isBlank(v) || !validYMD(sh.y, sh.m, d)) return; (map[id] || (map[id] = {}))[sh.y + '-' + pad(sh.m) + '-' + pad(d)] = String(v).replace(/\s+/g, ' ').trim(); cells++; });
+    }
+  });
+  return months.length ? { file: fileName, map, months, cells, emps: Object.keys(map).length } : null;
+}
+
+// Parse a shift string like "8am-5pm" (overnight-aware) → { start, end } UTC sec.
+function parseShift(txt, dk) {
+  const m = String(txt).match(/^(\d{1,2})(?:[:.](\d{2}))?\s*([ap])\.?\s*m?\.?\s*(?:-|–|to)\s*(\d{1,2})(?:[:.](\d{2}))?\s*([ap])\.?\s*m?\.?$/i);
+  if (!m) return null;
+  const h = (hh, ap) => (+hh % 12) + (ap.toLowerCase() === 'p' ? 12 : 0);
+  const h1 = h(m[1], m[3]), m1 = +(m[2] || 0), h2 = h(m[4], m[6]), m2 = +(m[5] || 0);
+  if (+m[1] > 12 || +m[4] > 12 || m1 > 59 || m2 > 59) return null;
+  const base = Date.parse(dk + 'T00:00:00Z') / 1000;
+  const start = base + h1 * 3600 + m1 * 60; let end = base + h2 * 3600 + m2 * 60; if (end <= start) end += 86400;
+  return { start, end };
+}
+
+// Recompute a row's hours after filling a punch (same math as evalShift).
+function setHours(row, inTs, outTs, S) {
+  const stdMin = S.std * 60; row.inTs = inTs; row.outTs = outTs;
+  const span = Math.floor((outTs - inTs) / 60); const brk = span >= (+S.breakFrom || 0) * 60 ? (+S.breakMin || 0) : 0; const act = Math.max(0, span - brk);
+  row.span = span; row.brk = brk; row.actual = act; row.std = stdMin; row.normal = Math.min(act, stdMin);
+  row.buf = Math.min(Math.max(0, act - stdMin), Math.max(0, +S.buffer || 0)); row.ot = roundOT(act - stdMin - row.buf, S);
+  row.status = row.ot > 0 ? 'OT' : act >= stdMin ? 'Normal' : 'Below Standard';
+  row.overnight = tsDate(outTs) !== tsDate(inTs);
+  if (span > S.maxShift * 60) row.flags.push({ sev: 'action', type: 'Long shift', detail: 'Span of ' + Math.floor(span / 60) + 'h' + (span % 60) + 'm is over ' + S.maxShift + ' h.' });
+}
+
+// Fill ONE missing punch (Missing IN/OUT) from the schedule when a recorded punch
+// is within schedTol of the scheduled start/end. Mutates the row.
+function fillFromSchedule(row, sched, S) {
+  if (!(row.status === 'Missing IN' || row.status === 'Missing OUT')) return;
+  const outMissing = row.status === 'Missing OUT';
+  const base = outMissing ? row.inTs : row.outTs;
+  if (base == null) return;
+  const days = sched.map[row.id] || {}; const tol = (+S.schedTol || 4) * 3600; let best = null;
+  [tsDate(base), tsDate(base - 86400), tsDate(base + 86400)].forEach((dk) => {
+    const txt = days[dk]; if (!txt) return;
+    const sh = parseShift(txt, dk); if (!sh) return;
+    const diff = outMissing ? Math.abs(base - sh.start) : Math.abs(base - sh.end);
+    const ok = outMissing ? sh.end > base : sh.start < base;
+    const okIn = !outMissing && ok && (base - sh.start) <= (+S.win || 18) * 3600;
+    if (((outMissing && ok && diff <= tol) || okIn) && (!best || diff < best.diff)) best = { diff, sh, txt, dk };
+  });
+  if (!best) return;
+  const inTs = outMissing ? row.inTs : best.sh.start, outTs = outMissing ? best.sh.end : row.outTs;
+  row.filled = outMissing ? 'OUT' : 'IN'; row.schedText = best.txt; row.issue = null; row.issueDetail = '';
+  row.date = tsDate(inTs); row.month = row.date.slice(0, 7);
+  row.flags = (row.flags || []).filter((f) => f.type !== 'Long shift' && f.type !== 'Very short span');
+  setHours(row, inTs, outTs, S);
+  row.flags.unshift({ sev: 'info', type: 'Filled from schedule', detail: 'Check ' + row.filled + ' was missing; scheduled ' + (outMissing ? 'end' : 'start') + ' used (' + best.txt + ').' });
+}
+
 // Build the salary master directory from parsed sheets ([{sn, rows}]).
 export function buildMaster(sheets, companyTab, dateOrder = 'DMY', fileName = 'master') {
   const want = companyTab;
@@ -245,7 +328,7 @@ export function buildMaster(sheets, companyTab, dateOrder = 'DMY', fileName = 'm
 }
 
 // Core compute: rows + map (+ optional master) -> processed data D.
-export function compute({ rows, hdrIdx = 0, rowOffset = 0, map, master = null, settings }) {
+export function compute({ rows, hdrIdx = 0, rowOffset = 0, map, master = null, sched = null, settings }) {
   const S = settings; const hasState = map.state >= 0;
   const recs = [], invalid = [];
   const g = (r, k) => (map[k] >= 0 ? r[map[k]] : null);
@@ -309,6 +392,10 @@ export function compute({ rows, hdrIdx = 0, rowOffset = 0, map, master = null, s
     });
     clusters.forEach((ps) => daily.push(evalShift(emp[id], ps, hasState, stdMin, minTs, maxTs, S)));
   });
+
+  // optional schedule: fill a single missing punch where a recorded punch lines
+  // up with the scheduled start/end.
+  if (sched && sched.map) daily.forEach((d) => fillFromSchedule(d, sched, S));
 
   // period + date list
   const period = { min: Number.isFinite(minTs) ? tsDate(minTs) : '', max: Number.isFinite(maxTs) ? tsDate(maxTs) : '' };

@@ -2,7 +2,7 @@ import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import api from '../../utils/api';
 import { useAuth } from '../../contexts/AuthContext';
 import { Icon, Btn, Card, Pill, KpiTile } from '../../components/ui';
-import { mergeSettings, DEFAULTS, ROLES, compute, buildView, buildMasterFromRoster, PAYOPT, EXCL_REASONS } from './engine';
+import { mergeSettings, DEFAULTS, ROLES, compute, buildView, buildMasterFromRoster, cycleKey, PAYOPT, EXCL_REASONS } from './engine';
 import { readPunchFile, readMasterFile, readScheduleFile } from './files';
 import { COMPANIES, companyByKey, fmtMoney, DEFAULT_COMPANY } from './companies';
 import { buildOtWorkbook } from './exportXlsx';
@@ -55,7 +55,7 @@ export default function OtCalculator() {
   const [tab, setTab] = useState('upload');
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState(null);
-  const [filters, setFilters] = useState({ q: '', dept: '', otOnly: false, status: '', from: '', to: '' });
+  const [filters, setFilters] = useState({ q: '', dept: '', otOnly: false, status: '', from: '', to: '', month: '', loc: '' });
   const [savedRun, setSavedRun] = useState(null);   // { id, status } of the run this calc is saved as
   const [runs, setRuns] = useState([]);             // saved-run list
   const [loadingRuns, setLoadingRuns] = useState(false);
@@ -82,8 +82,11 @@ export default function OtCalculator() {
 
   const view = useMemo(() => {
     if (!D) return { summary: [], kpis: {}, byDept: [] };
-    return buildView(D, { settings: committed.settings, master: committed.master, excl, special, dec: comp.dec });
-  }, [D, committed, excl, special, comp.dec]);
+    // Picking a payroll month re-scopes the whole view (summary, dashboard, KPIs)
+    // to that cycle; the detail tabs filter their own rows the same way.
+    const Dv = filters.month ? { ...D, daily: D.daily.filter((d) => cycleKey(d.date, committed.settings.cycleStart) === filters.month) } : D;
+    return buildView(Dv, { settings: committed.settings, master: committed.master, excl, special, dec: comp.dec });
+  }, [D, committed, excl, special, comp.dec, filters.month]);
 
   const pickPunch = async (file) => {
     if (!file) return; setBusy(true); setMsg(null);
@@ -214,21 +217,28 @@ export default function OtCalculator() {
 
       {tab === 'upload' && <UploadRules {...{ company, comp, punch, setPunch, pickPunch, master, masterName, setMaster, pickMaster, sched, schedName, setSched, pickSched, settings, setS, setSettings, calculate, busy, canSeeSalary, entityOpts, pickedEntities, setPickedEntities, pullFromZelt }} />}
       {['daily', 'summary', 'exceptions', 'raw'].includes(tab) && D && (
-        <FilterBar filters={filters} setFilters={setFilters} departments={[...new Set((view.summary || []).map((s) => s.dept).filter(Boolean))].sort()} showOt={tab === 'daily' || tab === 'summary'} showStatus={tab === 'daily'} showDates={tab === 'daily' || tab === 'raw'} />
+        <FilterBar
+          filters={filters} setFilters={setFilters}
+          departments={[...new Set((view.summary || []).map((s) => s.dept).filter(Boolean))].sort()}
+          locations={[...new Set(D.recs.map((r) => r.loc).filter(Boolean))].sort()}
+          months={[...new Set(D.daily.map((d) => cycleKey(d.date, committed.settings.cycleStart)).filter(Boolean))].sort()}
+          showOt={tab === 'daily' || tab === 'summary'} showStatus={tab === 'daily'} showDates={tab === 'daily' || tab === 'raw'}
+          showMonth showLoc={tab === 'daily' || tab === 'raw'}
+        />
       )}
       {tab === 'dashboard' && D && <Dashboard {...{ view, comp, canSeeSalary, settings: committed.settings }} />}
       {tab === 'daily' && D && <DailyTab {...{ D, view, comp, settings: committed.settings, canSeeSalary, filters }} />}
       {tab === 'summary' && D && <SummaryTab {...{ view, comp, settings: committed.settings, excl, setExcl, special, setSpecial, master: committed.master, canSeeSalary, filters }} />}
       {tab === 'exceptions' && D && <ExceptionsTab {...{ D, filters }} />}
-      {tab === 'raw' && D && <RawTab {...{ D, filters }} />}
+      {tab === 'raw' && D && <RawTab {...{ D, filters, settings: committed.settings }} />}
       {tab === 'history' && <HistoryTab {...{ runs, loadingRuns, loadRuns, savedRun, setMsg }} />}
     </div>
   );
 }
 
 // ---- Raw Transactions (the uploaded punches + how each was used) ----
-function RawTab({ D, filters }) {
-  const rows = useMemo(() => D.recs.filter((r) => matchFilters({ name: r.name, id: r.id, dept: r.dept, date: r.dateKey }, filters)), [D, filters]);
+function RawTab({ D, filters, settings }) {
+  const rows = useMemo(() => D.recs.filter((r) => matchFilters({ name: r.name, id: r.id, dept: r.dept, date: r.dateKey, loc: r.loc, cycleMonth: cycleKey(r.dateKey, settings.cycleStart) }, filters)), [D, filters, settings]);
   return (
     <Card>
       <CountLine count={rows.length} label="punches" />
@@ -407,6 +417,8 @@ function UploadRules({ company, comp, punch, setPunch, pickPunch, master, master
           <SelF label="Ambiguous date order" v={settings.dateOrder} on={setS('dateOrder')} opts={[['DMY', 'Day / Month / Year'], ['MDY', 'Month / Day / Year']]} />
           <SelF label="Broken shifts" v={settings.lenient} on={setS('lenient')} opts={[['strict', 'Strict (flag, no hours)'], ['lenient', 'Lenient (use first+last)']]} />
           <SelF label="Hours display" v={settings.fmt} on={setS('fmt')} opts={[['hhmm', 'HH:MM'], ['dec', 'Decimal']]} />
+          <NumF label="Payroll cycle start day" v={settings.cycleStart} on={setS('cycleStart')} />
+          <SelF label="Show no-transaction rows" v={settings.showNoTx ? 'yes' : 'no'} on={(v) => setS('showNoTx')(v === 'yes')} opts={[['no', 'No'], ['yes', 'Yes (flag zero-punch staff)']]} />
           {canSeeSalary && <SelF label="Hourly rate basis" v={settings.rateBasis} on={setS('rateBasis')} opts={[['30', 'Basic ÷ 30 ÷ hpd'], ['365', 'Basic × 12 ÷ 365 ÷ hpd']]} />}
           {canSeeSalary && <NumF label="Rate hours / day (hpd)" v={settings.rateHours} on={setS('rateHours')} />}
           {canSeeSalary && <NumF label="OT multiplier" v={settings.otMult} on={setS('otMult')} step="0.05" />}
@@ -468,7 +480,22 @@ function Dashboard({ view, comp, canSeeSalary, settings }) {
 function DailyTab({ D, view, comp, settings, canSeeSalary, filters }) {
   const sal = canSeeSalary && !!view.summary.some((s) => s.rate != null);
   const rateById = useMemo(() => { const m = {}; view.summary.forEach((s) => { m[s.id] = s; }); return m; }, [view]);
-  const rows = useMemo(() => D.daily.filter((d) => matchFilters({ name: d.name, id: d.id, dept: d.dept, ot: d.ot, status: d.status, date: d.date }, filters)), [D, filters]);
+  const rows = useMemo(() => {
+    const base = D.daily.filter((d) => matchFilters({ name: d.name, id: d.id, dept: d.dept, ot: d.ot, status: d.status, date: d.date, loc: d.loc, cycleMonth: cycleKey(d.date, settings.cycleStart) }, filters));
+    if (!settings.showNoTx) return base;
+    // Zero-punch rows: an employee (in the directory) with no shift on an in-range day.
+    const started = new Set(D.daily.map((d) => d.id + '|' + d.date));
+    const noTx = [];
+    for (const e of Object.values(D.emp)) {
+      for (const date of D.dates) {
+        if (started.has(e.id + '|' + date)) continue;
+        if (matchFilters({ name: e.name, id: e.id, dept: e.dept, date, loc: e.loc, cycleMonth: cycleKey(date, settings.cycleStart) }, filters)) {
+          noTx.push({ id: e.id, name: e.name, dept: e.dept, loc: e.loc, date, status: 'No transactions', noTx: true });
+        }
+      }
+    }
+    return base.concat(noTx).sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : (a.id < b.id ? -1 : 1)));
+  }, [D, filters, settings]);
   return (
     <Card>
       <CountLine count={rows.length} label="shifts" />
@@ -511,18 +538,52 @@ function SummaryTab({ view, comp, settings, excl, setExcl, special, setSpecial, 
   const toggleElig = (id, on) => setExcl((x) => { const n = { ...x }; const cur = typeof n[id] === 'string' ? { pay: 'none', reason: n[id] } : { ...(n[id] || {}) }; cur.noElig = !on; if (!cur.noElig) delete cur.noElig; if (!cur.pay && !cur.reason && !cur.noElig) delete n[id]; else n[id] = cur; return n; });
   const setSp = (id, v) => setSpecial((s) => { const n = { ...s }; const num = +v; if (!num) delete n[id]; else n[id] = num; return n; });
 
+  // Bulk-apply eligibility / allowance / special to selected employees.
+  const [sel, setSel] = useState(() => new Set());
+  const [bulk, setBulk] = useState({ elig: '', pay: '', reason: '', special: '' });
+  const toggleSel = (id) => setSel((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const allSel = rows.length > 0 && rows.every((r) => sel.has(r.id));
+  const toggleAll = () => setSel(() => (allSel ? new Set() : new Set(rows.map((r) => r.id))));
+  const applyBulk = () => {
+    const ids = [...sel]; if (!ids.length) return;
+    setExcl((x) => {
+      const n = { ...x };
+      for (const id of ids) {
+        const cur = typeof n[id] === 'string' ? { pay: 'none', reason: n[id] } : { ...(n[id] || {}) };
+        if (bulk.elig === 'no') cur.noElig = true; if (bulk.elig === 'yes') delete cur.noElig;
+        if (bulk.pay) { if (bulk.pay === 'full') { delete cur.pay; delete cur.reason; } else cur.pay = bulk.pay; }
+        if (bulk.reason) cur.reason = bulk.reason;
+        if (!cur.pay && !cur.reason && !cur.noElig) delete n[id]; else n[id] = cur;
+      }
+      return n;
+    });
+    if (bulk.special !== '') setSpecial((s) => { const n = { ...s }; const num = +bulk.special; for (const id of ids) { if (!num) delete n[id]; else n[id] = num; } return n; });
+  };
+
   return (
     <Card>
       <CountLine count={rows.length} label="employees" />
+      {sal && sel.size > 0 && (
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 12, padding: '10px 12px', background: 'var(--calo-50)', border: '1px solid var(--calo-100)', borderRadius: 10 }}>
+          <strong style={{ fontSize: 13 }}>{sel.size} selected</strong>
+          <select className="input-field" style={{ width: 'auto', fontSize: 12 }} value={bulk.elig} onChange={(e) => setBulk((b) => ({ ...b, elig: e.target.value }))}><option value="">Eligibility…</option><option value="yes">OT eligible</option><option value="no">Not eligible</option></select>
+          <select className="input-field" style={{ width: 'auto', fontSize: 12 }} value={bulk.pay} onChange={(e) => setBulk((b) => ({ ...b, pay: e.target.value }))}><option value="">Allowance…</option>{PAYOPT.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>
+          <select className="input-field" style={{ width: 'auto', fontSize: 12 }} value={bulk.reason} onChange={(e) => setBulk((b) => ({ ...b, reason: e.target.value }))}><option value="">Reason…</option>{EXCL_REASONS.map((r) => <option key={r} value={r}>{r}</option>)}</select>
+          <input className="input-field" style={{ width: 90, fontSize: 12 }} type="number" placeholder="Special" value={bulk.special} onChange={(e) => setBulk((b) => ({ ...b, special: e.target.value }))} />
+          <Btn size="sm" icon="Check" onClick={applyBulk}>Apply to {sel.size}</Btn>
+          <Btn variant="ghost" size="sm" onClick={() => setSel(new Set())}>Clear</Btn>
+        </div>
+      )}
       <div style={{ overflowX: 'auto' }}>
         <table style={tbl}>
-          <thead><tr style={thr}>{['ID', 'Name', 'Dept', 'Days', 'OT days', 'Total', 'Normal', 'OT', 'Miss IN', 'Miss OUT', 'Exc', ...(sal ? ['Basic', 'OT rate', 'Eligible', 'Allowance', 'Special', 'Payable'] : [])].map((h, i) => <th key={i} style={th('left')}>{h}</th>)}</tr></thead>
+          <thead><tr style={thr}>{[...(sal ? ['sel'] : []), 'ID', 'Name', 'Dept', 'Days', 'OT days', 'Total', 'Normal', 'OT', 'Miss IN', 'Miss OUT', 'Exc', ...(sal ? ['Basic', 'OT rate', 'Eligible', 'Allowance', 'Special', 'Payable'] : [])].map((h, i) => <th key={i} style={th('left')}>{h === 'sel' ? <input type="checkbox" checked={allSel} onChange={toggleAll} title="Select all" /> : h}</th>)}</tr></thead>
           <tbody>
             {rows.slice(0, 600).map((s) => {
               const ex = typeof excl[s.id] === 'string' ? { pay: 'none', reason: excl[s.id] } : (excl[s.id] || {});
               const pay = ex.pay || 'full'; const noBasic = sal && !(s.basic > 0); const prodEx = s.prodExcluded;
               return (
-                <tr key={s.id} style={{ borderTop: '1px solid var(--ink-100)' }}>
+                <tr key={s.id} style={{ borderTop: '1px solid var(--ink-100)', background: sel.has(s.id) ? 'var(--calo-50)' : 'transparent' }}>
+                  {sal && <td style={td}><input type="checkbox" checked={sel.has(s.id)} onChange={() => toggleSel(s.id)} /></td>}
                   <td style={td}>{s.id}</td><td style={td}>{s.name}</td><td style={td}>{s.dept}</td>
                   <td style={tdR}>{s.days}</td><td style={tdR}>{s.otDays}</td>
                   <td style={tdR}>{fmtH(s.span, settings)}</td><td style={tdR}>{fmtH(s.normal, settings)}</td>
@@ -605,18 +666,34 @@ export function matchFilters(r, filters) {
   if (filters?.status && r.status && r.status !== filters.status) return false; // shift status (daily only)
   if (filters?.from && r.date && r.date < filters.from) return false;           // date range (rows with a date)
   if (filters?.to && r.date && r.date > filters.to) return false;
+  if (filters?.loc && r.loc && r.loc !== filters.loc) return false;
+  if (filters?.month && r.cycleMonth && r.cycleMonth !== filters.month) return false; // payroll cycle
   return true;
 }
-function FilterBar({ filters, setFilters, departments, showOt, showStatus, showDates }) {
+const MONLBL = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+function monthLabel(mk) { const [y, m] = String(mk).split('-'); return m ? `${MONLBL[+m] || m} ${y}` : mk; }
+function FilterBar({ filters, setFilters, departments, locations, months, showOt, showStatus, showDates, showMonth, showLoc }) {
   const set = (k, v) => setFilters((f) => ({ ...f, [k]: v }));
-  const active = filters.q || filters.dept || filters.otOnly || filters.status || filters.from || filters.to;
+  const active = filters.q || filters.dept || filters.otOnly || filters.status || filters.from || filters.to || filters.month || filters.loc;
   return (
     <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center', marginBottom: 14 }}>
       <input className="input-field" style={{ maxWidth: 220 }} placeholder="Search name / ID / dept…" value={filters.q} onChange={(e) => set('q', e.target.value)} />
+      {showMonth && months && months.length > 1 && (
+        <select className="input-field" style={{ width: 'auto' }} value={filters.month} onChange={(e) => set('month', e.target.value)} title="Payroll cycle">
+          <option value="">All months</option>
+          {months.map((mk) => <option key={mk} value={mk}>{monthLabel(mk)}</option>)}
+        </select>
+      )}
       <select className="input-field" style={{ width: 'auto' }} value={filters.dept} onChange={(e) => set('dept', e.target.value)}>
         <option value="">All departments</option>
         {departments.map((d) => <option key={d} value={d}>{d}</option>)}
       </select>
+      {showLoc && locations && locations.length > 0 && (
+        <select className="input-field" style={{ width: 'auto' }} value={filters.loc} onChange={(e) => set('loc', e.target.value)}>
+          <option value="">All locations</option>
+          {locations.map((l) => <option key={l} value={l}>{l}</option>)}
+        </select>
+      )}
       {showStatus && (
         <select className="input-field" style={{ width: 'auto' }} value={filters.status} onChange={(e) => set('status', e.target.value)}>
           <option value="">All statuses</option>
@@ -626,7 +703,7 @@ function FilterBar({ filters, setFilters, departments, showOt, showStatus, showD
       {showDates && <input className="input-field" type="date" style={{ width: 'auto' }} value={filters.from} onChange={(e) => set('from', e.target.value)} title="From date" />}
       {showDates && <input className="input-field" type="date" style={{ width: 'auto' }} value={filters.to} onChange={(e) => set('to', e.target.value)} title="To date" />}
       {showOt && <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13, color: 'var(--ink-700)' }}><input type="checkbox" checked={filters.otOnly} onChange={(e) => set('otOnly', e.target.checked)} /> OT only</label>}
-      {active && <Btn variant="ghost" size="sm" icon="X" onClick={() => setFilters({ q: '', dept: '', otOnly: false, status: '', from: '', to: '' })}>Clear</Btn>}
+      {active && <Btn variant="ghost" size="sm" icon="X" onClick={() => setFilters({ q: '', dept: '', otOnly: false, status: '', from: '', to: '', month: '', loc: '' })}>Clear</Btn>}
     </div>
   );
 }

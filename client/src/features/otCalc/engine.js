@@ -42,6 +42,20 @@ function serialParts(n) {
   return { date: { y: t.getUTCFullYear(), m: t.getUTCMonth() + 1, d: t.getUTCDate() }, sec: t.getUTCHours() * 3600 + t.getUTCMinutes() * 60 + t.getUTCSeconds() };
 }
 export function tsDate(ts) { const d = new Date(ts * 1000); return d.getUTCFullYear() + '-' + pad(d.getUTCMonth() + 1) + '-' + pad(d.getUTCDate()); }
+
+// Payroll-cycle month key for a YYYY-MM-DD date. cycleStart<=1 → calendar month;
+// otherwise a day on/after cycleStart rolls into the next month's cycle
+// (start=16: 16 Sep–15 Oct → '2026-10').
+export function cycleKey(ymd, cycleStart = 1) {
+  if (!ymd) return '';
+  const [y, m, d] = String(ymd).split('-').map(Number);
+  if (!(y && m && d)) return String(ymd).slice(0, 7);
+  const cs = +cycleStart || 1;
+  if (cs <= 1) return `${y}-${pad(m)}`;
+  let yy = y, mm = m;
+  if (d >= cs) { mm += 1; if (mm > 12) { mm = 1; yy += 1; } }
+  return `${yy}-${pad(mm)}`;
+}
 export function tsTime(ts) { const d = new Date(ts * 1000); return pad(d.getUTCHours()) + ':' + pad(d.getUTCMinutes()); }
 
 // Parse a date and/or time value from a cell. Returns {date,sec,badDate,badTime}.

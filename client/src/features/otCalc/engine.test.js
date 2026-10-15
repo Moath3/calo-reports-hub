@@ -2,7 +2,7 @@
 // engine.js is pure ESM with no browser deps, so it runs under node directly.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mergeSettings, detectMap, compute, buildMaster, buildView, buildSched, roundOT, hourly, otAmt, payFactor, famMatches } from './engine.js';
+import { mergeSettings, detectMap, compute, buildMaster, buildView, buildSched, cycleKey, roundOT, hourly, otAmt, payFactor, famMatches } from './engine.js';
 
 const HEAD = ['Emp ID', 'Name', 'Department', 'Date', 'Time', 'Punch State'];
 const MAP = detectMap(HEAD);
@@ -115,6 +115,13 @@ test('schedule-fill: a Missing OUT is completed from a matching scheduled shift'
   assert.ok(d.flags.some((f) => f.type === 'Filled from schedule'));
   // and no Missing OUT exception survives
   assert.ok(!D.exc.some((x) => x.type === 'Missing OUT'));
+});
+
+test('cycleKey: payroll-cycle month (calendar + mid-month start + year rollover)', () => {
+  assert.equal(cycleKey('2026-09-10', 1), '2026-09');   // calendar month
+  assert.equal(cycleKey('2026-09-16', 16), '2026-10');  // on/after start → next cycle
+  assert.equal(cycleKey('2026-09-15', 16), '2026-09');  // before start → same cycle
+  assert.equal(cycleKey('2026-12-20', 16), '2027-01');  // December rolls to next year
 });
 
 test('famMatches: substring, case-insensitive, blank keyword passes all', () => {

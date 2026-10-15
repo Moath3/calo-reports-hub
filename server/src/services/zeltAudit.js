@@ -454,15 +454,9 @@ export async function runAudit({ forceRefresh = false } = {}) {
     })
     .filter(Boolean);
 
-  // 17. Live users with placeholder emails
-  out.checks.placeholderEmails = users
-    .filter(u => isLive(u) &&
-                /@dummy|@noreply|tbu/i.test(u?.emailAddress || ''))
-    .map(u => ({
-      userId: u.userId, employeeId: readEmployeeId(u), name: u.displayName,
-      email: u.emailAddress,
-      suggestion: 'Replace with real email — placeholder breaks notifications & SSO.',
-    }));
+  // Placeholder/dummy emails are intentionally NOT flagged: 3rd-party production
+  // workers legitimately carry @dummy/@noreply addresses (managers run their
+  // accounts), so the check was pure noise against the data-structure signal.
 
   // Department list with frequency — "needs review" rather than "vs 18 expected"
   const deptCounts = {};

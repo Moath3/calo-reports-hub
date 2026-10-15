@@ -30,7 +30,6 @@ const SEVERITY = {
   brandDivisionAsEntity: 'info',
   legacySiteAssigned: 'high',
   currencyMismatch: 'high',
-  placeholderEmails: 'high',
   // Cross-source checks (vs uploaded masterfiles)
   zeltNotInMasterfile: 'high',
   mfStatusMismatch: 'high',
@@ -93,7 +92,6 @@ const LABELS = {
   currencyMismatch: 'Entity currency mismatch with country (e.g. KSA in GBP)',
   rareJobTitles: 'Job titles used by only 1 employee (typos / not in mastersheet)',
   duplicateJobTitleVariants: 'Job title case/spacing duplicates (LINE COOK vs Line Cook)',
-  placeholderEmails: 'Active users with @dummy / @noreply emails',
   brandDivisionAsEntity: 'Brand-division name used as Entity (should be Organization tag)',
   unclassifiedCountry: 'Country can\'t be derived from entity/site',
   unclassifiedOrganization: 'Organization can\'t be derived (Basecamp / MP-XX)',
@@ -124,6 +122,23 @@ const LABELS = {
   nonCanonicalTitle: 'Non-catalog job title',
 };
 
+// "Not following our data structure" — the canonical-conformance checks (approved
+// depts/BLs/entities/titles/families/levels/currencies/country). The data-health
+// view foregrounds these by default; missing-field/duplicate/lifecycle/inventory
+// checks are the secondary "all checks" view.
+const STRUCTURE_KEYS = new Set([
+  'retiredDepartment', 'unapprovedDepartment', 'unapprovedEntity', 'brandDivisionAsEntity',
+  'currencyMismatch', 'legacySiteAssigned', 'unclassifiedCountry', 'unclassifiedOrganization',
+  'nonCanonicalTitle', 'titleDeptMismatch', 'duplicateJobTitleVariants', 'rareJobTitles',
+  'mfRetiredBusinessLine', 'mfInvalidBusinessLine', 'mfRetiredDepartment', 'mfInvalidDepartment',
+  'mfFamilyLevelMismatch', 'mfDeptFamilyMismatch', 'mfHqProductionClash', 'mfRetailBranch',
+  'mfTeamNotInDept', 'mfTitleMismatch', 'mfTitleVariant', 'mfEntityCountry',
+]);
+
+// The two-way Zelt↔masterfile roster reconciliation renders in its own panel,
+// never as a check card in the grid.
+const RECON_KEYS = ['zeltNotInMasterfile', 'masterfileNotInZelt'];
+
 export default function ZeltAuditPage() {
   const { user } = useAuth();
   const [reportRaw, setReportRaw] = useState(null);
@@ -133,6 +148,7 @@ export default function ZeltAuditPage() {
   const [masterfiles, setMasterfiles] = useState(() => loadMasterfilesFromStorage());
   const [mfError, setMfError] = useState(null);
   const [mfBusy, setMfBusy] = useState(false);
+  const [view, setView] = useState('structure'); // 'structure' = only structure-conformance issues; 'all' = every check
   // Watch state (snapshots) bubbled up from WatcherCard so the health card
   // can show the flagged-people trend without a second /zelt/watch request.
   const [watchData, setWatchData] = useState(null);
@@ -214,13 +230,21 @@ export default function ZeltAuditPage() {
   if (error) return <Wrap><Header /><div style={errBanner}>{error}</div><WatcherCard /></Wrap>;
   if (!report) return null;
 
-  const checkKeys = Object.keys(report.summary).filter(k => !['ksaActiveCount'].includes(k));
+  const checkKeys = Object.keys(report.summary)
+    .filter(k => !['ksaActiveCount'].includes(k) && !RECON_KEYS.includes(k)); // recon has its own panel
   const sorted = checkKeys.sort((a, b) => {
     const sa = SEVERITY[a] || 'low';
     const sb = SEVERITY[b] || 'low';
     const order = { high: 0, medium: 1, low: 2 };
     return (order[sa] - order[sb]) || (report.summary[b] - report.summary[a]);
   });
+  // Structure view = only canon-conformance checks that actually have hits, so it
+  // reads as "here is what isn't following our structure". All view = every check,
+  // zero-count included (the original inventory behaviour).
+  const structureHitCount = sorted.filter(k => STRUCTURE_KEYS.has(k) && report.summary[k] > 0).length;
+  const visibleKeys = view === 'structure'
+    ? sorted.filter(k => STRUCTURE_KEYS.has(k) && report.summary[k] > 0)
+    : sorted;
 
   return (
     <Wrap>
@@ -236,6 +260,11 @@ export default function ZeltAuditPage() {
         onClear={clearMasterfiles}
         busy={mfBusy}
         error={mfError}
+      />
+
+      <ReconciliationPanel
+        report={report}
+        hasMasterfiles={Object.values(masterfiles || {}).some(mf => mf && Array.isArray(mf.rows) && mf.rows.length)}
       />
 
       {/* Top stats */}
@@ -289,9 +318,37 @@ export default function ZeltAuditPage() {
         </div>
       )}
 
+      {/* Check-view toggle: structure issues only (default) vs every check */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10 }}>
+        <div style={{ fontSize: 15, fontWeight: 900, color: 'var(--ink-900)', letterSpacing: '-0.01em' }}>
+          {view === 'structure' ? 'Not following our data structure' : 'All data-hygiene checks'}
+        </div>
+        <div style={{ display: 'inline-flex', background: 'var(--ink-100)', borderRadius: 999, padding: 3 }}>
+          {[['structure', `Structure issues${structureHitCount ? ` · ${structureHitCount}` : ''}`], ['all', 'All checks']].map(([v, label]) => (
+            <button
+              key={v}
+              onClick={() => setView(v)}
+              style={{
+                border: 'none', cursor: 'pointer', padding: '6px 14px', borderRadius: 999,
+                fontSize: 12.5, fontWeight: 800,
+                background: view === v ? '#fff' : 'transparent',
+                color: view === v ? 'var(--calo-700, #1e8359)' : 'var(--ink-500)',
+                boxShadow: view === v ? 'var(--shadow-sm)' : 'none',
+              }}
+            >{label}</button>
+          ))}
+        </div>
+      </div>
+
+      {view === 'structure' && visibleKeys.length === 0 && (
+        <div style={{ ...panel, padding: 20, textAlign: 'center', color: 'var(--calo-700, #1e8359)', fontWeight: 700 }}>
+          <Icon name="Check" size={16} /> Everything follows the approved data structure. Switch to “All checks” for completeness, duplicate and lifecycle items.
+        </div>
+      )}
+
       {/* Check cards */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 12 }}>
-        {sorted.map(key => {
+        {visibleKeys.map(key => {
           const count = report.summary[key];
           const sev = SEVERITY[key] || 'low';
           const items = report.checks[key] || [];
@@ -756,6 +813,97 @@ function MasterfileUploadPanel({ masterfiles, onUpload, onClear, busy, error }) 
       {error && <div style={{ ...errBanner, marginTop: 10, fontSize: 12 }}>{error}</div>}
     </div>
   );
+}
+
+// ---- Zelt ↔ Masterfile reconciliation -------------------------------------
+//
+// The two rosters HR asks for most: who is live in Zelt but absent from every
+// uploaded masterfile, and who is active in a masterfile but not live in Zelt.
+// Both already come from crossCheckMasterfiles (merged into report.checks); this
+// panel just foregrounds them side by side with a per-list CSV.
+
+function ReconciliationPanel({ report, hasMasterfiles }) {
+  const inZeltNotMaster = report.checks?.zeltNotInMasterfile || [];
+  const inMasterNotZelt = report.checks?.masterfileNotInZelt || [];
+
+  if (!hasMasterfiles) {
+    return (
+      <div style={{ ...panel, padding: 16 }}>
+        <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--ink-500)', letterSpacing: '.06em', textTransform: 'uppercase', marginBottom: 6 }}>
+          Zelt ↔ Masterfile reconciliation
+        </div>
+        <div style={{ fontSize: 13, color: 'var(--ink-500)' }}>
+          Upload a masterfile above to list who is in Zelt but not the masterfile, and who is in the masterfile but not Zelt.
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 12 }}>
+      <ReconColumn
+        title="In Zelt, not in masterfile"
+        subtitle="Live Zelt accounts with no matching active masterfile row"
+        items={inZeltNotMaster}
+        filename={`zelt-not-in-masterfile-${isoDateTag(report)}.csv`}
+        tone="#c0392b"
+      />
+      <ReconColumn
+        title="In masterfile, not in Zelt"
+        subtitle="Active masterfile rows with no live Zelt account"
+        items={inMasterNotZelt}
+        filename={`masterfile-not-in-zelt-${isoDateTag(report)}.csv`}
+        tone="#9A6F0E"
+      />
+    </div>
+  );
+}
+
+function ReconColumn({ title, subtitle, items, filename, tone }) {
+  return (
+    <div style={{ ...panel, padding: 0, overflow: 'hidden', borderTop: `4px solid ${tone}` }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 16px', gap: 8 }}>
+        <div>
+          <div style={{ fontSize: 14, fontWeight: 900, color: 'var(--ink-900)' }}>{title}</div>
+          <div style={{ fontSize: 11.5, color: 'var(--ink-500)', marginTop: 2 }}>{subtitle}</div>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span style={{ fontSize: 22, fontWeight: 900, color: items.length ? tone : 'var(--ink-500)', letterSpacing: '-0.02em' }}>{items.length}</span>
+          {items.length > 0 && (
+            <button onClick={() => downloadReconCsv(filename, items)} style={ghostBtn} title="Download this list as CSV">
+              <Icon name="Table" size={13} /> CSV
+            </button>
+          )}
+        </div>
+      </div>
+      {items.length > 0 ? (
+        <div style={{ borderTop: '1px solid var(--ink-100)', maxHeight: 340, overflowY: 'auto' }}>
+          {items.slice(0, 100).map((it, i) => (
+            <div key={i} style={{ padding: '8px 16px', borderBottom: '1px solid var(--ink-100)', fontSize: 13 }}>
+              <div style={{ fontWeight: 700 }}>{it.name || it.employeeId || '(no name)'}</div>
+              <div style={{ fontSize: 11, color: 'var(--ink-500)' }}>
+                {[it.employeeId && `ID ${it.employeeId}`, it.entity, it.dept, it.position, it.source].filter(Boolean).join(' · ')}
+              </div>
+            </div>
+          ))}
+          {items.length > 100 && (
+            <div style={{ padding: '8px 16px', fontSize: 12, color: 'var(--ink-500)', textAlign: 'center' }}>…and {items.length - 100} more (full list in CSV)</div>
+          )}
+        </div>
+      ) : (
+        <div style={{ borderTop: '1px solid var(--ink-100)', padding: 16, fontSize: 13, color: 'var(--calo-700, #1e8359)', fontWeight: 700 }}>
+          <Icon name="Check" size={14} /> None — both sides match.
+        </div>
+      )}
+    </div>
+  );
+}
+
+function downloadReconCsv(filename, items) {
+  const cols = ['Name', 'Employee ID', 'Entity', 'Department', 'Position', 'Source'];
+  const rows = [cols, ...items.map(it => [it.name || '', it.employeeId || '', it.entity || '', it.dept || '', it.position || '', it.source || ''])];
+  const csv = rows.map(r => r.map(csvCell).join(',')).join('\n') + '\n';
+  triggerDownload(filename, csv, 'text/csv;charset=utf-8');
 }
 
 // ---- Data health ------------------------------------------------------------

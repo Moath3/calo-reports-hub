@@ -55,7 +55,7 @@ export default function OtCalculator() {
   const [tab, setTab] = useState('upload');
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState(null);
-  const [filters, setFilters] = useState({ q: '', dept: '', otOnly: false });
+  const [filters, setFilters] = useState({ q: '', dept: '', otOnly: false, status: '', from: '', to: '' });
   const [savedRun, setSavedRun] = useState(null);   // { id, status } of the run this calc is saved as
   const [runs, setRuns] = useState([]);             // saved-run list
   const [loadingRuns, setLoadingRuns] = useState(false);
@@ -214,7 +214,7 @@ export default function OtCalculator() {
 
       {tab === 'upload' && <UploadRules {...{ company, comp, punch, setPunch, pickPunch, master, masterName, setMaster, pickMaster, sched, schedName, setSched, pickSched, settings, setS, setSettings, calculate, busy, canSeeSalary, entityOpts, pickedEntities, setPickedEntities, pullFromZelt }} />}
       {['daily', 'summary', 'exceptions', 'raw'].includes(tab) && D && (
-        <FilterBar filters={filters} setFilters={setFilters} departments={[...new Set((view.summary || []).map((s) => s.dept).filter(Boolean))].sort()} showOt={tab === 'daily' || tab === 'summary'} />
+        <FilterBar filters={filters} setFilters={setFilters} departments={[...new Set((view.summary || []).map((s) => s.dept).filter(Boolean))].sort()} showOt={tab === 'daily' || tab === 'summary'} showStatus={tab === 'daily'} showDates={tab === 'daily' || tab === 'raw'} />
       )}
       {tab === 'dashboard' && D && <Dashboard {...{ view, comp, canSeeSalary, settings: committed.settings }} />}
       {tab === 'daily' && D && <DailyTab {...{ D, view, comp, settings: committed.settings, canSeeSalary, filters }} />}
@@ -228,7 +228,7 @@ export default function OtCalculator() {
 
 // ---- Raw Transactions (the uploaded punches + how each was used) ----
 function RawTab({ D, filters }) {
-  const rows = useMemo(() => D.recs.filter((r) => matchFilters({ name: r.name, id: r.id, dept: r.dept }, filters)), [D, filters]);
+  const rows = useMemo(() => D.recs.filter((r) => matchFilters({ name: r.name, id: r.id, dept: r.dept, date: r.dateKey }, filters)), [D, filters]);
   return (
     <Card>
       <CountLine count={rows.length} label="punches" />
@@ -403,6 +403,7 @@ function UploadRules({ company, comp, punch, setPunch, pickPunch, master, master
           <NumF label="Long-shift flag over (h)" v={settings.maxShift} on={setS('maxShift')} />
           <NumF label="Very-short-span flag under (min)" v={settings.minSpan} on={setS('minSpan')} />
           <NumF label="Duplicate punch window (min)" v={settings.dupWin} on={setS('dupWin')} />
+          <NumF label="Schedule match window (h)" v={settings.schedTol} on={setS('schedTol')} />
           <SelF label="Ambiguous date order" v={settings.dateOrder} on={setS('dateOrder')} opts={[['DMY', 'Day / Month / Year'], ['MDY', 'Month / Day / Year']]} />
           <SelF label="Broken shifts" v={settings.lenient} on={setS('lenient')} opts={[['strict', 'Strict (flag, no hours)'], ['lenient', 'Lenient (use first+last)']]} />
           <SelF label="Hours display" v={settings.fmt} on={setS('fmt')} opts={[['hhmm', 'HH:MM'], ['dec', 'Decimal']]} />
@@ -467,7 +468,7 @@ function Dashboard({ view, comp, canSeeSalary, settings }) {
 function DailyTab({ D, view, comp, settings, canSeeSalary, filters }) {
   const sal = canSeeSalary && !!view.summary.some((s) => s.rate != null);
   const rateById = useMemo(() => { const m = {}; view.summary.forEach((s) => { m[s.id] = s; }); return m; }, [view]);
-  const rows = useMemo(() => D.daily.filter((d) => matchFilters({ name: d.name, id: d.id, dept: d.dept, ot: d.ot }, filters)), [D, filters]);
+  const rows = useMemo(() => D.daily.filter((d) => matchFilters({ name: d.name, id: d.id, dept: d.dept, ot: d.ot, status: d.status, date: d.date }, filters)), [D, filters]);
   return (
     <Card>
       <CountLine count={rows.length} label="shifts" />
@@ -601,20 +602,31 @@ export function matchFilters(r, filters) {
   if (t && !(`${r.name || ''} ${r.id || ''} ${r.dept || ''}`).toLowerCase().includes(t)) return false;
   if (filters?.dept && r.dept !== filters.dept) return false;
   if (filters?.otOnly && !((r.ot > 0) || (r.otDays > 0))) return false;
+  if (filters?.status && r.status && r.status !== filters.status) return false; // shift status (daily only)
+  if (filters?.from && r.date && r.date < filters.from) return false;           // date range (rows with a date)
+  if (filters?.to && r.date && r.date > filters.to) return false;
   return true;
 }
-function FilterBar({ filters, setFilters, departments, showOt }) {
+function FilterBar({ filters, setFilters, departments, showOt, showStatus, showDates }) {
   const set = (k, v) => setFilters((f) => ({ ...f, [k]: v }));
-  const active = filters.q || filters.dept || filters.otOnly;
+  const active = filters.q || filters.dept || filters.otOnly || filters.status || filters.from || filters.to;
   return (
     <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center', marginBottom: 14 }}>
-      <input className="input-field" style={{ maxWidth: 240 }} placeholder="Search name / ID / dept…" value={filters.q} onChange={(e) => set('q', e.target.value)} />
+      <input className="input-field" style={{ maxWidth: 220 }} placeholder="Search name / ID / dept…" value={filters.q} onChange={(e) => set('q', e.target.value)} />
       <select className="input-field" style={{ width: 'auto' }} value={filters.dept} onChange={(e) => set('dept', e.target.value)}>
         <option value="">All departments</option>
         {departments.map((d) => <option key={d} value={d}>{d}</option>)}
       </select>
+      {showStatus && (
+        <select className="input-field" style={{ width: 'auto' }} value={filters.status} onChange={(e) => set('status', e.target.value)}>
+          <option value="">All statuses</option>
+          {['OT', 'Normal', 'Below Standard', 'Missing IN', 'Missing OUT', 'Invalid'].map((s) => <option key={s} value={s}>{s}</option>)}
+        </select>
+      )}
+      {showDates && <input className="input-field" type="date" style={{ width: 'auto' }} value={filters.from} onChange={(e) => set('from', e.target.value)} title="From date" />}
+      {showDates && <input className="input-field" type="date" style={{ width: 'auto' }} value={filters.to} onChange={(e) => set('to', e.target.value)} title="To date" />}
       {showOt && <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13, color: 'var(--ink-700)' }}><input type="checkbox" checked={filters.otOnly} onChange={(e) => set('otOnly', e.target.checked)} /> OT only</label>}
-      {active && <Btn variant="ghost" size="sm" icon="X" onClick={() => setFilters({ q: '', dept: '', otOnly: false })}>Clear</Btn>}
+      {active && <Btn variant="ghost" size="sm" icon="X" onClick={() => setFilters({ q: '', dept: '', otOnly: false, status: '', from: '', to: '' })}>Clear</Btn>}
     </div>
   );
 }

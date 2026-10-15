@@ -396,6 +396,12 @@ class ApiClient {
   async zeltHrAccess() {
     return this.request('/zelt/hr-access');
   }
+  async zeltMasterfileSheetConfig() {
+    return this.request('/zelt/masterfile-sheet/config');
+  }
+  async zeltMasterfileSheet(sheetId) {
+    return this.request('/zelt/masterfile-sheet' + (sheetId ? `?sheetId=${encodeURIComponent(sheetId)}` : ''));
+  }
   async zeltSetHrAccess(userId, entities) {
     return this.request('/zelt/hr-access', { method: 'POST', body: JSON.stringify({ userId, entities }) });
   }

@@ -149,9 +149,13 @@ export default function ZeltAuditPage() {
   const [mfError, setMfError] = useState(null);
   const [mfBusy, setMfBusy] = useState(false);
   const [view, setView] = useState('structure'); // 'structure' = only structure-conformance issues; 'all' = every check
+  const [sheetCfg, setSheetCfg] = useState(null); // { configured, defaultSheetId, serviceAccountEmail }
+  const [sheetUrl, setSheetUrl] = useState(() => { try { return localStorage.getItem('calo-hygiene-sheet-url') || ''; } catch { return ''; } });
   // Watch state (snapshots) bubbled up from WatcherCard so the health card
   // can show the flagged-people trend without a second /zelt/watch request.
   const [watchData, setWatchData] = useState(null);
+
+  useEffect(() => { api.zeltMasterfileSheetConfig().then(setSheetCfg).catch(() => setSheetCfg({ configured: false })); }, []);
 
   const load = useCallback((force = false) => {
     setLoading(true);
@@ -226,6 +230,22 @@ export default function ZeltAuditPage() {
     setMasterfiles({});
   }, []);
 
+  // Pull the live masterfile from Google Sheets (server exports it as XLSX via a
+  // service account), then run the exact same parse+store path as a manual upload.
+  const handleSheetPull = useCallback(async (url) => {
+    setMfError(null);
+    setMfBusy(true);
+    try {
+      const r = await api.zeltMasterfileSheet(url ? url.trim() : undefined);
+      const file = base64ToFile(r.xlsxBase64, r.fileName || 'masterfile.xlsx');
+      await handleMasterfileUpload(file);
+      try { if (url) localStorage.setItem('calo-hygiene-sheet-url', url.trim()); } catch { /* ignore */ }
+    } catch (e) {
+      setMfError(e.message || 'Google Sheet pull failed');
+      setMfBusy(false); // handleMasterfileUpload only runs (and clears busy) on success
+    }
+  }, [handleMasterfileUpload]);
+
   if (loading) return <Wrap><Spinner /></Wrap>;
   if (error) return <Wrap><Header /><div style={errBanner}>{error}</div><WatcherCard /></Wrap>;
   if (!report) return null;
@@ -260,6 +280,10 @@ export default function ZeltAuditPage() {
         onClear={clearMasterfiles}
         busy={mfBusy}
         error={mfError}
+        sheetCfg={sheetCfg}
+        sheetUrl={sheetUrl}
+        setSheetUrl={setSheetUrl}
+        onSheetPull={handleSheetPull}
       />
 
       <ReconciliationPanel
@@ -763,11 +787,13 @@ function masterfileSourceCounts(masterfiles) {
   });
 }
 
-function MasterfileUploadPanel({ masterfiles, onUpload, onClear, busy, error }) {
+function MasterfileUploadPanel({ masterfiles, onUpload, onClear, busy, error, sheetCfg, sheetUrl, setSheetUrl, onSheetPull }) {
   const loadedFiles = Object.values(masterfiles || {}).filter(mf => mf && Array.isArray(mf.rows));
   const hasLoaded = loadedFiles.length > 0;
   const sourceCounts = masterfileSourceCounts(masterfiles);
   const fileNames = [...new Set(loadedFiles.map(mf => mf.fileName).filter(Boolean))];
+  const sheetReady = sheetCfg?.configured;
+  const canPull = sheetReady && (sheetUrl?.trim() || sheetCfg?.defaultSheetId);
 
   return (
     <div style={{ ...panel, padding: 16 }}>
@@ -810,9 +836,48 @@ function MasterfileUploadPanel({ masterfiles, onUpload, onClear, busy, error }) 
           </>
         )}
       </div>
+      {/* Live Google Sheet link (service account). Shown only once the server
+          has GOOGLE_SERVICE_ACCOUNT_JSON set; pulling runs the same parser. */}
+      {sheetReady && (
+        <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px dashed var(--ink-200)' }}>
+          <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--ink-500)', letterSpacing: '.06em', textTransform: 'uppercase', marginBottom: 8 }}>
+            Or pull live from a Google Sheet
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <input
+              type="text"
+              value={sheetUrl}
+              onChange={e => setSheetUrl(e.target.value)}
+              placeholder={sheetCfg?.defaultSheetId ? 'Using server default sheet — paste a link to override' : 'Paste the masterfile Google Sheet link'}
+              style={{ flex: '1 1 320px', minWidth: 220, padding: '8px 12px', border: '1px solid var(--ink-200)', borderRadius: 'var(--r-sm)', fontSize: 13 }}
+            />
+            <button
+              onClick={() => onSheetPull(sheetUrl)}
+              disabled={busy || !canPull}
+              style={{ ...ghostBtn, cursor: (busy || !canPull) ? 'not-allowed' : 'pointer', opacity: (busy || !canPull) ? 0.6 : 1 }}
+            >
+              <Icon name="RefreshCw" size={14} /> {busy ? 'Pulling…' : 'Pull from Google Sheet'}
+            </button>
+          </div>
+          {sheetCfg?.serviceAccountEmail && (
+            <div style={{ fontSize: 11.5, color: 'var(--ink-500)', marginTop: 8 }}>
+              Share the sheet (Viewer) with <strong style={{ color: 'var(--ink-700)' }}>{sheetCfg.serviceAccountEmail}</strong>. The sheet stays private; it is read server-side and parsed in your browser.
+            </div>
+          )}
+        </div>
+      )}
+
       {error && <div style={{ ...errBanner, marginTop: 10, fontSize: 12 }}>{error}</div>}
     </div>
   );
+}
+
+// Decodes base64 XLSX from the server into a File the existing masterfile parser accepts.
+function base64ToFile(b64, name) {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new File([bytes], name, { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
 }
 
 // ---- Zelt ↔ Masterfile reconciliation -------------------------------------

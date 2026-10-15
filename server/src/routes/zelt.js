@@ -36,6 +36,7 @@ import { runAudit } from '../services/zeltAudit.js';
 import { getMobility } from '../services/zeltMobility.js';
 import { getWatchState, runSnapshotAndDiff, sendWeeklyDigestIfDue, sendCompExpiryDigestIfDue, sendCompEntityReportsIfDue, sendCompEntityEmailsIfDue, sendCompEmailTest, sendCompDMTest } from '../services/zeltWatcher.js';
 import { getDimensions, runReport, warmIndex, getIndexStatus, clearIndex, SENSITIVE_FIELDS } from '../services/zeltReport.js';
+import { isConfigured as gsheetConfigured, defaultSheetId, serviceAccountEmail, exportMasterfile } from '../services/googleSheets.js';
 
 const IS_PROD = process.env.NODE_ENV === 'production';
 // Per-process identity — if two requests report different BOOT_IDs, Render is
@@ -465,6 +466,22 @@ router.post('/hr-access', dataLimiter, requireAuth, requireAdmin, asyncHandler(a
   const saved = setHrEntityAccess(userId, entities);
   logZeltAudit(req.user.id, 'zelt.hrAccess.set', { userId, count: saved.length });
   res.json({ userId, entities: saved });
+}));
+
+// HR/admin: is a live masterfile Google Sheet wired up, and which bot email to
+// share the sheet with. Lets the hygiene page show the pull control only when set.
+router.get('/masterfile-sheet/config', dataLimiter, requireAuth, requireHrOrAdmin, (req, res) => {
+  res.json({ configured: gsheetConfigured(), defaultSheetId: defaultSheetId(), serviceAccountEmail: serviceAccountEmail() });
+});
+
+// HR/admin: export the live masterfile Google Sheet as XLSX bytes. The client
+// parses it with its existing in-browser masterfile parser, so nothing about the
+// cross-check/structure logic changes — only the source (sheet vs manual upload).
+router.get('/masterfile-sheet', dataLimiter, requireAuth, requireHrOrAdmin, asyncHandler(async (req, res) => {
+  if (!gsheetConfigured()) throw badRequest('Google Sheets is not configured on the server (set GOOGLE_SERVICE_ACCOUNT_JSON).');
+  const out = await exportMasterfile(req.query.sheetId);
+  logZeltAudit(req.user.id, 'zelt.masterfileSheet', { sheetId: out.sheetId });
+  res.json({ configured: true, ...out });
 }));
 
 // Admin-only: which process/instance served this request + uptime.

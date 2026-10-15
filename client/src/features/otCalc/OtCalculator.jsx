@@ -476,6 +476,8 @@ function Dashboard({ view, comp, canSeeSalary, settings }) {
         <KpiTile label="Payable OT hours" value={fmtH(k.payOtH, settings)} />
         <KpiTile label="Employees with OT" value={k.otEmps} />
         {sal && <KpiTile label={`Total OT payable (${comp.cur})`} value={fmtMoney(k.totalPayable, comp.dec)} accent />}
+        {sal && <KpiTile label="Salary matched" value={`${k.salaryMatched ?? 0} / ${k.emps}`} />}
+        {sal && k.prodExcluded > 0 && <KpiTile label="Non-production (hidden)" value={k.prodExcluded} />}
         <KpiTile label="Missing IN" value={k.missIn} />
         <KpiTile label="Missing OUT" value={k.missOut} />
         <KpiTile label="Exceptions" value={k.exceptions} />

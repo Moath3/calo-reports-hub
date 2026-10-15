@@ -124,10 +124,25 @@ test('cycleKey: payroll-cycle month (calendar + mid-month start + year rollover)
   assert.equal(cycleKey('2026-12-20', 16), '2027-01');  // December rolls to next year
 });
 
-test('famMatches: substring, case-insensitive, blank keyword passes all', () => {
+test('famMatches: production matches, Non-Production does NOT (substring trap)', () => {
   assert.equal(famMatches('Production Crew', 'Production'), true);
+  assert.equal(famMatches('Non-Production', 'Production'), false); // the bug: substring includes "production"
+  assert.equal(famMatches('Non Production', 'Production'), false);
   assert.equal(famMatches('Office', 'production'), false);
   assert.equal(famMatches('anything', ''), true);
+});
+
+test('salary join is ID-normalized (case/whitespace mismatch still matches)', () => {
+  const D = run([
+    [' emp01 ', 'Ali', 'Kitchen', '2026-09-01', '08:00', 'Check In'],   // punch id has spaces + lowercase
+    [' emp01 ', 'Ali', 'Kitchen', '2026-09-01', '19:00', 'Check Out'],
+  ]);
+  const master = buildMaster([{ sn: 'Calo UAE MP', rows: [['Emp ID', 'Basic Salary', 'Status'], ['EMP01', 3000, 'Active']] }], 'Calo UAE MP');
+  const V = buildView(D, { settings: S, master, dec: 2 });
+  const row = V.summary.find((x) => x.name === 'Ali');
+  assert.equal(row.basic, 3000);   // matched despite ' emp01 ' vs 'EMP01'
+  assert.ok(row.amount > 0);
+  assert.equal(V.kpis.salaryMatched, 1);
 });
 
 test('production guardrail: Job Family column excludes non-production from OT pay', () => {
@@ -151,8 +166,9 @@ test('production guardrail: Job Family column excludes non-production from OT pa
   assert.ok(p1.amount > 0);
   assert.equal(o1.factor, 0);
   assert.equal(o1.prodExcluded, true);
-  assert.equal(o1.amount, 0);
-  // prodOnly OFF: O1 now paid
+  assert.equal(o1.amount, null);   // non-production salary is hidden entirely
+  assert.equal(o1.basic, null);
+  // prodOnly OFF: O1 now paid, salary shown
   V = buildView(D, { settings: mergeSettings({ prodOnly: false }), master, dec: 2 });
   assert.ok(V.summary.find((x) => x.id === 'O1').amount > 0);
 });

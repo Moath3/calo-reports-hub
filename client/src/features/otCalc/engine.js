@@ -338,7 +338,9 @@ export function buildMaster(sheets, companyTab, dateOrder = 'DMY', fileName = 'm
       }
     }
   });
-  return used.length ? { file: fileName, list: Object.values(byId), byId, sheets: used, rows: list.length, hasFamily } : null;
+  if (!used.length) return null;
+  const byNorm = {}; for (const k in byId) byNorm[normId(k)] = byId[k];
+  return { file: fileName, list: Object.values(byId), byId, byNorm, sheets: used, rows: Object.keys(byId).length, hasFamily };
 }
 
 // Build a master directory from the Zelt OT-roster endpoint (same shape as
@@ -352,7 +354,8 @@ export function buildMasterFromRoster(employees, fileName = 'Zelt') {
     const row = { id, name: e.name || '', dept: e.department || '', desig: '', status: 'Active', active: true, basic: e.basicSalary != null ? Number(e.basicSalary) : null, gross: null, hire: '', lwd: '', family: fam, sheet: 'Zelt' };
     byId[id] = row; list.push(row);
   }
-  return { file: fileName, list, byId, sheets: ['Zelt'], rows: list.length, hasFamily, source: 'zelt' };
+  const byNorm = {}; for (const k in byId) byNorm[normId(k)] = byId[k];
+  return { file: fileName, list, byId, byNorm, sheets: ['Zelt'], rows: list.length, hasFamily, source: 'zelt' };
 }
 
 // Core compute: rows + map (+ optional master) -> processed data D.
@@ -383,7 +386,7 @@ export function compute({ rows, hdrIdx = 0, rowOffset = 0, map, master = null, s
 
   // employee directory
   const emp = {};
-  recs.forEach((r) => { if (r.bad) return; if (!emp[r.id]) emp[r.id] = { id: r.id, name: r.name, dept: r.dept, loc: r.loc, inReport: true, m: master ? master.byId[r.id] : undefined }; });
+  recs.forEach((r) => { if (r.bad) return; if (!emp[r.id]) emp[r.id] = { id: r.id, name: r.name, dept: r.dept, loc: r.loc, inReport: true, m: masterRow(master, r.id) || undefined }; });
 
   // group by employee
   const byEmp = new Map();
@@ -467,7 +470,7 @@ export const PAYF = { p75: 0.75, half: 0.5, p25: 0.25, none: 0 };
 export const PAYOPT = [['full', 'Full OT allowance (100%)'], ['p75', '75% OT allowance'], ['half', '50% OT allowance'], ['p25', '25% OT allowance'], ['none', 'No OT allowance']];
 export const EXCL_REASONS = ['Managerial role', 'Disciplinary action', 'Other'];
 export function exOf(excl, id) { const x = excl[id]; if (!x) return null; return typeof x === 'string' ? { pay: 'none', reason: x } : x; }
-export function eligBasic(master, id) { if (!master) return true; const m = master.byId[id]; return !!(m && m.basic > 0); }
+export function eligBasic(master, id) { if (!master) return true; const m = masterRow(master, id); return !!(m && m.basic > 0); }
 export function payFactor(id, { master, excl }) {
   if (!master) return 1;
   if (!eligBasic(master, id)) return 0;
@@ -483,7 +486,20 @@ export function payFactor(id, { master, excl }) {
 export function famMatches(fam, prodFamily) {
   const p = String(prodFamily || '').trim();
   if (!p) return true;
-  return String(fam || '').toLowerCase().includes(p.toLowerCase());
+  const f = String(fam || '').toLowerCase();
+  const k = p.toLowerCase();
+  // "non-production" / "non production" must NOT count as production even though
+  // it contains the substring.
+  if (k === 'production') return /\bproduction\b/.test(f) && !/non[-\s]?production/.test(f);
+  return f.includes(k);
+}
+
+// ID match across files: trim + uppercase (BioTime vs Zelt vs sheet spelling).
+export const normId = (id) => String(id == null ? '' : id).trim().toUpperCase();
+// Look up a master row by raw id, then by normalized id.
+export function masterRow(master, id) {
+  if (!master) return null;
+  return master.byId[id] || (master.byNorm && master.byNorm[normId(id)]) || null;
 }
 
 // Aggregate daily rows into a per-employee summary + apply salary/eligibility.
@@ -503,17 +519,17 @@ export function buildView(D, { settings, master, excl = {}, special = {}, dec = 
 
   const summary = [];
   byEmp.forEach((s) => {
-    const m = master ? master.byId[s.id] : null;
-    const basic = m ? m.basic : null;
-    const rate = basic != null ? hourly(basic, S) : null;
+    const m = masterRow(master, s.id);
     const fam = m ? (m.family || '') : '';
+    // Production-only guardrail: with a Job Family column + prodOnly, non-production
+    // families are excluded — hide their salary entirely (not just zero the OT).
+    const prodExcluded = !!(S.prodOnly && master && master.hasFamily && m && fam && !famMatches(fam, S.prodFamily));
+    const basic = (m && !prodExcluded) ? m.basic : null;
+    const rate = basic != null ? hourly(basic, S) : null;
     let factor = payFactor(s.id, { master, excl });
-    // Production-only guardrail: when the master carries a Job Family column and
-    // prodOnly is on, non-production families get no OT pay (hours still shown).
-    let prodExcluded = false;
-    if (S.prodOnly && master && master.hasFamily && m && fam && !famMatches(fam, S.prodFamily)) { factor = 0; prodExcluded = true; }
+    if (prodExcluded) factor = 0;
     const amount = (master && rate != null) ? (otAmt(s.ot, basic, S, dec) || 0) * factor : null;
-    const sp = +special[s.id] || 0;
+    const sp = prodExcluded ? 0 : (+special[s.id] || 0);
     summary.push({
       ...s, desig: m ? m.desig : '', status: m ? m.status : '', basic, rate, family: fam, prodExcluded,
       otRate: rate != null ? rate * (+S.otMult || 1.25) : null,
@@ -536,7 +552,9 @@ export function buildView(D, { settings, master, excl = {}, special = {}, dec = 
   const missIn = summary.reduce((t, s) => t + s.missIn, 0);
   const missOut = summary.reduce((t, s) => t + s.missOut, 0);
   const attendanceDays = summary.reduce((t, s) => t + s.days, 0);
-  const kpis = { emps, attendanceDays, totHours, normalH, otH, payOtH, otEmps, missIn, missOut, exceptions: D.exc.length, totalAmount, totalPayable, dupCount: D.dupCount };
+  const salaryMatched = master ? summary.filter((s) => s.basic != null).length : null;
+  const prodExcluded = master ? summary.filter((s) => s.prodExcluded).length : 0;
+  const kpis = { emps, attendanceDays, totHours, normalH, otH, payOtH, otEmps, missIn, missOut, exceptions: D.exc.length, totalAmount, totalPayable, dupCount: D.dupCount, salaryMatched, prodExcluded };
 
   // department rollup
   const byDept = new Map();

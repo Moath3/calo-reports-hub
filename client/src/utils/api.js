@@ -390,6 +390,15 @@ class ApiClient {
   async zeltOtRoster(entity) {
     return this.request('/zelt/ot-roster' + (entity ? `?entity=${encodeURIComponent(entity)}` : ''));
   }
+  async zeltOtEntities() {
+    return this.request('/zelt/ot-entities');
+  }
+  async zeltHrAccess() {
+    return this.request('/zelt/hr-access');
+  }
+  async zeltSetHrAccess(userId, entities) {
+    return this.request('/zelt/hr-access', { method: 'POST', body: JSON.stringify({ userId, entities }) });
+  }
   // Saved OT calculator runs (history)
   async otRunsList() {
     return this.request('/ot-runs');

@@ -21,20 +21,32 @@ export default function EntityAdminsPage() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState('');       // which async action is running
   const [msg, setMsg] = useState(null);       // { tone, text }
+  const [hr, setHr] = useState({ users: [], entities: [], access: {} }); // salary access by HR user
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [ea, w] = await Promise.all([api.zeltEntityAdmins(), api.zeltWatch().catch(() => null)]);
+      const [ea, w, ha] = await Promise.all([api.zeltEntityAdmins(), api.zeltWatch().catch(() => null), api.zeltHrAccess().catch(() => null)]);
       setAdmins(ea.admins || []);
       setEntities(ea.entities || []);
       setWatch(w);
+      if (ha) setHr({ users: ha.users || [], entities: ha.entities || [], access: ha.access || {} });
     } catch (e) {
       setMsg({ tone: 'bad', text: e.message || 'Failed to load' });
     } finally {
       setLoading(false);
     }
   }, []);
+
+  const toggleHrEntity = async (userId, entity, on) => {
+    const cur = hr.access[userId] || [];
+    const next = on ? [...new Set([...cur, entity])] : cur.filter((e) => e !== entity);
+    setHr((h) => ({ ...h, access: { ...h.access, [userId]: next } })); // optimistic
+    setBusy('hr:' + userId);
+    try { await api.zeltSetHrAccess(userId, next); setMsg({ tone: 'ok', text: 'Salary access updated.' }); }
+    catch (e) { setMsg({ tone: 'bad', text: e.message || 'Failed' }); await load(); }
+    finally { setBusy(''); }
+  };
 
   useEffect(() => { load(); }, [load]);
 
@@ -261,6 +273,66 @@ export default function EntityAdminsPage() {
                 ))}
               </tbody>
             </table>
+          </div>
+        )}
+      </Card>
+
+      {/* Salary access by HR user — only assigned entities' salaries are visible to that HR person in the OT calculator */}
+      <Card style={{ marginTop: 18 }}>
+        <h3 style={{ margin: '0 0 6px', fontSize: 16, fontWeight: 800, color: 'var(--ink-900)' }}>Salary access by HR</h3>
+        <p style={{ margin: '0 0 14px', fontSize: 13, color: 'var(--ink-500)', lineHeight: 1.5 }}>
+          Tick the entities each HR-tier person may see salaries for. In the OT calculator they can only pull salary for their ticked entities; with none ticked they see no salaries at all. Admins always see every entity.
+        </p>
+        {loading ? (
+          <p style={{ color: 'var(--ink-500)', fontSize: 14 }}>Loading…</p>
+        ) : hr.users.length === 0 ? (
+          <p style={{ color: 'var(--ink-500)', fontSize: 14 }}>No HR-tier users yet. Set a user's role to <strong>HR</strong> on the Settings page to assign entity salary access here.</p>
+        ) : hr.entities.length === 0 ? (
+          <p style={{ color: 'var(--ink-500)', fontSize: 14 }}>No Zelt entities are available yet. Connect Zelt, then refresh.</p>
+        ) : (
+          <div style={{ display: 'grid', gap: 14 }}>
+            {hr.users.map((u) => {
+              const granted = hr.access[u.id] || [];
+              const saving = busy === 'hr:' + u.id;
+              return (
+                <div key={u.id} style={{ border: '1px solid var(--ink-100)', borderRadius: 12, padding: '12px 14px' }}>
+                  <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
+                    <span style={{ fontWeight: 700, color: 'var(--ink-900)' }}>{u.name || u.email}</span>
+                    {u.name && <span style={{ fontSize: 12.5, color: 'var(--ink-500)' }}>{u.email}</span>}
+                    <span style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--ink-400)' }}>
+                      {saving ? 'Saving…' : `${granted.length} of ${hr.entities.length} entities`}
+                    </span>
+                  </div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                    {hr.entities.map((e) => {
+                      const on = granted.includes(e);
+                      return (
+                        <label
+                          key={e}
+                          style={{
+                            display: 'inline-flex', alignItems: 'center', gap: 6, cursor: saving ? 'default' : 'pointer',
+                            padding: '5px 10px', borderRadius: 999, fontSize: 13,
+                            border: `1px solid ${on ? 'var(--calo-700)' : 'var(--ink-200)'}`,
+                            background: on ? 'var(--calo-50, #E8F7F1)' : 'var(--ink-50)',
+                            color: on ? 'var(--calo-700)' : 'var(--ink-700)', fontWeight: on ? 700 : 500,
+                            opacity: saving ? 0.6 : 1,
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={on}
+                            disabled={saving}
+                            onChange={(ev) => toggleHrEntity(u.id, e, ev.target.checked)}
+                            style={{ accentColor: 'var(--calo-700)' }}
+                          />
+                          {e}
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         )}
       </Card>

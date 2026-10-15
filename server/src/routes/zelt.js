@@ -17,7 +17,7 @@
 import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
 import { requireAuth, requireAdmin, requireHrOrAdmin } from '../middleware/auth.js';
-import { getDb, listEntityAdmins, upsertEntityAdmin, deleteEntityAdmin } from '../db/database.js';
+import { getDb, listEntityAdmins, upsertEntityAdmin, deleteEntityAdmin, listHrEntityAccess, getHrEntitiesForUser, setHrEntityAccess } from '../db/database.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { HttpError, badRequest } from '../utils/httpError.js';
 import {
@@ -415,7 +415,13 @@ router.get('/comp-ledger', dataLimiter, requireAuth, requireHrOrAdmin, asyncHand
 // salary enrichment + sensitive gating are the same as the report builder.
 router.get('/ot-roster', dataLimiter, requireAuth, requireHrOrAdmin, asyncHandler(async (req, res) => {
   const raw = typeof req.query.entity === 'string' ? req.query.entity : '';
-  const entities = raw.split(',').map((s) => s.trim()).filter(Boolean);
+  let entities = raw.split(',').map((s) => s.trim()).filter(Boolean);
+  // HR users may only pull salary for entities they're assigned to; admins = all.
+  if (req.user.role === 'hr') {
+    const allowed = getHrEntitiesForUser(req.user.id);
+    entities = entities.length ? entities.filter((e) => allowed.includes(e)) : allowed;
+    if (!entities.length) return res.json({ employees: [], count: 0, currency: '', note: 'No entities are assigned to you for salary access. Ask an admin on the Entity Admins page.' });
+  }
   const filters = entities.length ? { entities } : {};
   const rep = await runReport({ filters, fields: ['employeeId', 'name', 'department', 'entity', 'jobFamily', 'site', 'basicSalary', 'currency'], isAdmin: true })
     .catch(zeltUpstream('OT roster fetch failed'));
@@ -430,6 +436,35 @@ router.get('/ot-roster', dataLimiter, requireAuth, requireHrOrAdmin, asyncHandle
   })).filter((e) => e.employeeId);
   logZeltAudit(req.user.id, 'zelt.otRoster', { entities: entities.join(',') || 'all', count: employees.length });
   res.json({ employees, count: employees.length, currency: employees.find((e) => e.currency)?.currency || '' });
+}));
+
+// Entities the current user may pull salary for (HR → assigned set, admin → all).
+router.get('/ot-entities', dataLimiter, requireAuth, requireHrOrAdmin, asyncHandler(async (req, res) => {
+  const all = await listEntities().catch(() => []);
+  if (req.user.role === 'hr') {
+    const allowed = new Set(getHrEntitiesForUser(req.user.id));
+    return res.json({ entities: all.filter((e) => allowed.has(e)), restricted: true });
+  }
+  res.json({ entities: all, restricted: false });
+}));
+
+// Admin: HR users + their salary-access entities (for the Entity Admins page).
+router.get('/hr-access', dataLimiter, requireAuth, requireAdmin, asyncHandler(async (req, res) => {
+  const users = getDb().prepare("SELECT id, name, email FROM users WHERE role = 'hr' AND is_active = 1 ORDER BY name").all();
+  const entities = await listEntities().catch(() => []);
+  const access = {};
+  for (const r of listHrEntityAccess()) { (access[r.user_id] || (access[r.user_id] = [])).push(r.entity); }
+  res.json({ users, entities, access });
+}));
+
+// Admin: set which entities an HR user may see salaries for.
+router.post('/hr-access', dataLimiter, requireAuth, requireAdmin, asyncHandler(async (req, res) => {
+  const userId = Number(req.body?.userId);
+  if (!userId) throw badRequest('userId is required');
+  const entities = Array.isArray(req.body?.entities) ? req.body.entities : [];
+  const saved = setHrEntityAccess(userId, entities);
+  logZeltAudit(req.user.id, 'zelt.hrAccess.set', { userId, count: saved.length });
+  res.json({ userId, entities: saved });
 }));
 
 // Admin-only: which process/instance served this request + uptime.

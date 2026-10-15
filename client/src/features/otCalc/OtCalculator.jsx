@@ -100,7 +100,7 @@ export default function OtCalculator() {
     catch (e) { setMsg({ tone: 'bad', text: e.message || 'Could not read the master file.' }); }
     finally { setBusy(false); }
   };
-  useEffect(() => { if (!canSeeSalary) return; api.zeltEntities().then((r) => setEntityOpts(r.entities || [])).catch(() => {}); }, [canSeeSalary]);
+  useEffect(() => { if (!canSeeSalary) return; api.zeltOtEntities().then((r) => setEntityOpts(r.entities || [])).catch(() => {}); }, [canSeeSalary]);
 
   const pullFromZelt = async () => {
     if (!pickedEntities.length) { setMsg({ tone: 'warn', text: 'Pick at least one Zelt entity to pull salary + job family.' }); return; }

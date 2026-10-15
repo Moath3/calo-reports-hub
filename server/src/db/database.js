@@ -355,6 +355,12 @@ function initSchema() {
       updated_at TEXT
     );
 
+    CREATE TABLE IF NOT EXISTS hr_entity_access (
+      user_id INTEGER,
+      entity TEXT,
+      PRIMARY KEY (user_id, entity)
+    );
+
     CREATE TABLE IF NOT EXISTS ot_runs (
       id TEXT PRIMARY KEY,
       company TEXT,
@@ -454,6 +460,22 @@ export function deleteEntityAdmin(entity) {
   const { changes } = getDb().prepare('DELETE FROM zelt_entity_admins WHERE entity = ?').run(entity);
   persistNow();
   return changes > 0;
+}
+
+// --- HR → entity salary access (which entities an HR user may see salaries for) --
+export function listHrEntityAccess() {
+  return getDb().prepare('SELECT user_id, entity FROM hr_entity_access').all();
+}
+export function getHrEntitiesForUser(userId) {
+  return getDb().prepare('SELECT entity FROM hr_entity_access WHERE user_id = ?').all(userId).map((r) => r.entity);
+}
+export function setHrEntityAccess(userId, entities) {
+  const db = getDb();
+  db.prepare('DELETE FROM hr_entity_access WHERE user_id = ?').run(userId);
+  const ins = db.prepare('INSERT OR IGNORE INTO hr_entity_access (user_id, entity) VALUES (?, ?)');
+  for (const e of entities || []) { const en = String(e || '').trim(); if (en) ins.run(userId, en); }
+  persistNow();
+  return getHrEntitiesForUser(userId);
 }
 
 // --- Saved OT calculator runs (shared history, draft/final) -------------------

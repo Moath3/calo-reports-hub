@@ -106,14 +106,29 @@ export default function OtCalculator() {
     if (!pickedEntities.length) { setMsg({ tone: 'warn', text: 'Pick at least one Zelt entity to pull salary + job family.' }); return; }
     setBusy(true); setMsg(null);
     try {
+      // The pull reads Zelt's people index. Build it + poll to ready first so the
+      // user never has to "try again" — it's a one-time ~minute build (6h cache).
+      let st = await api.zeltReportStatus().catch(() => ({ ready: false }));
+      if (!st.ready) {
+        await api.zeltReportWarm().catch(() => {});
+        setMsg({ tone: 'warn', text: 'Building the Zelt people index (one-time, up to a minute)…' });
+        const t0 = Date.now();
+        while (Date.now() - t0 < 240000) {
+          await new Promise((r) => setTimeout(r, 4000));
+          st = await api.zeltReportStatus().catch(() => ({}));
+          if (st.ready) break;
+          if (st.error) throw new Error('Zelt index build failed: ' + st.error);
+          if (st.progress?.total) setMsg({ tone: 'warn', text: `Building Zelt people index… ${st.progress.done || 0}/${st.progress.total}` });
+        }
+        if (!st.ready) throw new Error('The Zelt index is taking longer than usual. Leave this a minute, then Pull again.');
+      }
       const r = await api.zeltOtRoster(pickedEntities.join(','));
       if (!r.employees?.length) { setMsg({ tone: 'warn', text: 'Zelt returned no employees for those entities.' }); return; }
       const m = buildMasterFromRoster(r.employees);
       setMaster(m); setMasterName(`Zelt · ${pickedEntities.length} ${pickedEntities.length === 1 ? 'entity' : 'entities'} · ${m.rows} staff${m.hasFamily ? ' · job family' : ''}`);
-      setMsg({ tone: 'ok', text: `Pulled ${m.rows} employees from Zelt (salary${m.hasFamily ? ' + job family' : ''}). Re-run Calculate.` });
+      setMsg({ tone: 'ok', text: `Pulled ${m.rows} employees from Zelt (salary${m.hasFamily ? ' + job family' : ''}). Now press Calculate.` });
     } catch (e) {
-      const txt = /index is still building/i.test(e.message || '') ? 'Zelt people index is warming up — try again in a moment.' : (e.message || 'Zelt pull failed');
-      setMsg({ tone: 'bad', text: txt });
+      setMsg({ tone: 'bad', text: e.message || 'Zelt pull failed' });
     } finally { setBusy(false); }
   };
 
@@ -362,14 +377,24 @@ function UploadRules({ company, comp, punch, setPunch, pickPunch, master, master
               {master && <Chip name={`${masterName} · ${master.rows} rows`} onRemove={() => { setMaster(null); }} />}
               <div style={{ fontSize: 12, color: 'var(--ink-400)', marginTop: 6 }}>Salary stays in your browser. Needed for OT amounts + eligibility.</div>
               <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px dashed var(--ink-200)' }}>
-                <label className="label">…or pull salary + Job Family from Zelt</label>
-                <select multiple className="input-field" style={{ height: 96, fontSize: 13 }} value={pickedEntities}
-                  onChange={(e) => setPickedEntities([...e.target.selectedOptions].map((o) => o.value))}>
-                  {entityOpts.map((en) => <option key={en} value={en}>{en}</option>)}
-                </select>
+                <label className="label">…or pull salary + Job Family from Zelt — tick one or more entities</label>
+                <div style={{ maxHeight: 170, overflowY: 'auto', border: '1px solid var(--ink-200)', borderRadius: 8, padding: 8 }}>
+                  {entityOpts.length === 0 && <div style={{ fontSize: 12, color: 'var(--ink-400)' }}>Loading entities…</div>}
+                  {entityOpts.length > 1 && (
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '3px 2px', fontSize: 12.5, fontWeight: 700, borderBottom: '1px solid var(--ink-100)', marginBottom: 4 }}>
+                      <input type="checkbox" checked={pickedEntities.length === entityOpts.length} onChange={(e) => setPickedEntities(e.target.checked ? [...entityOpts] : [])} /> Select all
+                    </label>
+                  )}
+                  {entityOpts.map((en) => (
+                    <label key={en} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '3px 2px', fontSize: 13, cursor: 'pointer' }}>
+                      <input type="checkbox" checked={pickedEntities.includes(en)} onChange={(e) => setPickedEntities((p) => (e.target.checked ? [...p, en] : p.filter((x) => x !== en)))} />
+                      {en}
+                    </label>
+                  ))}
+                </div>
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 8 }}>
                   <Btn variant="secondary" size="sm" icon="Cloud" onClick={pullFromZelt} disabled={busy || !pickedEntities.length}>Pull from Zelt</Btn>
-                  <span style={{ fontSize: 12, color: 'var(--ink-400)' }}>{pickedEntities.length ? `${pickedEntities.length} selected` : 'pick entities (Ctrl/Cmd-click for several)'}</span>
+                  <span style={{ fontSize: 12, color: 'var(--ink-400)' }}>{pickedEntities.length ? `${pickedEntities.length} selected` : 'tick entities above'}</span>
                 </div>
               </div>
             </div>
@@ -563,6 +588,11 @@ function SummaryTab({ view, comp, settings, excl, setExcl, special, setSpecial, 
   return (
     <Card>
       <CountLine count={rows.length} label="employees" />
+      {canSeeSalary && !master && (
+        <div style={{ marginBottom: 12, padding: '10px 12px', background: '#FEF5E4', border: '1px solid #F6E0B6', borderRadius: 10, fontSize: 13, color: '#8A5A1A' }}>
+          OT eligibility, allowance levels (full / 75 / 50 / 25 / none) and the bulk-apply actions appear once a <b>salary source</b> is loaded. Go to <b>Upload &amp; Rules</b> and either upload a salary sheet or <b>Pull from Zelt</b>, then press Calculate.
+        </div>
+      )}
       {sal && sel.size > 0 && (
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 12, padding: '10px 12px', background: 'var(--calo-50)', border: '1px solid var(--calo-100)', borderRadius: 10 }}>
           <strong style={{ fontSize: 13 }}>{sel.size} selected</strong>
@@ -676,7 +706,8 @@ function FilterBar({ filters, setFilters, departments, locations, months, showOt
   const set = (k, v) => setFilters((f) => ({ ...f, [k]: v }));
   const active = filters.q || filters.dept || filters.otOnly || filters.status || filters.from || filters.to || filters.month || filters.loc;
   return (
-    <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center', marginBottom: 14 }}>
+    <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center', marginBottom: 14, padding: '10px 12px', background: 'var(--ink-50)', border: '1px solid var(--ink-200)', borderRadius: 10 }}>
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12, fontWeight: 700, color: 'var(--ink-600)' }}><Icon name="Filter" size={13} /> Filter</span>
       <input className="input-field" style={{ maxWidth: 220 }} placeholder="Search name / ID / dept…" value={filters.q} onChange={(e) => set('q', e.target.value)} />
       {showMonth && months && months.length > 1 && (
         <select className="input-field" style={{ width: 'auto' }} value={filters.month} onChange={(e) => set('month', e.target.value)} title="Payroll cycle">

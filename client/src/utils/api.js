@@ -416,6 +416,9 @@ class ApiClient {
   async zeltReportWarm(force = false) {
     return this.request('/zelt/report/warm', { method: 'POST', body: JSON.stringify({ force }) });
   }
+  async zeltReportStatus() {
+    return this.request('/zelt/report/status');
+  }
   async zeltReportRun(filters, fields) {
     return this.request('/zelt/report/run', { method: 'POST', body: JSON.stringify({ filters, fields }) });
   }

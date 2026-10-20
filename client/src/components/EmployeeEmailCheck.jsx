@@ -1,42 +1,34 @@
 import { useState } from 'react';
 import { api } from '../utils/api';
-import { Icon, Btn, Card } from './ui';
+import { Icon, Btn } from './ui';
 
-const panel = { background: '#fff', borderRadius: 'var(--r-md)', border: '1px solid var(--ink-200)', padding: 24, boxShadow: 'var(--shadow-sm)' };
+const panel = { background: '#fff', borderRadius: 'var(--r-md)', border: '1px solid var(--ink-200)', padding: 16, boxShadow: 'var(--shadow-sm)' };
 
 function interpret(res) {
-  if (!res) return null;
-  if (res.configured === false) {
-    return { tone: 'amber', title: 'Workspace verification is not set up yet',
-      lines: ['Ask an admin to enable it: service account with domain-wide delegation for admin.directory.user.readonly, the Admin SDK API enabled, and WORKSPACE_ADMIN_EMAIL set to a Workspace admin.'] };
-  }
-  if (res.reason === 'not_calo') return { tone: 'neutral', title: 'Enter a @calo.app address', lines: [] };
+  if (!res || res.reason === 'no_email') return null;
   if (res.found === false) {
-    return { tone: 'red', title: 'No Workspace account found', lines: [`${res.email} is not a real CALO account. Treat this new joiner as unverified.`] };
+    return { tone: 'red', title: 'Not found in Zelt',
+      lines: [`No employee account uses ${res.email}. Treat this new joiner as unverified.`] };
   }
-  if (res.found && res.active) {
-    return { tone: 'green', title: 'Active Workspace account', lines: [
-      res.name && `Name: ${res.name}`,
-      res.orgUnitPath && `Org unit: ${res.orgUnitPath}`,
-      res.creationTime && `Created: ${new Date(res.creationTime).toLocaleDateString('en-GB')}`,
-      res.lastLoginTime && res.lastLoginTime !== '1970-01-01T00:00:00.000Z' && `Last login: ${new Date(res.lastLoginTime).toLocaleDateString('en-GB')}`,
-    ].filter(Boolean) };
-  }
-  if (res.found && !res.active) {
-    return { tone: 'amber', title: res.suspended ? 'Account exists but is suspended' : 'Account exists but is archived',
-      lines: [res.name && `Name: ${res.name}`, 'Not an active employee account right now.'].filter(Boolean) };
-  }
-  return null;
+  const base = [
+    res.name && `Name: ${res.name}`,
+    res.employeeId && `Employee ID: ${res.employeeId}`,
+    res.entity && `Entity: ${res.entity}`,
+    `Status: ${res.status}`,
+    res.leaveDate && `Leave date: ${res.leaveDate}`,
+  ].filter(Boolean);
+  if (res.active) return { tone: 'green', title: 'Active employee in Zelt', lines: base };
+  if (res.live) return { tone: 'amber', title: `In Zelt — onboarding (${res.status})`, lines: [...base, 'A real joiner, not yet an Active account.'] };
+  return { tone: 'red', title: `In Zelt but not active (${res.status})`, lines: [...base, 'This account is not a live employee.'] };
 }
 
 const TONES = {
   green: { bg: '#eafaf3', bd: '#02B376', fg: '#0f5132', icon: 'CheckCircle' },
   red: { bg: '#FDECEC', bd: '#c0392b', fg: '#9f2f2f', icon: 'XCircle' },
   amber: { bg: '#FEF6E7', bd: '#E0A400', fg: '#92700A', icon: 'AlertTriangle' },
-  neutral: { bg: 'var(--ink-50)', bd: 'var(--ink-300)', fg: 'var(--ink-700)', icon: 'Info' },
 };
 
-export default function WorkspaceEmailCheck() {
+export default function EmployeeEmailCheck() {
   const [email, setEmail] = useState('');
   const [busy, setBusy] = useState(false);
   const [res, setRes] = useState(null);
@@ -55,12 +47,12 @@ export default function WorkspaceEmailCheck() {
   const t = view && TONES[view.tone];
 
   return (
-    <div style={{ ...panel, padding: 16 }}>
+    <div style={panel}>
       <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--ink-500)', letterSpacing: '.06em', textTransform: 'uppercase', marginBottom: 6 }}>
-        Verify a new joiner's @calo.app email
+        Verify a new joiner's email in Zelt
       </div>
       <div style={{ fontSize: 13, color: 'var(--ink-500)', marginBottom: 10 }}>
-        Confirms the address is a real, active account in the CALO Google Workspace — not just any made-up word@calo.app.
+        Confirms the address belongs to a live employee account in Zelt — a fabricated word@calo.app matches nothing.
       </div>
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
         <input

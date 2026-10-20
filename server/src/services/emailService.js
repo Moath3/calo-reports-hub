@@ -1,4 +1,5 @@
 import fetch from 'node-fetch';
+import { gmailConfigured, sendGmail } from './googleMail.js';
 
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'm.alghoniman@calo.app';
@@ -16,7 +17,11 @@ function escapeHtmlShared(s) {
 // Generic Resend send. Returns { sent, skipped?, error? } — never throws, so a
 // bad address or a transport blip can't crash the watcher tick.
 export async function sendEmail({ to, subject, html, from = COMP_FROM_EMAIL }) {
-  if (!RESEND_API_KEY) return { sent: false, skipped: 'RESEND_API_KEY not set' };
+  // Prefer Google Workspace (Gmail, DKIM-aligned as calo.app) when wired up; it
+  // reaches any staff inbox without a verified third-party sender domain. Resend
+  // stays as the fallback so nothing breaks if Gmail isn't configured.
+  if (gmailConfigured()) return sendGmail({ to, subject, html, from: process.env.GMAIL_SENDER });
+  if (!RESEND_API_KEY) return { sent: false, skipped: 'no email provider configured (set GMAIL_SENDER + GOOGLE_SERVICE_ACCOUNT_JSON, or RESEND_API_KEY)' };
   const recipients = (Array.isArray(to) ? to : [to]).filter(Boolean);
   if (!recipients.length) return { sent: false, skipped: 'no recipient' };
   try {

@@ -402,6 +402,9 @@ class ApiClient {
   async zeltMasterfileSheet(sheetId) {
     return this.request('/zelt/masterfile-sheet' + (sheetId ? `?sheetId=${encodeURIComponent(sheetId)}` : ''));
   }
+  async getActivity(limit = 200) {
+    return this.request('/auth/activity' + (limit ? `?limit=${encodeURIComponent(limit)}` : ''));
+  }
   async zeltSetHrAccess(userId, entities) {
     return this.request('/zelt/hr-access', { method: 'POST', body: JSON.stringify({ userId, entities }) });
   }

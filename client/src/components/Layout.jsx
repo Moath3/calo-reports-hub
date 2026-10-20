@@ -20,6 +20,7 @@ const navGroups = [
     { to: '/data-hygiene',    icon: 'ShieldCheck',    label: 'Data Hygiene', hrOrAdmin: true, beta: true },
     { to: '/mobility',        icon: 'TrendingUp',     label: 'Mobility', hrOrAdmin: true, beta: true },
     { to: '/entity-admins',   icon: 'Users',          label: 'Entity Admins', hrOrAdmin: true },
+    { to: '/activity',        icon: 'Activity',       label: 'Activity log', adminOnly: true },
   ]},
   { label: 'Reports', items: [
     { to: '/new',             icon: 'Plus',           label: 'New Report', accent: true },

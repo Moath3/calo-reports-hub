@@ -207,6 +207,20 @@ router.delete('/users/:id', requireAuth, requireAdmin, asyncHandler((req, res) =
 }));
 
 
+// GET /api/auth/activity — recent people-actions from the audit log (admin only).
+// Surfaces what's already captured in audit_log (logins, Zelt salary pulls, HR
+// access grants, user changes, …) joined to the actor. Newest first.
+router.get('/activity', requireAuth, requireAdmin, (req, res) => {
+  const db = getDb();
+  const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 200, 1), 1000);
+  const events = db.prepare(`
+    SELECT a.id, a.created_at, a.action, a.resource_type, a.resource_id, a.details, a.ip_address,
+           a.user_id, u.name AS user_name, u.email AS user_email
+    FROM audit_log a LEFT JOIN users u ON u.id = a.user_id
+    ORDER BY a.id DESC LIMIT ?`).all(limit);
+  res.json({ events });
+});
+
 // GET /api/auth/users-for-share — List active users for sharing UI (any authenticated user)
 router.get('/users-for-share', requireAuth, asyncHandler((req, res) => {
   const db = getDb();

@@ -16,6 +16,7 @@ import TimeAttendancePage from "./pages/TimeAttendancePage";
 import MobilityPage from "./pages/MobilityPage";
 import ZeltReportPage from "./pages/ZeltReportPage";
 import EntityAdminsPage from "./pages/EntityAdminsPage";
+import ActivityPage from "./pages/ActivityPage";
 
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth();
@@ -82,6 +83,7 @@ export default function App() {
         <Route path="data-hygiene" element={<HrRoute><ZeltAuditPage /></HrRoute>} />
         <Route path="mobility" element={<HrRoute><MobilityPage /></HrRoute>} />
         <Route path="entity-admins" element={<HrRoute><EntityAdminsPage /></HrRoute>} />
+        <Route path="activity" element={<AdminRoute><ActivityPage /></AdminRoute>} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

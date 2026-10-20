@@ -11,6 +11,7 @@ import {
   collectMasterfileRows,
 } from '../utils/masterfile';
 import { runStructureChecks } from '../utils/structureChecks';
+import WorkspaceEmailCheck from '../components/WorkspaceEmailCheck';
 
 const SEVERITY = {
   activeWithLeaveDate: 'high',
@@ -290,6 +291,8 @@ export default function ZeltAuditPage() {
         report={report}
         hasMasterfiles={Object.values(masterfiles || {}).some(mf => mf && Array.isArray(mf.rows) && mf.rows.length)}
       />
+
+      <WorkspaceEmailCheck />
 
       {/* Top stats */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12 }}>

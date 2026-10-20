@@ -37,6 +37,7 @@ import { getMobility } from '../services/zeltMobility.js';
 import { getWatchState, runSnapshotAndDiff, sendWeeklyDigestIfDue, sendCompExpiryDigestIfDue, sendCompEntityReportsIfDue, sendCompEntityEmailsIfDue, sendCompEmailTest, sendCompDMTest } from '../services/zeltWatcher.js';
 import { getDimensions, runReport, warmIndex, getIndexStatus, clearIndex, SENSITIVE_FIELDS } from '../services/zeltReport.js';
 import { isConfigured as gsheetConfigured, defaultSheetId, serviceAccountEmail, exportMasterfile } from '../services/googleSheets.js';
+import { directoryConfigured, isCaloEmail, lookupWorkspaceUser } from '../services/googleDirectory.js';
 
 const IS_PROD = process.env.NODE_ENV === 'production';
 // Per-process identity — if two requests report different BOOT_IDs, Render is
@@ -482,6 +483,17 @@ router.get('/masterfile-sheet', dataLimiter, requireAuth, requireHrOrAdmin, asyn
   const out = await exportMasterfile(req.query.sheetId);
   logZeltAudit(req.user.id, 'zelt.masterfileSheet', { sheetId: out.sheetId });
   res.json({ configured: true, ...out });
+}));
+
+// HR/admin: is a @calo.app address a real active Workspace account? The strongest
+// "is this new joiner real" signal — a fake word@calo.app has no directory account.
+router.get('/verify-email', dataLimiter, requireAuth, requireHrOrAdmin, asyncHandler(async (req, res) => {
+  const email = String(req.query.email || '').trim();
+  if (!directoryConfigured()) return res.json({ configured: false });
+  if (!isCaloEmail(email)) return res.json({ configured: true, ok: false, reason: 'not_calo', email });
+  const r = await lookupWorkspaceUser(email).catch(zeltUpstream('Workspace directory lookup failed'));
+  logZeltAudit(req.user.id, 'zelt.verifyEmail', { email: email.toLowerCase(), found: r.found, active: r.active ?? null });
+  res.json({ configured: true, ok: true, ...r });
 }));
 
 // Admin-only: which process/instance served this request + uptime.

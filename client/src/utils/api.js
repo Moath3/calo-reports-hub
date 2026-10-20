@@ -405,6 +405,9 @@ class ApiClient {
   async getActivity(limit = 200) {
     return this.request('/auth/activity' + (limit ? `?limit=${encodeURIComponent(limit)}` : ''));
   }
+  async zeltVerifyEmail(email) {
+    return this.request('/zelt/verify-email?email=' + encodeURIComponent(email));
+  }
   async zeltSetHrAccess(userId, entities) {
     return this.request('/zelt/hr-access', { method: 'POST', body: JSON.stringify({ userId, entities }) });
   }

@@ -784,8 +784,38 @@ function buildBriefHTML(r, color, colorDark, colorDeepest, title, accessPassword
 
 // ─── Public entry point — dispatches on variant + tweaks ─────────────────────
 
+// The AI emits the executive summary as a SECTION, not the top-level summary/
+// insights fields, so the brief/dashboard variants rendered empty. Derive them
+// from the matching sections — only when the top-level field is actually empty.
+function narrativeBlockText(b) {
+  if (!b) return '';
+  if (typeof b === 'string') return b;
+  if (Array.isArray(b.items)) return b.items.map(x => typeof x === 'string' ? x : ((x && (x.text || x.label)) || '')).filter(Boolean).join(' ');
+  return b.content || b.text || b.body || b.value || '';
+}
+function deriveNarrative(r) {
+  const sections = r.sections || [];
+  const byTitle = (re) => sections.find(s => re.test(String((s && s.title) || '')));
+  let summary = r.summary || '';
+  let insights = Array.isArray(r.insights) ? r.insights.slice() : [];
+  if (!summary) {
+    const s = byTitle(/exec(utive)?\s*summary|^\s*summary|overview/i);
+    if (s) summary = (s.blocks || []).map(narrativeBlockText).filter(Boolean).join(' ').trim();
+  }
+  if (!insights.length) {
+    const s = byTitle(/insight|highlight|takeaway|recommendation/i);
+    for (const b of (s && s.blocks) || []) {
+      if (Array.isArray(b.items)) insights.push(...b.items.map(x => typeof x === 'string' ? x : ((x && (x.text || x.label)) || '')).filter(Boolean));
+      else { const txt = narrativeBlockText(b); if (txt) insights.push(txt); }
+    }
+  }
+  return { summary, insights };
+}
+
 export function buildStandaloneHTML(reportData, brandColor, title, options = {}) {
-  const r = reportData || {};
+  const src = reportData || {};
+  const nar = deriveNarrative(src);
+  const r = { ...src, summary: nar.summary, insights: nar.insights };
   const gi = r.generalInfo || {};
   const color = brandColor || gi.brandColor || r.brandColor || "#02B376";
   const colorDark = "#027D53";

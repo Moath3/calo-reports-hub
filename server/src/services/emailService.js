@@ -103,11 +103,6 @@ function escapeHtml(s) {
 }
 
 export async function notifyAdminNewRegistration({ name, email, department }) {
-  if (!RESEND_API_KEY) {
-    console.warn('[Email] RESEND_API_KEY not set — skipping notification');
-    return;
-  }
-
   const html = `
     <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:480px;margin:0 auto;padding:24px;">
       <div style="background:#02B376;color:#fff;padding:16px 24px;border-radius:12px 12px 0 0;">
@@ -128,30 +123,9 @@ export async function notifyAdminNewRegistration({ name, email, department }) {
     </div>
   `;
 
-  try {
-    const res = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${RESEND_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        from: 'CALO Reports <onboarding@resend.dev>',
-        to: [ADMIN_EMAIL],
-        subject: `New Registration: ${name} (${email})`,
-        html,
-      }),
-    });
-
-    if (!res.ok) {
-      const err = await res.text();
-      console.error('[Email] Resend API error:', res.status, err);
-    } else {
-      console.log(`[Email] Admin notified about new registration: ${email}`);
-    }
-  } catch (err) {
-    console.error('[Email] Failed to send notification:', err.message);
-  }
+  const r = await sendEmail({ to: ADMIN_EMAIL, subject: `New Registration: ${name} (${email})`, html });
+  if (r.sent) console.log(`[Email] Admin notified about new registration: ${email}`);
+  else console.warn(`[Email] Registration alert not sent: ${r.skipped || r.error || 'unknown'}`);
 }
 
 /**
@@ -160,11 +134,6 @@ export async function notifyAdminNewRegistration({ name, email, department }) {
  * RESEND_API_KEY isn't configured.
  */
 export async function notifyAdminZeltRefreshFailing({ failureCount, lastError }) {
-  if (!RESEND_API_KEY) {
-    console.warn('[Email] RESEND_API_KEY not set — skipping zelt-refresh-failing notification');
-    return;
-  }
-
   const safeError = String(lastError || '').slice(0, 400).replace(/[<>]/g, '');
   const html = `
     <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:520px;margin:0 auto;padding:24px;">
@@ -182,23 +151,7 @@ export async function notifyAdminZeltRefreshFailing({ failureCount, lastError })
     </div>
   `;
 
-  try {
-    const res = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${RESEND_API_KEY}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        from: 'CALO Reports <onboarding@resend.dev>',
-        to: [ADMIN_EMAIL],
-        subject: `[CALO Hub] Zelt OAuth refresh failing (${failureCount}x)`,
-        html,
-      }),
-    });
-    if (!res.ok) {
-      console.error('[Email] Resend API error (zelt alert):', res.status, await res.text().catch(() => ''));
-    } else {
-      console.log('[Email] Admin notified: zelt refresh failing');
-    }
-  } catch (err) {
-    console.error('[Email] Failed to send zelt alert:', err.message);
-  }
+  const r = await sendEmail({ to: ADMIN_EMAIL, subject: `[CALO Hub] Zelt OAuth refresh failing (${failureCount}x)`, html });
+  if (r.sent) console.log('[Email] Admin notified: zelt refresh failing');
+  else console.warn(`[Email] Zelt alert not sent: ${r.skipped || r.error || 'unknown'}`);
 }

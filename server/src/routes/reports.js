@@ -88,27 +88,29 @@ router.get("/:id", requireAuth, loadReport({ full: true }), asyncHandler((req, r
 
 // POST / - Create
 router.post("/", requireAuth, asyncHandler((req, res) => {
-  const { title, description, reportData, reportHtml, sourceFilename, sourceData, aiProvider, tags } = req.body;
+  const { title, description, reportData, sourceFilename, sourceData, aiProvider, tags } = req.body;
   if (!title || !reportData) throw badRequest("Title and reportData required");
 
   const db = getDb();
   const id = uuid();
+  // report_html is intentionally not stored — the preview and every export rebuild
+  // the HTML from report_data, so persisting it only duplicated a large dead blob.
   db.prepare(
-    "INSERT INTO reports (id, user_id, title, description, report_data, report_html, source_filename, source_data, ai_provider, tags) VALUES (?,?,?,?,?,?,?,?,?,?)"
-  ).run(id, req.user.id, title, description || "", JSON.stringify(reportData), reportHtml || "", sourceFilename || "", sourceData ? JSON.stringify(sourceData) : null, aiProvider || "", JSON.stringify(tags || []));
+    "INSERT INTO reports (id, user_id, title, description, report_data, source_filename, source_data, ai_provider, tags) VALUES (?,?,?,?,?,?,?,?,?)"
+  ).run(id, req.user.id, title, description || "", JSON.stringify(reportData), sourceFilename || "", sourceData ? JSON.stringify(sourceData) : null, aiProvider || "", JSON.stringify(tags || []));
 
   res.status(201).json({ id, message: "Report created" });
 }));
 
 // PUT /:id
 router.put("/:id", requireAuth, loadReport(), requireReportOwner(), asyncHandler((req, res) => {
-  const { title, description, reportData, reportHtml, status, tags, netlifyUrl, visibility, sharedWith } = req.body;
+  const { title, description, reportData, status, tags, netlifyUrl, visibility, sharedWith } = req.body;
   getDb().prepare(
-    "UPDATE reports SET title=COALESCE(?,title), description=COALESCE(?,description), report_data=COALESCE(?,report_data), report_html=COALESCE(?,report_html), status=COALESCE(?,status), tags=COALESCE(?,tags), netlify_url=COALESCE(?,netlify_url), visibility=COALESCE(?,visibility), shared_with=COALESCE(?,shared_with), updated_at=CURRENT_TIMESTAMP WHERE id=?"
+    "UPDATE reports SET title=COALESCE(?,title), description=COALESCE(?,description), report_data=COALESCE(?,report_data), status=COALESCE(?,status), tags=COALESCE(?,tags), netlify_url=COALESCE(?,netlify_url), visibility=COALESCE(?,visibility), shared_with=COALESCE(?,shared_with), updated_at=CURRENT_TIMESTAMP WHERE id=?"
   ).run(
     title || null, description || null,
     reportData ? JSON.stringify(reportData) : null,
-    reportHtml || null, status || null,
+    status || null,
     tags ? JSON.stringify(tags) : null,
     netlifyUrl || null, visibility || null,
     sharedWith ? JSON.stringify(sharedWith) : null, req.params.id

@@ -511,7 +511,7 @@ router.get('/verify-email', dataLimiter, requireAuth, requireHrOrAdmin, asyncHan
   });
 }));
 
-// Admin-only: which process/instance served this request + uptime.
+// HR/admin: which process/instance served this request + uptime.
 router.get('/debug/instance', dataLimiter, requireAuth, requireHrOrAdmin, (req, res) => {
   res.set('Cache-Control', 'no-store');
   res.json({ bootId: BOOT_ID, pid: process.pid, uptimeSec: Math.round(process.uptime()), role: req.user.role });

@@ -20,12 +20,12 @@ function canViewReport(report, user, sharedWith) {
 // GET / - List reports (own or shared)
 router.get("/", requireAuth, asyncHandler((req, res) => {
   const db = getDb();
-  const { page = 1, limit = 20, status, search, visibility } = req.query;
+  const { page = 1, limit = 20, status, search, visibility, type } = req.query;
   const offset = (parseInt(page) - 1) * parseInt(limit);
   const params = [];
 
   let where;
-  let selectCols = "r.id, r.title, r.description, r.status, r.source_filename, r.ai_provider, r.tags, r.netlify_url, r.visibility, r.shared_with, r.created_at, r.updated_at";
+  let selectCols = "r.id, r.title, r.description, r.status, r.report_type, r.source_filename, r.ai_provider, r.tags, r.netlify_url, r.visibility, r.shared_with, r.created_at, r.updated_at";
 
   if (visibility === "shared") {
     // Show reports shared with this user: team-wide OR specifically shared with them
@@ -47,6 +47,10 @@ router.get("/", requireAuth, asyncHandler((req, res) => {
   if (search) {
     where += " AND (r.title LIKE ? OR r.description LIKE ?)";
     params.push("%" + search + "%", "%" + search + "%");
+  }
+  if (type && type !== "all") {
+    where += " AND r.report_type = ?";
+    params.push(type);
   }
 
   const total = db.prepare("SELECT COUNT(*) as count FROM reports r JOIN users u ON r.user_id = u.id " + where).get(...params).count;
@@ -88,7 +92,7 @@ router.get("/:id", requireAuth, loadReport({ full: true }), asyncHandler((req, r
 
 // POST / - Create
 router.post("/", requireAuth, asyncHandler((req, res) => {
-  const { title, description, reportData, sourceFilename, sourceData, aiProvider, tags } = req.body;
+  const { title, description, reportData, sourceFilename, sourceData, aiProvider, tags, reportType } = req.body;
   if (!title || !reportData) throw badRequest("Title and reportData required");
 
   const db = getDb();
@@ -96,24 +100,25 @@ router.post("/", requireAuth, asyncHandler((req, res) => {
   // report_html is intentionally not stored — the preview and every export rebuild
   // the HTML from report_data, so persisting it only duplicated a large dead blob.
   db.prepare(
-    "INSERT INTO reports (id, user_id, title, description, report_data, source_filename, source_data, ai_provider, tags) VALUES (?,?,?,?,?,?,?,?,?)"
-  ).run(id, req.user.id, title, description || "", JSON.stringify(reportData), sourceFilename || "", sourceData ? JSON.stringify(sourceData) : null, aiProvider || "", JSON.stringify(tags || []));
+    "INSERT INTO reports (id, user_id, title, description, report_data, source_filename, source_data, ai_provider, tags, report_type) VALUES (?,?,?,?,?,?,?,?,?,?)"
+  ).run(id, req.user.id, title, description || "", JSON.stringify(reportData), sourceFilename || "", sourceData ? JSON.stringify(sourceData) : null, aiProvider || "", JSON.stringify(tags || []), reportType || null);
 
   res.status(201).json({ id, message: "Report created" });
 }));
 
 // PUT /:id
 router.put("/:id", requireAuth, loadReport(), requireReportOwner(), asyncHandler((req, res) => {
-  const { title, description, reportData, status, tags, netlifyUrl, visibility, sharedWith } = req.body;
+  const { title, description, reportData, status, tags, netlifyUrl, visibility, sharedWith, reportType } = req.body;
   getDb().prepare(
-    "UPDATE reports SET title=COALESCE(?,title), description=COALESCE(?,description), report_data=COALESCE(?,report_data), status=COALESCE(?,status), tags=COALESCE(?,tags), netlify_url=COALESCE(?,netlify_url), visibility=COALESCE(?,visibility), shared_with=COALESCE(?,shared_with), updated_at=CURRENT_TIMESTAMP WHERE id=?"
+    "UPDATE reports SET title=COALESCE(?,title), description=COALESCE(?,description), report_data=COALESCE(?,report_data), status=COALESCE(?,status), tags=COALESCE(?,tags), netlify_url=COALESCE(?,netlify_url), visibility=COALESCE(?,visibility), shared_with=COALESCE(?,shared_with), report_type=COALESCE(?,report_type), updated_at=CURRENT_TIMESTAMP WHERE id=?"
   ).run(
     title || null, description || null,
     reportData ? JSON.stringify(reportData) : null,
     status || null,
     tags ? JSON.stringify(tags) : null,
     netlifyUrl || null, visibility || null,
-    sharedWith ? JSON.stringify(sharedWith) : null, req.params.id
+    sharedWith ? JSON.stringify(sharedWith) : null,
+    reportType ?? null, req.params.id
   );
   res.json({ message: "Report updated" });
 }));

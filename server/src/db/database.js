@@ -405,6 +405,7 @@ function initSchema() {
     "ALTER TABLE reports ADD COLUMN visibility TEXT DEFAULT 'private'",
     "ALTER TABLE reports ADD COLUMN netlify_site_id TEXT",
     "ALTER TABLE reports ADD COLUMN shared_with TEXT DEFAULT '[]'",
+    "ALTER TABLE reports ADD COLUMN report_type TEXT",
     "ALTER TABLE zelt_audit_snapshots ADD COLUMN flagged_employees INTEGER",
     "ALTER TABLE zelt_audit_snapshots ADD COLUMN live_users INTEGER",
   ];

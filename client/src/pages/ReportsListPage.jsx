@@ -13,6 +13,9 @@ const statusOpts = [
   { value: 'archived',  label: 'Archived' },
 ];
 
+// Report categories for filtering the shared reports area.
+const typeOpts = ['all', 'Compliance', 'Payroll', 'HR', 'Attendance', 'Growth', 'Operations', 'Other'];
+
 function statusPill(s) {
   const map = {
     published: { tone: 'solid', label: 'Live' },
@@ -33,6 +36,7 @@ export default function ReportsListPage() {
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [viewMode, setViewMode] = useState('mine');
+  const [typeFilter, setTypeFilter] = useState('all');
 
   const statusFilter = searchParams.get('status') || 'all';
   const [search, setSearch] = useState(searchParams.get('search') || '');
@@ -43,6 +47,7 @@ export default function ReportsListPage() {
       const params = { page: pg, limit: 12 };
       if (viewMode === 'shared') params.visibility = 'shared';
       else if (statusFilter !== 'all') params.status = statusFilter;
+      if (viewMode === 'mine' && typeFilter !== 'all') params.type = typeFilter;
       if (search.trim()) params.search = search.trim();
       const res = await api.getReports(params);
       setReports(res.reports || []);
@@ -56,7 +61,7 @@ export default function ReportsListPage() {
     }
   };
 
-  useEffect(() => { fetchReports(1); /* eslint-disable-next-line */ }, [statusFilter, viewMode]);
+  useEffect(() => { fetchReports(1); /* eslint-disable-next-line */ }, [statusFilter, viewMode, typeFilter]);
 
   const handleSearch = (e) => { e.preventDefault(); fetchReports(1); };
   const handleStatusChange = (val) => {
@@ -133,6 +138,17 @@ export default function ReportsListPage() {
             ))}
           </div>
         )}
+        {viewMode === 'mine' && (
+          <select
+            value={typeFilter}
+            onChange={e => setTypeFilter(e.target.value)}
+            className="input-field"
+            style={{ width: 'auto', padding: '8px 12px', fontWeight: 700, color: 'var(--ink-700)' }}
+            title="Filter by report type"
+          >
+            {typeOpts.map(t => <option key={t} value={t}>{t === 'all' ? 'All types' : t}</option>)}
+          </select>
+        )}
       </Card>
 
       {/* List */}
@@ -173,6 +189,7 @@ export default function ReportsListPage() {
               {r.visibility === 'shared' && viewMode === 'mine' && (
                 <Pill tone="blue" size="sm" icon="Users">Team</Pill>
               )}
+              {r.report_type && <Pill tone="neutral" size="sm">{r.report_type}</Pill>}
               {statusPill(r.status)}
               <div onClick={e => e.stopPropagation()} style={{ display: 'flex', gap: 4 }}>
                 {r.netlify_url && (

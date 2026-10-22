@@ -15,6 +15,8 @@ const AUTOSAVE_DEBOUNCE_MS = 2000;
 const SAVED_BADGE_MS = 2000;
 const CHAT_HISTORY_LIMIT = 6;
 const BULK_HISTORY_LIMIT = 4;
+// Report categories for the shared reports area (compliance, payroll, etc.).
+const REPORT_TYPES = ['Uncategorized', 'Compliance', 'Payroll', 'HR', 'Attendance', 'Growth', 'Operations', 'Other'];
 
 const BLOCK_TYPES = [
   { type: 'badge', label: 'Badge Header', icon: Type },
@@ -507,7 +509,7 @@ export default function ReportEditorPage() {
   useEffect(() => {
     if (!report || loading) return;
     // Skip if report hasn't changed from what we loaded/saved
-    const currentData = JSON.stringify({ title: report.title, description: report.description, report_data: report.report_data });
+    const currentData = JSON.stringify({ title: report.title, description: report.description, report_type: report.report_type, report_data: report.report_data });
     if (lastSavedRef.current === currentData) return;
     // First load — set initial snapshot, don't save
     if (lastSavedRef.current === null) {
@@ -520,7 +522,7 @@ export default function ReportEditorPage() {
     autoSaveTimer.current = setTimeout(async () => {
       try {
         setAutoSaveStatus('saving');
-        await api.updateReport(id, { title: report.title, description: report.description, reportData: report.report_data });
+        await api.updateReport(id, { title: report.title, description: report.description, reportType: report.report_type, reportData: report.report_data });
         lastSavedRef.current = currentData;
         setAutoSaveStatus('saved');
         setTimeout(() => setAutoSaveStatus(prev => prev === 'saved' ? '' : prev), SAVED_BADGE_MS);
@@ -530,7 +532,7 @@ export default function ReportEditorPage() {
     }, AUTOSAVE_DEBOUNCE_MS);
 
     return () => { if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current); };
-  }, [report?.title, report?.description, report?.report_data, id, loading]);
+  }, [report?.title, report?.description, report?.report_type, report?.report_data, id, loading]);
 
   const reportData = report?.report_data || { generalInfo: {}, sections: [] };
   const sections = reportData.sections || [];
@@ -596,7 +598,7 @@ export default function ReportEditorPage() {
     setSaving(true);
     try {
       await api.updateReport(id, { title: report.title, description: report.description, reportData: report.report_data });
-      lastSavedRef.current = JSON.stringify({ title: report.title, description: report.description, report_data: report.report_data });
+      lastSavedRef.current = JSON.stringify({ title: report.title, description: report.description, report_type: report.report_type, report_data: report.report_data });
       toast.success('Saved!');
     } catch (err) { toast.error(err.message || 'Save failed'); }
     finally { setSaving(false); }
@@ -739,6 +741,14 @@ export default function ReportEditorPage() {
             value={report.description || ''} onChange={e => setReport(prev => ({ ...prev, description: e.target.value }))} placeholder="Description..." />
         </div>
         <div className="flex items-center gap-2 shrink-0">
+          <select
+            className="input-field text-sm py-1.5"
+            value={report.report_type || ''}
+            onChange={e => setReport(prev => ({ ...prev, report_type: e.target.value }))}
+            title="Report type — files this report in the shared area by category"
+          >
+            {REPORT_TYPES.map(t => <option key={t} value={t === 'Uncategorized' ? '' : t}>{t}</option>)}
+          </select>
           {autoSaveStatus === 'saving' && (
             <span className="text-xs text-gray-400 flex items-center gap-1"><Loader2 className="h-3 w-3 animate-spin" /> Saving...</span>
           )}

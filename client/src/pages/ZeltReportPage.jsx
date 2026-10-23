@@ -53,7 +53,7 @@ function fmtVal(key, v) {
   return String(v);
 }
 
-export default function ZeltReportPage() {
+export default function ZeltReportPage({ embedded = false }) {
   const { user } = useAuth();
   const navigate = useNavigate();
   const isAdmin = user?.role === 'admin';
@@ -189,11 +189,13 @@ export default function ZeltReportPage() {
 
   return (
     <div className="animate-slide-up" style={{ maxWidth: 1200, margin: '0 auto' }}>
-      <PageHeader
-        eyebrow="REPORTS"
-        title="Report from Zelt"
-        subtitle="Filter live Zelt people by business line, org, department or entity — then generate a report or export."
-      />
+      {!embedded && (
+        <PageHeader
+          eyebrow="REPORTS"
+          title="Report from Zelt"
+          subtitle="Filter live Zelt people by business line, org, department or entity — then generate a report or export."
+        />
+      )}
 
       {/* Index building banner */}
       {!index.ready && (

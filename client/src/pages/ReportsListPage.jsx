@@ -27,7 +27,7 @@ function statusPill(s) {
   return <Pill tone={t.tone} size="sm">{t.label}</Pill>;
 }
 
-export default function ReportsListPage() {
+export default function ReportsListPage({ embedded = false }) {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [reports, setReports] = useState([]);
@@ -77,12 +77,14 @@ export default function ReportsListPage() {
 
   return (
     <div className="animate-slide-up">
-      <PageHeader
-        eyebrow="MY REPORTS"
-        title="All reports"
-        subtitle={`${total} report${total === 1 ? '' : 's'} across your workspace`}
-        actions={<Btn variant="primary" icon="Plus" onClick={() => navigate('/new')}>New report</Btn>}
-      />
+      {!embedded && (
+        <PageHeader
+          eyebrow="MY REPORTS"
+          title="All reports"
+          subtitle={`${total} report${total === 1 ? '' : 's'} across your workspace`}
+          actions={<Btn variant="primary" icon="Plus" onClick={() => navigate('/new')}>New report</Btn>}
+        />
+      )}
 
       {/* Toggle: mine / shared */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: 3, background: 'var(--ink-100)', borderRadius: 'var(--r-pill)', width: 'fit-content', marginBottom: 18 }}>

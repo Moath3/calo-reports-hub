@@ -4,7 +4,7 @@ import Layout from "./components/Layout";
 import LoginPage from "./pages/LoginPage";
 import DashboardPage from "./pages/DashboardPage";
 import NewReportPage from "./pages/NewReportPage";
-import ReportsListPage from "./pages/ReportsListPage";
+import ReportsHub from "./pages/ReportsHub";
 import ReportEditorPage from "./pages/ReportEditorPage";
 import ReportPreviewPage from "./pages/ReportPreviewPage";
 import TemplatesPage from "./pages/TemplatesPage";
@@ -72,7 +72,7 @@ export default function App() {
       <Route element={<ProtectedRoute><Layout /></ProtectedRoute>}>
         <Route index element={<DashboardPage />} />
         <Route path="new" element={<NewReportPage />} />
-        <Route path="reports" element={<ReportsListPage />} />
+        <Route path="reports" element={<ReportsHub />} />
         <Route path="reports/:id" element={<ReportEditorPage />} />
         <Route path="reports/:id/preview" element={<ReportPreviewPage />} />
         <Route path="templates" element={<TemplatesPage />} />

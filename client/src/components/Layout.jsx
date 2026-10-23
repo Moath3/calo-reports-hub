@@ -24,10 +24,7 @@ const navGroups = [
     { to: '/activity',        icon: 'Activity',       label: 'Activity log', adminOnly: true },
   ]},
   { label: 'Reports', items: [
-    { to: '/new',             icon: 'Plus',           label: 'New Report', accent: true },
-    { to: '/zelt-report',     icon: 'Table',          label: 'Report from Zelt', beta: true },
-    { to: '/reports',         icon: 'FolderOpen',     label: 'My Reports' },
-    { to: '/templates',       icon: 'LayoutTemplate', label: 'Templates' },
+    { to: '/reports',         icon: 'FileText',       label: 'Reports', accent: true },
   ]},
 ];
 

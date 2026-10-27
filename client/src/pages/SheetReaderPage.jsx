@@ -1,4 +1,6 @@
 import { useState, useMemo, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { api } from '../utils/api';
 import { Icon, Btn, Card, PageHeader } from '../components/ui';
 import { matchHeaders, COMPLIANCE_FIELDS } from '../utils/sheetFieldMatcher';
 
@@ -33,7 +35,9 @@ function detectHeaderRow(aoa, targets) {
   return best.idx;
 }
 
-export default function SheetReaderPage() {
+export default function SheetReaderPage({ embedded = false }) {
+  const navigate = useNavigate();
+  const [genBusy, setGenBusy] = useState(false);
   const [fileName, setFileName] = useState('');
   const [wbSheets, setWbSheets] = useState([]);   // [{ name, aoa }]
   const [sheetName, setSheetName] = useState('');
@@ -99,13 +103,68 @@ export default function SheetReaderPage() {
     }).filter(Boolean);
   }, [targets, rows, overrides, auto, alertDays]);
 
+  // Build a Compliance report straight from the mapped cells — deterministic and
+  // accurate (no AI guessing): KPI strip + snapshot metrics + expiring/expired tables
+  // per document + nationality breakdown, filed under the Compliance type.
+  const generateReport = async () => {
+    const idCol = colFor('employeeId'), nameCol = colFor('name'), natCol = colFor('nationality');
+    const now = Date.now();
+    const kpiStrip = [{ label: 'Records', value: String(rows.length) }];
+    for (const e of expirySummary) kpiStrip.push({ label: `${e.label} valid`, value: e.pct == null ? '—' : e.pct + '%', trend: e.pct === 100 ? 'up' : e.pct >= 90 ? 'stable' : 'down' });
+
+    const sections = [];
+    if (expirySummary.length) {
+      sections.push({
+        title: 'Compliance snapshot', icon: '📋',
+        blocks: [{
+          type: 'metrics', label: `Valid · expiring (≤${alertDays}d) · expired`,
+          items: expirySummary.flatMap((e) => [
+            { label: `${e.label} — valid`, value: String(e.valid), trend: 'stable' },
+            { label: `${e.label} — expiring`, value: String(e.expiring), trend: e.expiring > 0 ? 'down' : 'stable' },
+            { label: `${e.label} — expired`, value: String(e.expired), trend: e.expired > 0 ? 'down' : 'stable' },
+          ]),
+        }],
+      });
+    }
+    for (const t of targets.filter((x) => EXPIRY_KEYS.has(x.key))) {
+      const ci = colFor(t.key); if (ci < 0) continue;
+      const flagged = [];
+      for (const r of rows) {
+        const d = toDate(r[ci]); if (!d) continue;
+        const days = Math.round((d.getTime() - now) / 86400000);
+        if (days <= alertDays) flagged.push({ name: nameCol >= 0 ? String(r[nameCol] ?? '') : '', id: idCol >= 0 ? String(r[idCol] ?? '') : '', date: fmtDate(d), days, status: days < 0 ? 'Expired' : 'Expiring' });
+      }
+      if (!flagged.length) continue;
+      flagged.sort((a, b) => a.days - b.days);
+      sections.push({
+        title: `${t.label} — action needed (${flagged.length})`, icon: '⚠️',
+        blocks: [{ type: 'table', label: `Expired or expiring within ${alertDays} days`, headers: ['Name', 'Employee ID', 'Expiry', 'Days left', 'Status'], rows: flagged.slice(0, 300).map((f) => [f.name, f.id, f.date, String(f.days), f.status]) }],
+      });
+    }
+    if (natCol >= 0) {
+      const counts = {};
+      for (const r of rows) { const v = String(r[natCol] ?? '').trim(); if (v) counts[v] = (counts[v] || 0) + 1; }
+      const items = Object.entries(counts).sort((a, b) => b[1] - a[1]).map(([k, v]) => ({ key: k, value: String(v) }));
+      if (items.length) sections.push({ title: 'Nationality breakdown', icon: '🌍', blocks: [{ type: 'keyvalue', label: 'Headcount by nationality', items }] });
+    }
+    const title = `${(fileName || 'Compliance').replace(/\.[^.]+$/, '')} — Compliance`;
+    const reportData = { generalInfo: { title, reportDate: new Date().toLocaleDateString('en-GB'), brandColor: '#02B376', variant: 'dashboard', kpiStrip }, sections };
+    setGenBusy(true); setError(null);
+    try {
+      const res = await api.createReport({ title, reportData, sourceFilename: fileName, reportType: 'Compliance', tags: ['compliance', 'from-sheet'] });
+      navigate(`/reports/${res.id}/preview`);
+    } catch (e) { setError(e.message || 'Could not create the report'); } finally { setGenBusy(false); }
+  };
+
   return (
     <div style={{ maxWidth: 1100, margin: '0 auto', padding: '8px 4px 60px' }}>
-      <PageHeader
-        eyebrow="HR · tools"
-        title="Sheet field reader"
-        subtitle="Point it at a masterfile and it finds columns like “iqama expiry” wherever they are in the header, however they're spelled. Read in your browser — nothing is uploaded."
-      />
+      {!embedded && (
+        <PageHeader
+          eyebrow="HR · tools"
+          title="Report from a sheet"
+          subtitle="Upload a masterfile and it finds columns like “iqama expiry” wherever they are, however they're spelled, then generates an accurate Compliance report. Read in your browser — nothing is uploaded."
+        />
+      )}
 
       {error && <div style={{ marginBottom: 16, padding: '10px 14px', borderRadius: 10, background: '#FDECEC', border: '1px solid #f5c6c6', color: '#9f2f2f', fontSize: 14, fontWeight: 600 }}>{error}</div>}
 
@@ -121,6 +180,10 @@ export default function SheetReaderPage() {
             </select>
           )}
           {fileName && <span style={{ fontSize: 12.5, color: 'var(--ink-500)' }}>{fileName} · {rows.length} rows · {headers.length} columns</span>}
+          <div style={{ flex: 1 }} />
+          {headers.length > 0 && (
+            <Btn icon="Sparkles" onClick={generateReport} disabled={genBusy}>{genBusy ? 'Generating…' : 'Generate report'}</Btn>
+          )}
         </div>
       </Card>
 

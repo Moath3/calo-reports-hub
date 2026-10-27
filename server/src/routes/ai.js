@@ -32,6 +32,24 @@ function logUsage(userId, provider, result, requestType, duration) {
   }
 }
 
+// Redact salary / phone / personal-email before any NON-admin's data reaches the
+// external model. Key-based for structured fields; emails masked in free text.
+// Numeric values are left intact (reports are numbers-first). Admins are exempt.
+const PII_KEY = /salary|basic[\s_-]?pay|compensation|\bwage\b|\bphone\b|mobile|personal[\s_-]?e?-?mail|home[\s_-]?e?-?mail|\biban\b|bank[\s_-]?acc/i;
+const EMAIL_RE = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g;
+function scrubPII(v) {
+  if (typeof v === "string") return v.replace(EMAIL_RE, "[redacted-email]");
+  if (Array.isArray(v)) return v.map(scrubPII);
+  if (v && typeof v === "object") {
+    const out = {};
+    for (const [k, val] of Object.entries(v)) out[k] = PII_KEY.test(k) ? "[redacted]" : scrubPII(val);
+    return out;
+  }
+  return v;
+}
+// Only admins may send personal/salary data to the AI; everyone else is scrubbed.
+const forAI = (data, user) => (user && user.role === "admin" ? data : scrubPII(data));
+
 // POST /analyze — heavy-duty one-shot: Opus by default (smart routing)
 router.post("/analyze", requireAuth, asyncHandler(async (req, res) => {
   const { dataSummary, provider, customPrompt, templateId } = req.body;
@@ -48,7 +66,7 @@ router.post("/analyze", requireAuth, asyncHandler(async (req, res) => {
     }
   }
 
-  const systemPrompt = buildReportSystemPrompt(dataSummary, templateData);
+  const systemPrompt = buildReportSystemPrompt(forAI(dataSummary, req.user), templateData);
   let userMessage = "Please analyze this data and generate a comprehensive report. Return ONLY valid JSON.";
   if (customPrompt) userMessage += "\n\nAdditional instructions: " + customPrompt;
 
@@ -73,7 +91,7 @@ router.post("/chat", requireAuth, asyncHandler(async (req, res) => {
   if (!message) throw badRequest("Message is required");
 
   const systemPrompt = buildChatSystemPrompt();
-  const dynamicContext = buildChatContextBlock(reportContext);
+  const dynamicContext = buildChatContextBlock(forAI(reportContext, req.user));
   let userMessage = message;
   if (history && history.length > 0) {
     const contextMsgs = history.slice(-CHAT_HISTORY_TURNS).map(m => m.role + ": " + m.content).join("\n");
@@ -113,7 +131,7 @@ router.post("/refine", requireAuth, asyncHandler(async (req, res) => {
     throw badRequest("reportData, sectionIndex, and instruction are required");
   }
 
-  const section = reportData.sections?.[sectionIndex];
+  const section = forAI(reportData, req.user).sections?.[sectionIndex];
   if (!section) throw badRequest("Section not found at index " + sectionIndex);
 
   const systemPrompt = buildRefineSystemPrompt(section, instruction);

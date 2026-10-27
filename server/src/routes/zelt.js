@@ -291,7 +291,7 @@ router.post('/cache/clear', oauthLimiter, requireAuth, requireAdmin, (req, res) 
 
 // Data hygiene audit — surfaces flagged employees against 10+ checks.
 // `?force=1` clears caches first so Refresh actually re-pulls live data.
-router.get('/audit', dataLimiter, requireAuth, asyncHandler(async (req, res) => {
+router.get('/audit', dataLimiter, requireAuth, requireHrOrAdmin, asyncHandler(async (req, res) => {
   const forceRefresh = req.query.force === '1' || req.query.force === 'true';
   const report = await runAudit({ forceRefresh }).catch(zeltUpstream('Audit failed'));
   res.json(report);

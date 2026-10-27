@@ -5,7 +5,7 @@ import api from '../utils/api';
 import toast from 'react-hot-toast';
 import {
   ArrowLeft, Globe, Edit, Loader2, Copy,
-  FileDown, ExternalLink, CheckCircle, CheckCircle2, Printer, ImageDown, Shield, Users, LockKeyhole, CircleDot, Share2, Search, UserCheck, X, Sliders
+  FileDown, ExternalLink, CheckCircle, CheckCircle2, Printer, ImageDown, Shield, Users, LockKeyhole, CircleDot, Share2, Search, UserCheck, X, Sliders, Save
 } from 'lucide-react';
 
 // XSS guard for the client-side fallback renderer. Mirrors server htmlBuilder's
@@ -662,8 +662,13 @@ export default function ReportPreviewPage() {
               <Share2 className="h-4 w-4" /> Share
             </button>
           )}
+          {isOwner && (
+            <button onClick={handleSaveTweaks} disabled={savingTweaks} className="btn-secondary flex items-center gap-2 text-sm">
+              {savingTweaks ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} {savingTweaks ? 'Saving…' : 'Save'}
+            </button>
+          )}
           <button onClick={() => setShowPublishPanel(!showPublishPanel)} disabled={publishing} className="btn-primary flex items-center gap-2 text-sm">
-            {publishing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Globe className="h-4 w-4" />} Publish
+            {publishing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Globe className="h-4 w-4" />} Publish online
           </button>
         </div>
       </div>
@@ -972,7 +977,7 @@ export default function ReportPreviewPage() {
         <div className="card p-4 border-blue-200 bg-blue-50/50 space-y-3">
           <div className="flex items-center justify-between">
             <h3 className="font-semibold text-gray-900 flex items-center gap-2">
-              <Globe className="h-4 w-4 text-blue-600" /> Publish to Netlify
+              <Globe className="h-4 w-4 text-blue-600" /> Publish online — get a shareable link
             </h3>
             <button onClick={() => setShowPublishPanel(false)} className="text-gray-400 hover:text-gray-600 text-sm">✕</button>
           </div>

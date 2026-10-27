@@ -230,7 +230,8 @@ export function buildReportSystemPrompt(dataSummary, templateData) {
     "  },\n" +
     "  \"sections\": [{ \"title\": \"Section\", \"icon\": \"emoji\", \"blocks\": [...] }]\n" +
     "}\n\n" +
-    "The FIRST section MUST be titled \"Executive Summary\" and contain a notes block whose items are the executive summary sentences followed by 3-5 actionable insights. " +
+    "Lead with the NUMBERS. Put the headline figures in generalInfo.kpiStrip and make every section data-first: prefer metrics, tables, charts, keyvalue and comparison blocks over prose. " +
+    "Do NOT add an \"Executive Summary\" section or any long narrative automatically. Only include a short notes block when a specific figure genuinely needs a one-line caption, and keep text terse. Favour analytics over explanation. " +
     "Do NOT emit top-level \"summary\", \"insights\", \"kpis\", or \"title\" fields — everything lives in generalInfo and sections.\n\n" +
     "BLOCK TYPE SCHEMAS (ALL values MUST be strings; the ONLY exception is chart datasets \"data\", which are numbers):\n" +
     "1. badge: {\"type\":\"badge\",\"title\":\"T\",\"subtitle\":\"S\",\"period\":\"P\",\"label\":\"L\",\"style\":\"green|amber|red|blue\"}\n" +
@@ -256,10 +257,11 @@ export function buildReportSystemPrompt(dataSummary, templateData) {
       "ALL values MUST be strings (even numbers: \"1234\" not 1234).\n\n" +
       "TEMPLATE JSON:\n" + JSON.stringify(templateData, null, 2) + "\n\n";
   } else {
-    prompt += "GUIDELINES:\n- Identify 4-6 KPIs for generalInfo.kpiStrip\n" +
-      "- First section: \"Executive Summary\" (notes block — summary sentences + 3-5 actionable insights as items)\n" +
-      "- Then create 4-8 content sections\n- Use charts for numerical data\n- Use comparisons for paired data\n" +
-      "- Write insightful analysis\n- ALL values as strings (chart datasets \"data\" excepted)\n\n";
+    prompt += "GUIDELINES:\n- Identify 4-6 headline KPIs for generalInfo.kpiStrip (the most important numbers)\n" +
+      "- Build 4-8 DATA-FIRST sections: lead each with metrics, tables, charts, keyvalue or comparison blocks\n" +
+      "- Use charts for numerical/trend data; tables for row data; comparisons for paired data\n" +
+      "- Do NOT add an Executive Summary or narrative section automatically; only add a short notes block when a number needs a one-line caption, kept brief\n" +
+      "- Favour numbers and analytics over explanation\n- ALL values as strings (chart datasets \"data\" excepted)\n\n";
   }
 
   prompt += "DATA:\n" + JSON.stringify(dataSummary, null, 2);

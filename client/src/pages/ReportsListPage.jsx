@@ -41,6 +41,8 @@ export default function ReportsListPage({ embedded = false }) {
   const [viewMode, setViewMode] = useState('mine');
   const [typeFilter, setTypeFilter] = useState('all');
   const [authorFilter, setAuthorFilter] = useState('');
+  const [collapsed, setCollapsed] = useState(() => new Set()); // collapsed folder types
+  const toggleFolder = (type) => setCollapsed(s => { const n = new Set(s); n.has(type) ? n.delete(type) : n.add(type); return n; });
 
   const statusFilter = searchParams.get('status') || 'all';
   const [search, setSearch] = useState(searchParams.get('search') || '');
@@ -49,7 +51,7 @@ export default function ReportsListPage({ embedded = false }) {
     setLoading(true);
     try {
       const params = { page: pg, limit: viewMode === 'shared' ? 12 : 50 };
-      if (viewMode === 'shared') params.visibility = 'shared';
+      if (viewMode === 'shared') { params.visibility = 'shared'; if (authorFilter.trim()) params.author = authorFilter.trim(); }
       else if (viewMode === 'all') { params.view = 'all'; if (authorFilter.trim()) params.author = authorFilter.trim(); }
       else if (statusFilter !== 'all') params.status = statusFilter;
       if ((viewMode === 'mine' || viewMode === 'all') && typeFilter !== 'all') params.type = typeFilter;
@@ -219,15 +221,15 @@ export default function ReportsListPage({ embedded = false }) {
             {typeOpts.map(t => <option key={t} value={t}>{t === 'all' ? 'All types' : t}</option>)}
           </select>
         )}
-        {viewMode === 'all' && (
+        {(viewMode === 'all' || viewMode === 'shared') && (
           <input
             className="input-field"
             style={{ width: 'auto', minWidth: 170, padding: '8px 12px' }}
-            placeholder="Filter by person…"
+            placeholder="Filter by author…"
             value={authorFilter}
             onChange={e => setAuthorFilter(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter') fetchReports(1); }}
-            title="Filter by report owner (name or email) — press Enter"
+            title="Filter by report author (name or email) — press Enter"
           />
         )}
       </Card>
@@ -239,16 +241,24 @@ export default function ReportsListPage({ embedded = false }) {
         </div>
       ) : reports.length > 0 ? (
         (viewMode === 'mine' || viewMode === 'all') ? (
-          groupByType(reports).map(([type, rows]) => (
-            <div key={type} style={{ marginBottom: 20 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '2px 2px 8px' }}>
-                <Icon name="Folder" size={15} color="var(--calo-700)" />
-                <span style={{ fontSize: 13, fontWeight: 900, color: 'var(--ink-900)', letterSpacing: '-0.01em' }}>{type}</span>
-                <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--ink-400)' }}>· {rows.length}</span>
+          groupByType(reports).map(([type, rows]) => {
+            const isCollapsed = collapsed.has(type);
+            return (
+              <div key={type} style={{ marginBottom: 20 }}>
+                <button
+                  onClick={() => toggleFolder(type)}
+                  style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '2px 2px 8px', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+                  title={isCollapsed ? 'Expand' : 'Minimise'}
+                >
+                  <Icon name={isCollapsed ? 'ChevronRight' : 'ChevronDown'} size={15} color="var(--ink-400)" />
+                  <Icon name="Folder" size={15} color="var(--calo-700)" />
+                  <span style={{ fontSize: 13, fontWeight: 900, color: 'var(--ink-900)', letterSpacing: '-0.01em' }}>{type}</span>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--ink-400)' }}>· {rows.length}</span>
+                </button>
+                {!isCollapsed && <Card padding={0}>{rows.map((r, i) => renderRow(r, i, rows.length))}</Card>}
               </div>
-              <Card padding={0}>{rows.map((r, i) => renderRow(r, i, rows.length))}</Card>
-            </div>
-          ))
+            );
+          })
         ) : (
           <Card padding={0}>{reports.map((r, i) => renderRow(r, i, reports.length))}</Card>
         )

@@ -18,8 +18,8 @@ export default function ReportsHub() {
   return (
     <div className="animate-slide-up">
       <PageHeader
-        eyebrow="REPORTS"
-        title="Reports"
+        eyebrow="WORKSPACE"
+        title="Reports Dashboard"
         subtitle="Create, browse, and generate reports — all in one place."
         actions={tab !== 'new' ? <Btn variant="primary" icon="Plus" onClick={() => setTab('new')}>New report</Btn> : null}
       />

@@ -578,7 +578,7 @@ export default function ReportPreviewPage() {
     <div className="space-y-4 animate-in">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center gap-3">
-        <button onClick={() => navigate(`/reports/${id}`)} className="btn-ghost p-2 self-start">
+        <button onClick={() => navigate('/reports')} className="btn-ghost p-2 self-start" title="Back to reports">
           <ArrowLeft className="h-5 w-5" />
         </button>
         <div className="flex-1 min-w-0">

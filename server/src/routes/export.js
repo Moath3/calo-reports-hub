@@ -8,6 +8,17 @@ import { HttpError, badRequest, notFound, forbidden } from "../utils/httpError.j
 
 const router = Router();
 
+// Public Netlify URLs are unauthenticated, so a sensitive report must be
+// password-gated: Compliance/Payroll/HR types, or any report whose data carries
+// an email address or salary/ID keywords.
+const SENSITIVE_TYPES = new Set(["Compliance", "Payroll", "HR"]);
+function reportLooksSensitive(reportType, reportData) {
+  if (SENSITIVE_TYPES.has(reportType)) return true;
+  const s = JSON.stringify(reportData || "");
+  if (/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/.test(s)) return true;
+  return /salary|basic\s?pay|compensation|\bwage\b|\biqama\b|passport|national\s?id|\biban\b|work\s?permit|\bvisa\b/i.test(s);
+}
+
 // HTML export — supports optional password protection + full tweak options
 router.post("/html", requireAuth, asyncHandler((req, res) => {
   const { reportData, brandColor, title, password, variant, tweaks } = req.body;
@@ -36,7 +47,7 @@ router.post("/netlify", requireAuth, asyncHandler(async (req, res) => {
 
   // Ownership gate — only the report's owner (or an admin) may publish it.
   const db = getDb();
-  const report = db.prepare("SELECT user_id, report_data, title, netlify_site_id, netlify_url FROM reports WHERE id = ?").get(reportId);
+  const report = db.prepare("SELECT user_id, report_data, report_type, title, netlify_site_id, netlify_url FROM reports WHERE id = ?").get(reportId);
   if (!report) throw notFound("Report not found");
   if (report.user_id !== req.user.id && req.user.role !== "admin") {
     throw forbidden("You can only publish your own reports");
@@ -47,6 +58,9 @@ router.post("/netlify", requireAuth, asyncHandler(async (req, res) => {
   let reportData;
   try { reportData = JSON.parse(report.report_data || "{}"); }
   catch { throw badRequest("Stored report data is invalid"); }
+  if (!password && reportLooksSensitive(report.report_type, reportData)) {
+    throw badRequest("This report looks sensitive (salary or personal data). Set an access code before publishing it to a public link.");
+  }
   const options = {};
   if (password) options.password = password;
   if (variant) options.variant = variant;

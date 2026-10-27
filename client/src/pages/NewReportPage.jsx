@@ -126,7 +126,7 @@ export default function NewReportPage() {
   const [templates, setTemplates] = useState([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState('');
   const [style, setStyle] = useState('standard');
-  const [variant, setVariant] = useState('editorial'); // visual output layout
+  const [variant, setVariant] = useState('dashboard'); // visual output layout — dashboard (KPI-tile) look by default
 
   // Chat-first creation: multi-turn conversation before generation
   const [chatInput, setChatInput] = useState('');
@@ -261,7 +261,8 @@ export default function NewReportPage() {
         tags: [],
       });
       toast.success('Report generated!');
-      navigate(`/reports/${createRes.id}`);
+      // Preview-first: show the generated report, then the owner edits from there.
+      navigate(`/reports/${createRes.id}/preview`);
     } catch (err) {
       toast.error(err.message || 'AI generation failed');
       setPhase('preview');

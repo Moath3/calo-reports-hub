@@ -243,6 +243,7 @@ export default function ReportPreviewPage() {
 
   // Tweak panel — modular report styling
   const [showTweaks, setShowTweaks] = useState(false);
+  const [advanced, setAdvanced] = useState(false); // density/width/section toggles hidden by default — keeps Tweaks simple
   const [variant, setVariant] = useState('editorial');
   const [brandColor, setBrandColor] = useState('#02B376');
   const [density, setDensity] = useState('comfortable');
@@ -715,8 +716,8 @@ export default function ReportPreviewPage() {
             </div>
           </div>
 
-          {/* 2. Density + Page width (two-col) */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 18, marginBottom: 18 }}>
+          {/* 2. Density + Page width — advanced only */}
+          {advanced && (<div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 18, marginBottom: 18 }}>
             <div>
               <div style={{ fontSize: 11, fontWeight: 900, letterSpacing: '.1em', textTransform: 'uppercase', color: 'var(--ink-500)', marginBottom: 10 }}>
                 Density
@@ -757,7 +758,7 @@ export default function ReportPreviewPage() {
                 ))}
               </div>
             </div>
-          </div>
+          </div>)}
 
           {/* 3. Accent color */}
           <div style={{ marginBottom: 18 }}>
@@ -798,8 +799,8 @@ export default function ReportPreviewPage() {
             </div>
           </div>
 
-          {/* 4. Section visibility + densify */}
-          <div style={{ marginBottom: 14 }}>
+          {/* 4. Section visibility + densify — advanced only */}
+          {advanced && (<div style={{ marginBottom: 14 }}>
             <div style={{ fontSize: 11, fontWeight: 900, letterSpacing: '.1em', textTransform: 'uppercase', color: 'var(--ink-500)', marginBottom: 10 }}>
               Show in report
             </div>
@@ -844,7 +845,15 @@ export default function ReportPreviewPage() {
                 <span>Summarize sections (keep data blocks, trim long notes)</span>
               </label>
             )}
-          </div>
+          </div>)}
+
+          {/* Advanced options toggle — keeps the default panel to Layout + Accent only */}
+          <button
+            onClick={() => setAdvanced(a => !a)}
+            style={{ background: 'none', border: 'none', color: 'var(--ink-500)', fontSize: 12, fontWeight: 700, cursor: 'pointer', padding: '4px 0', marginBottom: 12 }}
+          >
+            {advanced ? '− Hide advanced options' : '+ Advanced options (density, width, section toggles)'}
+          </button>
 
           <div style={{ display: 'flex', gap: 8, paddingTop: 14, borderTop: '1px solid var(--ink-100)' }}>
             <button

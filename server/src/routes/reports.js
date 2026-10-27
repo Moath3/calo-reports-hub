@@ -20,14 +20,18 @@ function canViewReport(report, user, sharedWith) {
 // GET / - List reports (own or shared)
 router.get("/", requireAuth, asyncHandler((req, res) => {
   const db = getDb();
-  const { page = 1, limit = 20, status, search, visibility, type } = req.query;
+  const { page = 1, limit = 20, status, search, visibility, type, view, author } = req.query;
   const offset = (parseInt(page) - 1) * parseInt(limit);
   const params = [];
 
   let where;
   let selectCols = "r.id, r.title, r.description, r.status, r.report_type, r.source_filename, r.ai_provider, r.tags, r.netlify_url, r.visibility, r.shared_with, r.created_at, r.updated_at";
 
-  if (visibility === "shared") {
+  if (view === "all" && req.user.role === "admin") {
+    // Admin: every report in the workspace, with its owner shown.
+    where = "WHERE 1=1";
+    selectCols += ", u.name as author_name";
+  } else if (visibility === "shared") {
     // Show reports shared with this user: team-wide OR specifically shared with them
     const userIdPattern = '%"' + req.user.id + '"%';
     where = "WHERE (r.visibility = 'shared' OR (r.visibility = 'specific' AND r.shared_with LIKE ?)) AND r.user_id != ?";
@@ -51,6 +55,10 @@ router.get("/", requireAuth, asyncHandler((req, res) => {
   if (type && type !== "all") {
     where += " AND r.report_type = ?";
     params.push(type);
+  }
+  if (author) {
+    where += " AND (u.name LIKE ? OR u.email LIKE ?)";
+    params.push("%" + author + "%", "%" + author + "%");
   }
 
   const total = db.prepare("SELECT COUNT(*) as count FROM reports r JOIN users u ON r.user_id = u.id " + where).get(...params).count;

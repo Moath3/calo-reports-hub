@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useAuth } from '../contexts/AuthContext';
 import api from '../utils/api';
 import toast from 'react-hot-toast';
 import { format } from 'date-fns';
@@ -29,6 +30,8 @@ function statusPill(s) {
 
 export default function ReportsListPage({ embedded = false }) {
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
   const [searchParams, setSearchParams] = useSearchParams();
   const [reports, setReports] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -37,6 +40,7 @@ export default function ReportsListPage({ embedded = false }) {
   const [totalPages, setTotalPages] = useState(1);
   const [viewMode, setViewMode] = useState('mine');
   const [typeFilter, setTypeFilter] = useState('all');
+  const [authorFilter, setAuthorFilter] = useState('');
 
   const statusFilter = searchParams.get('status') || 'all';
   const [search, setSearch] = useState(searchParams.get('search') || '');
@@ -46,8 +50,9 @@ export default function ReportsListPage({ embedded = false }) {
     try {
       const params = { page: pg, limit: 12 };
       if (viewMode === 'shared') params.visibility = 'shared';
+      else if (viewMode === 'all') { params.view = 'all'; if (authorFilter.trim()) params.author = authorFilter.trim(); }
       else if (statusFilter !== 'all') params.status = statusFilter;
-      if (viewMode === 'mine' && typeFilter !== 'all') params.type = typeFilter;
+      if ((viewMode === 'mine' || viewMode === 'all') && typeFilter !== 'all') params.type = typeFilter;
       if (search.trim()) params.search = search.trim();
       const res = await api.getReports(params);
       setReports(res.reports || []);
@@ -91,6 +96,7 @@ export default function ReportsListPage({ embedded = false }) {
         {[
           { id: 'mine',   label: 'My reports',  icon: 'LockKeyhole' },
           { id: 'shared', label: 'Shared with me', icon: 'Users' },
+          ...(isAdmin ? [{ id: 'all', label: 'All reports', icon: 'Globe' }] : []),
         ].map(t => (
           <button
             key={t.id}
@@ -140,7 +146,7 @@ export default function ReportsListPage({ embedded = false }) {
             ))}
           </div>
         )}
-        {viewMode === 'mine' && (
+        {(viewMode === 'mine' || viewMode === 'all') && (
           <select
             value={typeFilter}
             onChange={e => setTypeFilter(e.target.value)}
@@ -150,6 +156,17 @@ export default function ReportsListPage({ embedded = false }) {
           >
             {typeOpts.map(t => <option key={t} value={t}>{t === 'all' ? 'All types' : t}</option>)}
           </select>
+        )}
+        {viewMode === 'all' && (
+          <input
+            className="input-field"
+            style={{ width: 'auto', minWidth: 170, padding: '8px 12px' }}
+            placeholder="Filter by person…"
+            value={authorFilter}
+            onChange={e => setAuthorFilter(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') fetchReports(1); }}
+            title="Filter by report owner (name or email) — press Enter"
+          />
         )}
       </Card>
 
@@ -163,7 +180,7 @@ export default function ReportsListPage({ embedded = false }) {
           {reports.map((r, i) => (
             <div
               key={r.id}
-              onClick={() => navigate(viewMode === 'shared' ? `/reports/${r.id}/preview` : `/reports/${r.id}`)}
+              onClick={() => navigate(viewMode === 'mine' ? `/reports/${r.id}` : `/reports/${r.id}/preview`)}
               style={{
                 padding: '16px 22px',
                 borderBottom: i < reports.length - 1 ? '1px solid var(--ink-100)' : 'none',
@@ -183,7 +200,7 @@ export default function ReportsListPage({ embedded = false }) {
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 15, fontWeight: 900, letterSpacing: '-0.01em', color: 'var(--ink-900)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.title}</div>
                 <div style={{ fontSize: 12, color: 'var(--ink-500)', marginTop: 2, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                  {r.author_name && viewMode === 'shared' && <span style={{ color: 'var(--calo-700)', fontWeight: 700 }}>{r.author_name}</span>}
+                  {r.author_name && (viewMode === 'shared' || viewMode === 'all') && <span style={{ color: 'var(--calo-700)', fontWeight: 700 }}>{r.author_name}</span>}
                   {r.description && <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.description}</span>}
                   {!r.description && r.updated_at && <span>{format(new Date(r.updated_at), 'MMM d, yyyy')}</span>}
                 </div>
@@ -203,7 +220,7 @@ export default function ReportsListPage({ embedded = false }) {
                     <Icon name="ExternalLink" size={15} />
                   </a>
                 )}
-                {viewMode === 'mine' && (
+                {(viewMode === 'mine' || (viewMode === 'all' && isAdmin)) && (
                   <button onClick={() => handleDelete(r.id, r.title)} title="Delete"
                     style={{ padding: 8, color: 'var(--danger)', background: 'none', border: 'none', borderRadius: 8, cursor: 'pointer', display: 'inline-flex' }}
                     onMouseEnter={e => e.currentTarget.style.background = '#FDECEC'}

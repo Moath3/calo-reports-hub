@@ -48,7 +48,7 @@ export default function ReportsListPage({ embedded = false }) {
   const fetchReports = async (pg = page) => {
     setLoading(true);
     try {
-      const params = { page: pg, limit: 12 };
+      const params = { page: pg, limit: viewMode === 'shared' ? 12 : 50 };
       if (viewMode === 'shared') params.visibility = 'shared';
       else if (viewMode === 'all') { params.view = 'all'; if (authorFilter.trim()) params.author = authorFilter.trim(); }
       else if (statusFilter !== 'all') params.status = statusFilter;
@@ -79,6 +79,68 @@ export default function ReportsListPage({ embedded = false }) {
     try { await api.deleteReport(id); toast.success('Report deleted'); fetchReports(); }
     catch { toast.error('Failed to delete'); }
   };
+
+  // Group the loaded reports into folders by type — known types first, Uncategorized last.
+  const groupByType = (list) => {
+    const known = typeOpts.filter(t => t !== 'all');
+    const groups = {};
+    for (const r of list) { const t = r.report_type || 'Uncategorized'; (groups[t] || (groups[t] = [])).push(r); }
+    return Object.keys(groups)
+      .sort((a, b) => {
+        if (a === 'Uncategorized') return 1;
+        if (b === 'Uncategorized') return -1;
+        const ia = known.indexOf(a), ib = known.indexOf(b);
+        return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib) || a.localeCompare(b);
+      })
+      .map(k => [k, groups[k]]);
+  };
+
+  const renderRow = (r, i, n) => (
+    <div
+      key={r.id}
+      onClick={() => navigate(viewMode === 'mine' ? `/reports/${r.id}` : `/reports/${r.id}/preview`)}
+      style={{
+        padding: '16px 22px',
+        borderBottom: i < n - 1 ? '1px solid var(--ink-100)' : 'none',
+        display: 'flex', alignItems: 'center', gap: 14,
+        cursor: 'pointer', transition: 'background .15s',
+      }}
+      onMouseEnter={e => e.currentTarget.style.background = 'var(--ink-50)'}
+      onMouseLeave={e => e.currentTarget.style.background = '#fff'}
+    >
+      <div style={{ width: 40, height: 40, borderRadius: 10, background: 'var(--calo-50)', display: 'grid', placeItems: 'center', flexShrink: 0 }}>
+        <Icon name="FileText" size={18} color="var(--calo-700)" />
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 15, fontWeight: 900, letterSpacing: '-0.01em', color: 'var(--ink-900)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.title}</div>
+        <div style={{ fontSize: 12, color: 'var(--ink-500)', marginTop: 2, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          {r.author_name && (viewMode === 'shared' || viewMode === 'all') && <span style={{ color: 'var(--calo-700)', fontWeight: 700 }}>{r.author_name}</span>}
+          {r.description && <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.description}</span>}
+          {!r.description && r.updated_at && <span>{format(new Date(r.updated_at), 'MMM d, yyyy')}</span>}
+        </div>
+      </div>
+      {r.visibility === 'shared' && viewMode === 'mine' && (<Pill tone="blue" size="sm" icon="Users">Team</Pill>)}
+      {r.report_type && <Pill tone="neutral" size="sm">{r.report_type}</Pill>}
+      {statusPill(r.status)}
+      <div onClick={e => e.stopPropagation()} style={{ display: 'flex', gap: 4 }}>
+        {r.netlify_url && (
+          <a href={r.netlify_url} target="_blank" rel="noopener noreferrer" title="Open published"
+            style={{ padding: 8, color: 'var(--ink-500)', borderRadius: 8, display: 'inline-flex' }}
+            onMouseEnter={e => e.currentTarget.style.background = 'var(--ink-100)'}
+            onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+          ><Icon name="ExternalLink" size={15} /></a>
+        )}
+        {(viewMode === 'mine' || (viewMode === 'all' && isAdmin)) && (
+          <button onClick={() => handleDelete(r.id, r.title)} title="Delete"
+            style={{ padding: 8, color: 'var(--danger)', background: 'none', border: 'none', borderRadius: 8, cursor: 'pointer', display: 'inline-flex' }}
+            onMouseEnter={e => e.currentTarget.style.background = '#FDECEC'}
+            onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+          ><Icon name="Trash2" size={15} /></button>
+        )}
+      </div>
+      <Icon name="ChevronRight" size={16} color="var(--ink-400)" />
+    </div>
+  );
 
   return (
     <div className="animate-slide-up">
@@ -176,64 +238,20 @@ export default function ReportsListPage({ embedded = false }) {
           <div style={{ width: 32, height: 32, borderRadius: 16, border: '3px solid var(--calo-100)', borderTopColor: 'var(--calo-500)', animation: 'spinner 1s linear infinite' }} />
         </div>
       ) : reports.length > 0 ? (
-        <Card padding={0}>
-          {reports.map((r, i) => (
-            <div
-              key={r.id}
-              onClick={() => navigate(viewMode === 'mine' ? `/reports/${r.id}` : `/reports/${r.id}/preview`)}
-              style={{
-                padding: '16px 22px',
-                borderBottom: i < reports.length - 1 ? '1px solid var(--ink-100)' : 'none',
-                display: 'flex', alignItems: 'center', gap: 14,
-                cursor: 'pointer', transition: 'background .15s',
-              }}
-              onMouseEnter={e => e.currentTarget.style.background = 'var(--ink-50)'}
-              onMouseLeave={e => e.currentTarget.style.background = '#fff'}
-            >
-              <div style={{
-                width: 40, height: 40, borderRadius: 10,
-                background: 'var(--calo-50)',
-                display: 'grid', placeItems: 'center', flexShrink: 0,
-              }}>
-                <Icon name="FileText" size={18} color="var(--calo-700)" />
+        (viewMode === 'mine' || viewMode === 'all') ? (
+          groupByType(reports).map(([type, rows]) => (
+            <div key={type} style={{ marginBottom: 20 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '2px 2px 8px' }}>
+                <Icon name="Folder" size={15} color="var(--calo-700)" />
+                <span style={{ fontSize: 13, fontWeight: 900, color: 'var(--ink-900)', letterSpacing: '-0.01em' }}>{type}</span>
+                <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--ink-400)' }}>· {rows.length}</span>
               </div>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 15, fontWeight: 900, letterSpacing: '-0.01em', color: 'var(--ink-900)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.title}</div>
-                <div style={{ fontSize: 12, color: 'var(--ink-500)', marginTop: 2, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                  {r.author_name && (viewMode === 'shared' || viewMode === 'all') && <span style={{ color: 'var(--calo-700)', fontWeight: 700 }}>{r.author_name}</span>}
-                  {r.description && <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.description}</span>}
-                  {!r.description && r.updated_at && <span>{format(new Date(r.updated_at), 'MMM d, yyyy')}</span>}
-                </div>
-              </div>
-              {r.visibility === 'shared' && viewMode === 'mine' && (
-                <Pill tone="blue" size="sm" icon="Users">Team</Pill>
-              )}
-              {r.report_type && <Pill tone="neutral" size="sm">{r.report_type}</Pill>}
-              {statusPill(r.status)}
-              <div onClick={e => e.stopPropagation()} style={{ display: 'flex', gap: 4 }}>
-                {r.netlify_url && (
-                  <a href={r.netlify_url} target="_blank" rel="noopener noreferrer" title="Open published"
-                    style={{ padding: 8, color: 'var(--ink-500)', borderRadius: 8, display: 'inline-flex' }}
-                    onMouseEnter={e => e.currentTarget.style.background = 'var(--ink-100)'}
-                    onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
-                  >
-                    <Icon name="ExternalLink" size={15} />
-                  </a>
-                )}
-                {(viewMode === 'mine' || (viewMode === 'all' && isAdmin)) && (
-                  <button onClick={() => handleDelete(r.id, r.title)} title="Delete"
-                    style={{ padding: 8, color: 'var(--danger)', background: 'none', border: 'none', borderRadius: 8, cursor: 'pointer', display: 'inline-flex' }}
-                    onMouseEnter={e => e.currentTarget.style.background = '#FDECEC'}
-                    onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
-                  >
-                    <Icon name="Trash2" size={15} />
-                  </button>
-                )}
-              </div>
-              <Icon name="ChevronRight" size={16} color="var(--ink-400)" />
+              <Card padding={0}>{rows.map((r, i) => renderRow(r, i, rows.length))}</Card>
             </div>
-          ))}
-        </Card>
+          ))
+        ) : (
+          <Card padding={0}>{reports.map((r, i) => renderRow(r, i, reports.length))}</Card>
+        )
       ) : (
         <Card padding={48} style={{ textAlign: 'center' }}>
           <div style={{ width: 56, height: 56, margin: '0 auto 14px', borderRadius: 16, background: 'var(--calo-50)', color: 'var(--calo-700)', display: 'grid', placeItems: 'center' }}>

@@ -100,7 +100,7 @@ export default function ReportsListPage({ embedded = false }) {
   const renderRow = (r, i, n) => (
     <div
       key={r.id}
-      onClick={() => navigate(viewMode === 'mine' ? `/reports/${r.id}` : `/reports/${r.id}/preview`)}
+      onClick={() => navigate(`/reports/${r.id}/preview`)}
       style={{
         padding: '16px 22px',
         borderBottom: i < n - 1 ? '1px solid var(--ink-100)' : 'none',

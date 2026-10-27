@@ -5,6 +5,7 @@ import api from '../utils/api';
 import { normalizeReportData } from '../utils/reportData';
 import toast from 'react-hot-toast';
 import { Card, Pill, Btn, Icon, LabeledInput, CALO_BRAND_COLOR } from '../components/ui';
+import SheetReaderPage from './SheetReaderPage';
 
 const MAX_UPLOAD_MB = 25;
 const PROMPT_HISTORY_KEY = 'calo-chat-prompts';
@@ -115,6 +116,7 @@ export default function NewReportPage() {
   const initialMode = searchParams.get('mode');
 
   const [phase, setPhase] = useState('start'); // start | preview | gen
+  const [mode, setMode] = useState('ai'); // 'ai' = AI from a file, 'sheet' = accurate sheet reader
   const [file, setFile] = useState(null);
   const [dataSummary, setDataSummary] = useState(null);
   const [title, setTitle] = useState('');
@@ -429,6 +431,16 @@ export default function NewReportPage() {
 
       {phase === 'start' && (
         <>
+          {/* How to start: AI from a file, or the accurate sheet reader */}
+          <div style={{ display: 'inline-flex', background: 'var(--ink-100)', borderRadius: 'var(--r-pill)', padding: 3, marginBottom: 16 }}>
+            {[['ai', 'Generate with AI'], ['sheet', 'Read a sheet (accurate)']].map(([m, lbl]) => (
+              <button key={m} onClick={() => setMode(m)} style={{ border: 'none', cursor: 'pointer', padding: '8px 16px', borderRadius: 'var(--r-pill)', fontSize: 13, fontWeight: 700, background: mode === m ? '#fff' : 'transparent', color: mode === m ? 'var(--ink-900)' : 'var(--ink-600)', boxShadow: mode === m ? 'var(--shadow-sm)' : 'none' }}>{lbl}</button>
+            ))}
+          </div>
+          {mode === 'sheet' ? (
+            <SheetReaderPage embedded />
+          ) : (
+            <>
           {/* CHAT-FIRST — multi-turn conversation */}
           <Card padding={0} style={{ position: 'relative', overflow: 'hidden', marginBottom: 16 }}>
             {/* Corner accent */}
@@ -769,6 +781,8 @@ export default function NewReportPage() {
               </>
             )}
           </div>
+            </>
+          )}
         </>
       )}
 

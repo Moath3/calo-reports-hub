@@ -3,15 +3,13 @@ import { Btn, PageHeader, Icon } from '../components/ui';
 import ReportsListPage from './ReportsListPage';
 import NewReportPage from './NewReportPage';
 import ZeltReportPage from './ZeltReportPage';
-import SheetReaderPage from './SheetReaderPage';
 
 // One Reports entry: browse, create, and generate-from-Zelt as tabs of a single
 // dashboard. Templates are not a tab — they live inside the New report flow.
 const TABS = [
-  { id: 'list',  label: 'My reports', icon: 'FolderOpen' },
-  { id: 'new',   label: 'New report', icon: 'Plus' },
-  { id: 'sheet', label: 'From Sheet', icon: 'ScanLine' },
-  { id: 'zelt',  label: 'From Zelt',  icon: 'Table' },
+  { id: 'list', label: 'My reports', icon: 'FolderOpen' },
+  { id: 'new',  label: 'New report', icon: 'Plus' },
+  { id: 'zelt', label: 'From Zelt',  icon: 'Table' },
 ];
 
 export default function ReportsHub() {
@@ -44,10 +42,9 @@ export default function ReportsHub() {
         ))}
       </div>
 
-      {tab === 'list'  && <ReportsListPage embedded />}
-      {tab === 'new'   && <NewReportPage embedded />}
-      {tab === 'sheet' && <SheetReaderPage embedded />}
-      {tab === 'zelt'  && <ZeltReportPage embedded />}
+      {tab === 'list' && <ReportsListPage embedded />}
+      {tab === 'new'  && <NewReportPage embedded />}
+      {tab === 'zelt' && <ZeltReportPage embedded />}
     </div>
   );
 }

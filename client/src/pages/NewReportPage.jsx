@@ -431,14 +431,13 @@ export default function NewReportPage() {
 
       {phase === 'start' && (
         <>
-          {/* How to start: AI from a file, or the accurate sheet reader */}
-          <div style={{ display: 'inline-flex', background: 'var(--ink-100)', borderRadius: 'var(--r-pill)', padding: 3, marginBottom: 16 }}>
-            {[['ai', 'Generate with AI'], ['sheet', 'Read a sheet (accurate)']].map(([m, lbl]) => (
-              <button key={m} onClick={() => setMode(m)} style={{ border: 'none', cursor: 'pointer', padding: '8px 16px', borderRadius: 'var(--r-pill)', fontSize: 13, fontWeight: 700, background: mode === m ? '#fff' : 'transparent', color: mode === m ? 'var(--ink-900)' : 'var(--ink-600)', boxShadow: mode === m ? 'var(--shadow-sm)' : 'none' }}>{lbl}</button>
-            ))}
-          </div>
           {mode === 'sheet' ? (
-            <SheetReaderPage embedded />
+            <>
+              <button onClick={() => setMode('ai')} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: 'none', border: 'none', color: 'var(--ink-500)', fontSize: 13, fontWeight: 700, cursor: 'pointer', marginBottom: 12, padding: 0 }}>
+                <Icon name="ArrowLeft" size={15} /> Back to generate
+              </button>
+              <SheetReaderPage embedded />
+            </>
           ) : (
             <>
           {/* CHAT-FIRST — multi-turn conversation */}
@@ -781,6 +780,21 @@ export default function NewReportPage() {
               </>
             )}
           </div>
+
+          {/* Read a sheet accurately — right next to the upload */}
+          <button
+            onClick={() => setMode('sheet')}
+            style={{ marginTop: 12, width: '100%', display: 'flex', alignItems: 'center', gap: 14, padding: '18px 20px', background: '#fff', border: '1px solid var(--ink-200)', borderRadius: 'var(--r-lg)', cursor: 'pointer', textAlign: 'left' }}
+          >
+            <div style={{ width: 48, height: 48, borderRadius: 14, background: 'var(--calo-50)', color: 'var(--calo-700)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+              <Icon name="ScanLine" size={22} />
+            </div>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 15, fontWeight: 900, letterSpacing: '-0.01em' }}>Read a sheet (accurate, no AI)</div>
+              <div style={{ fontSize: 12, color: 'var(--ink-500)', marginTop: 2 }}>Maps columns like “iqama expiry” wherever they are, then builds an exact Compliance report</div>
+            </div>
+            <Icon name="ArrowRight" size={18} color="var(--ink-400)" />
+          </button>
             </>
           )}
         </>

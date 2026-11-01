@@ -215,9 +215,21 @@ function normalizeProvider(p) {
   return undefined;
 }
 
+// Every AI path shares this: the model reports on the data it is given and
+// never manufactures people, figures, or "illustrative placeholder" rosters.
+// Real people data comes from an uploaded file or live Zelt (the "From Zelt"
+// builder); the AI has no other Zelt access.
+const NO_FABRICATION_RULE =
+  "SOURCE OF TRUTH — NEVER FABRICATE:\n" +
+  "- Use ONLY the data provided below. NEVER invent, guess, or use placeholder/illustrative employee names, IDs, headcounts, salaries, dates, or any figures.\n" +
+  "- People data must come from a real source: an uploaded file, or live Zelt via the \"From Zelt\" report builder. You have no other way to reach Zelt — do not pretend you queried it.\n" +
+  "- If the data needed to answer is missing or empty, do NOT make it up. State plainly that the data isn't available and tell the user to upload it or pull it from Zelt via \"From Zelt\". Leave unknown values as \"N/A\".\n" +
+  "- Never add a \"data note\" with example/placeholder people. An honest \"no data provided\" is correct; an invented roster is a defect.\n\n";
+
 export function buildReportSystemPrompt(dataSummary, templateData) {
   const today = new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
   let prompt = "You are CALO Report AI, an expert data analyst. Analyze the data and produce a professional report.\n\n" +
+    NO_FABRICATION_RULE +
     "Return ONLY valid JSON (no markdown, no code blocks) with this EXACT top-level structure:\n" +
     "{\n" +
     "  \"generalInfo\": {\n" +
@@ -251,7 +263,7 @@ export function buildReportSystemPrompt(dataSummary, templateData) {
       "Keep the same section titles, section order, icons, block types, and field layout. " +
       "Replace ALL placeholder values (\"0\", empty strings, placeholder text like \"Add ... here\") with REAL data from the analysis below. " +
       "If the data contains information that fits a template section, populate it fully with actual numbers, names, and insights. " +
-      "If the data does not contain information for a section, provide reasonable analysis or mark values as \"N/A\". " +
+      "If the data does not contain information for a section, mark values as \"N/A\" — do NOT invent names, numbers, or rows to fill it. " +
       "You MAY add 1-2 extra sections if the data contains important information not covered by the template. " +
       "Preserve the template's KPI strip labels and structure, updating only the values and trends based on real data.\n" +
       "ALL values MUST be strings (even numbers: \"1234\" not 1234).\n\n" +
@@ -311,6 +323,8 @@ BLOCK TYPE SCHEMAS (ALL values MUST be strings):
 - kpiStrip: [{"label":"Name","value":"123","unit":"meals","trend":"up|down|stable"}]
 
 RULES:
+- SOURCE OF TRUTH — NEVER FABRICATE: use ONLY data the user has provided (uploaded file, pasted text, or the current report below) or real Zelt data pulled via the "From Zelt" builder. You have no other access to Zelt — never invent employee names, IDs, headcounts, salaries, or figures, and never add "illustrative placeholder" people.
+- If the user asks about employees/roster/headcount and no real data is present, do NOT generate a sample roster. Set "updates" to null and, in "message", say the data isn't available here and ask them to upload it or use "From Zelt" to pull live Zelt data.
 - If the user just asks a question or wants advice, set "updates" to null and answer in "message"
 - If the user provides data (file content, pasted text, numbers), analyze it and populate "updates" with appropriate report content
 - When updating sections, use null in the array for sections you are NOT changing
@@ -333,6 +347,7 @@ export function buildChatContextBlock(reportContext) {
 
 export function buildRefineSystemPrompt(section, instruction) {
   return "Refine this report section per the instruction. Return ONLY updated section JSON.\n\n" +
+    NO_FABRICATION_RULE +
     "Section:\n" + JSON.stringify(section, null, 2) + "\n\nInstruction: " + instruction;
 }
 

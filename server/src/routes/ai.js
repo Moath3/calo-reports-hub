@@ -8,6 +8,7 @@ import {
   buildRefineSystemPrompt, buildPlanSystemPrompt,
   getAvailableProviders, extractJSON,
 } from "../services/aiService.js";
+import { runReport, getDimensions } from "../services/zeltReport.js";
 
 const router = Router();
 
@@ -50,6 +51,46 @@ function scrubPII(v) {
 // Only admins may send personal/salary data to the AI; everyone else is scrubbed.
 const forAI = (data, user) => (user && user.role === "admin" ? data : scrubPII(data));
 
+// --- Live Zelt pull for the chat -------------------------------------------
+// When the chat model returns { needsZelt: { filters, fields } }, the server
+// fetches the real roster via runReport (already active-only; salary/sensitive
+// fields admin-gated inside runReport) and feeds it back for a second pass.
+// Names flow by policy; forAI is NOT re-applied here because runReport IS the
+// authoritative role-scrub for Zelt data and there is no email field to mask.
+const ZELT_FILTER_KEYS = ["departments", "businessLines", "entities", "orgs", "sites", "jobFamilies", "workCountries"];
+const ZELT_ROW_CAP = 250;                 // cap rows fed back to the model (token budget); aggregates still give exact totals
+const ZELT_CONTEXT_CHAR_LIMIT = 24000;
+
+function sanitizeZeltFilters(raw) {
+  const out = {};
+  if (raw && typeof raw === "object") {
+    for (const k of ZELT_FILTER_KEYS) {
+      const v = raw[k];
+      if (Array.isArray(v)) {
+        const vals = v.filter(x => typeof x === "string" && x.trim()).map(x => x.trim());
+        if (vals.length) out[k] = vals;
+      }
+    }
+  }
+  return out;
+}
+
+async function fetchZeltForChat(need, user) {
+  const filters = sanitizeZeltFilters(need?.filters);
+  const fields = Array.isArray(need?.fields) ? need.fields.filter(f => typeof f === "string") : [];
+  const rep = await runReport({ filters, fields, isAdmin: user.role === "admin" });
+  const truncated = rep.rows.length > ZELT_ROW_CAP;
+  return {
+    appliedFilters: filters,
+    headcount: rep.count,
+    aggregates: rep.aggregates,
+    fields: rep.fields,
+    sensitiveDenied: rep.sensitiveDenied,
+    truncated,
+    rows: truncated ? rep.rows.slice(0, ZELT_ROW_CAP) : rep.rows,
+  };
+}
+
 // POST /analyze — heavy-duty one-shot: Opus by default (smart routing)
 router.post("/analyze", requireAuth, asyncHandler(async (req, res) => {
   const { dataSummary, provider, customPrompt, templateId } = req.body;
@@ -91,22 +132,51 @@ router.post("/chat", requireAuth, asyncHandler(async (req, res) => {
   if (!message) throw badRequest("Message is required");
 
   const systemPrompt = buildChatSystemPrompt();
-  const dynamicContext = buildChatContextBlock(forAI(reportContext, req.user));
+  // Give the model the live filter vocabulary so it picks exact Zelt names.
+  let dimsBlock = "";
+  try { const d = getDimensions(); if (d.ready) dimsBlock = "Available Zelt filters (use EXACT names):\n" + JSON.stringify(d.dimensions) + "\n\n"; } catch { /* index warming — model falls back to asking */ }
+  const dynamicContext = dimsBlock + buildChatContextBlock(forAI(reportContext, req.user));
   let userMessage = message;
   if (history && history.length > 0) {
     const contextMsgs = history.slice(-CHAT_HISTORY_TURNS).map(m => m.role + ": " + m.content).join("\n");
     userMessage = "Previous conversation:\n" + contextMsgs + "\n\nUser: " + message;
   }
 
-  const startTime = Date.now();
-  const result = await callAI(provider, systemPrompt, userMessage, { requestType: "chat", dynamicContext });
-  const duration = Date.now() - startTime;
+  let t0 = Date.now();
+  let result = await callAI(provider, systemPrompt, userMessage, { requestType: "chat", dynamicContext });
+  logUsage(req.user.id, provider, result, "chat", Date.now() - t0);
+  let parsed = extractJSON(result.text);
+  let zeltMeta = null;
+
+  // One live Zelt pull per message: fetch the real roster the model asked for,
+  // feed it back, and let the model compose its answer from it.
+  if (parsed && typeof parsed === "object" && parsed.needsZelt && typeof parsed.needsZelt === "object") {
+    let zeltData;
+    try {
+      zeltData = await fetchZeltForChat(parsed.needsZelt, req.user);
+    } catch (e) {
+      if (e.code === "INDEX_BUILDING") {
+        const msg = "The live Zelt directory is still loading — give it a few seconds and ask again.";
+        return res.json({ response: msg, message: msg, updates: null, provider: provider || DEFAULT_PROVIDER_LABEL, model: result.model });
+      }
+      throw e;
+    }
+    zeltMeta = { count: zeltData.headcount, truncated: zeltData.truncated, filters: zeltData.appliedFilters };
+    const zeltBlock = "LIVE ZELT DATA (real, active employees, role-scrubbed — answer ONLY from this):\n"
+      + JSON.stringify(zeltData, null, 2).slice(0, ZELT_CONTEXT_CHAR_LIMIT);
+    const followupMsg = userMessage + "\n\n(The live Zelt data you requested is now in context. Answer from it; do not request Zelt again.)";
+    t0 = Date.now();
+    result = await callAI(provider, systemPrompt, followupMsg, {
+      requestType: "chat",
+      dynamicContext: zeltBlock + (dynamicContext ? "\n\n" + dynamicContext : ""),
+    });
+    logUsage(req.user.id, provider, result, "chat-zelt", Date.now() - t0);
+    parsed = extractJSON(result.text);
+  }
 
   // Parse structured response: { message, updates }
-  const parsed = extractJSON(result.text);
   let responseMessage;
   let updates = null;
-
   if (parsed && typeof parsed === "object") {
     responseMessage = parsed.message || parsed.response || result.text;
     if (parsed.updates && typeof parsed.updates === "object") updates = parsed.updates;
@@ -114,11 +184,11 @@ router.post("/chat", requireAuth, asyncHandler(async (req, res) => {
     responseMessage = result.text;
   }
 
-  logUsage(req.user.id, provider, result, "chat", duration);
   res.json({
     response: responseMessage,
     message: responseMessage,
     updates,
+    zelt: zeltMeta,
     provider: provider || DEFAULT_PROVIDER_LABEL,
     model: result.model,
   });

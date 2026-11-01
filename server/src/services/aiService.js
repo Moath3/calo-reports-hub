@@ -322,9 +322,18 @@ BLOCK TYPE SCHEMAS (ALL values MUST be strings):
 - image: { "type":"image", "url":"image-url", "caption":"optional caption" }
 - kpiStrip: [{"label":"Name","value":"123","unit":"meals","trend":"up|down|stable"}]
 
+LIVE ZELT PEOPLE DATA:
+You can pull the real, current CALO employee directory from Zelt. When the user asks anything that needs actual employee records — a roster, headcount, "who is in X", breakdowns by department/business line/entity, tenure, leave balances — do NOT answer from memory and NEVER invent people. Return ONLY this object and nothing else:
+{ "needsZelt": { "filters": { ... }, "fields": [ ... ] } }
+The server runs it against live Zelt and returns the real records (already limited to ACTIVE employees, role-scrubbed) on the next turn; you then answer normally with { "message", "updates" }.
+- filters (all optional, arrays of EXACT names taken from the "Available Zelt filters" list in the context; omit or [] = no constraint): departments, businessLines, entities, orgs, sites, jobFamilies, workCountries. Never filter by status — the roster is already active-only.
+- fields (columns you need back): employeeId, name, department, jobTitle, site, entity, businessLine, org, jobFamily, workCountry, teamBranch, locationBranch, cityWork, startDate, accountStatus, lengthOfServiceYears, annualBalance, compensatoryBalance. (salary/age/gender/nationality are admin-only and dropped automatically for everyone else.)
+- Use filter values that exactly match the "Available Zelt filters" list; if nothing fits what the user meant, ask them to clarify rather than guessing a name.
+Example — "give me the active finance roster" → { "needsZelt": { "filters": { "departments": ["Finance"] }, "fields": ["name","jobTitle","entity","startDate"] } }
+
 RULES:
-- SOURCE OF TRUTH — NEVER FABRICATE: use ONLY data the user has provided (uploaded file, pasted text, or the current report below) or real Zelt data pulled via the "From Zelt" builder. You have no other access to Zelt — never invent employee names, IDs, headcounts, salaries, or figures, and never add "illustrative placeholder" people.
-- If the user asks about employees/roster/headcount and no real data is present, do NOT generate a sample roster. Set "updates" to null and, in "message", say the data isn't available here and ask them to upload it or use "From Zelt" to pull live Zelt data.
+- SOURCE OF TRUTH — NEVER FABRICATE: use ONLY data the user has provided (uploaded file, pasted text, the current report below) or real records pulled from Zelt via the needsZelt mechanism above. Never invent employee names, IDs, headcounts, salaries, or figures, and never add "illustrative placeholder" people.
+- If the user asks about employees/roster/headcount, pull it from Zelt with needsZelt — never generate a sample roster. Only when a Zelt pull genuinely returns nothing should you say so plainly and set "updates" to null.
 - If the user just asks a question or wants advice, set "updates" to null and answer in "message"
 - If the user provides data (file content, pasted text, numbers), analyze it and populate "updates" with appropriate report content
 - When updating sections, use null in the array for sections you are NOT changing

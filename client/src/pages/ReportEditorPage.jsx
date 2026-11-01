@@ -607,7 +607,15 @@ export default function ReportEditorPage() {
   /* ---- AI Chat ---- */
 
   const handleAIResponse = useCallback((res) => {
-    const friendlyMsg = res.message || res.response || '';
+    let content = res.message || res.response || '';
+    // Make it visible when the answer came from live Zelt, not the model's head.
+    if (res.zelt) {
+      let note = `✓ sourced live from Zelt: ${res.zelt.count} active ${res.zelt.count === 1 ? 'employee' : 'employees'}`;
+      const fv = res.zelt.filters ? Object.values(res.zelt.filters).flat() : [];
+      if (fv.length) note += ` (${fv.join(', ')})`;
+      if (res.zelt.truncated) note += '. Long list, use "From Zelt" for the full export';
+      content += `\n\n${note}`;
+    }
     const updates = res.updates;
     let hasUpdates = false;
 
@@ -649,7 +657,7 @@ export default function ReportEditorPage() {
       toast.success(`Updated: ${parts.join(', ') || 'Report data'}`);
     }
 
-    setAiChat(prev => [...prev, { role: 'assistant', content: friendlyMsg, hasUpdates }]);
+    setAiChat(prev => [...prev, { role: 'assistant', content, hasUpdates }]);
   }, [updateData, sections]);
 
   const handleAISend = async () => {

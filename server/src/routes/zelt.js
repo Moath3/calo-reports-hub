@@ -35,7 +35,7 @@ import { listEntities, listDepartments, entitiesForDepartments, getBalancesForEn
 import { runAudit } from '../services/zeltAudit.js';
 import { getMobility } from '../services/zeltMobility.js';
 import { getWatchState, runSnapshotAndDiff, sendWeeklyDigestIfDue, sendCompExpiryDigestIfDue, sendCompEntityReportsIfDue, sendCompEntityEmailsIfDue, sendCompEmailTest, sendCompDMTest } from '../services/zeltWatcher.js';
-import { getDimensions, runReport, warmIndex, getIndexStatus, clearIndex, SENSITIVE_FIELDS } from '../services/zeltReport.js';
+import { getDimensions, runReport, runHeadcount, warmIndex, getIndexStatus, clearIndex, SENSITIVE_FIELDS } from '../services/zeltReport.js';
 import { isConfigured as gsheetConfigured, defaultSheetId, serviceAccountEmail, exportMasterfile } from '../services/googleSheets.js';
 
 const IS_PROD = process.env.NODE_ENV === 'production';
@@ -554,6 +554,21 @@ router.post('/report/run', dataLimiter, requireAuth, asyncHandler(async (req, re
       return res.status(202).json({ building: true, status: err.status, message: err.message });
     }
     return zeltUpstream('Report failed')(err);
+  }
+}));
+
+// HR/admin: clean full-employee roster for headcount (test/payroll/ghost accounts
+// excluded, 3rd-party included). Fixed 7-column shape — no salary, no email.
+router.get('/headcount', dataLimiter, requireAuth, requireHrOrAdmin, asyncHandler(async (req, res) => {
+  try {
+    const result = runHeadcount();
+    logZeltAudit(req.user.id, 'zelt.headcount', { count: result.count });
+    res.json(result);
+  } catch (err) {
+    if (err.code === 'INDEX_BUILDING') {
+      return res.status(202).json({ building: true, status: err.status, message: err.message });
+    }
+    return zeltUpstream('Headcount failed')(err);
   }
 }));
 

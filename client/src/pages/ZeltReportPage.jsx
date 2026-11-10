@@ -64,6 +64,7 @@ export default function ZeltReportPage({ embedded = false }) {
   const [fields, setFields] = useState(['name', 'department', 'businessLine', 'entity']);
   const [result, setResult] = useState(null);
   const [running, setRunning] = useState(false);
+  const [hcLoading, setHcLoading] = useState(false);
   const pollRef = useRef(null);
 
   // Warm the people index on mount, then poll dimensions until ready.
@@ -187,6 +188,33 @@ export default function ZeltReportPage({ embedded = false }) {
     } catch (err) { toast.error(err.message || 'Failed to create report'); }
   };
 
+  // One-click full-employee Excel (test/payroll/ghost accounts excluded server-side).
+  const downloadHeadcount = async () => {
+    if (hcLoading) return;
+    setHcLoading(true);
+    try {
+      const data = await api.zeltHeadcount();
+      if (data?.building) { toast.error('People index is still building — try again in a moment.'); return; }
+      const rows = data?.rows || [];
+      if (!rows.length) { toast.error('No employees returned.'); return; }
+      const mod = await import('exceljs');
+      const ExcelJS = mod.default ?? mod;
+      const { buildHeadcountWorkbook } = await import('../utils/headcountWorkbook');
+      const wb = buildHeadcountWorkbook(ExcelJS, data);
+      const buf = await wb.xlsx.writeBuffer();
+      const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `CALO Headcount ${new Date().toISOString().slice(0, 10)}.xlsx`;
+      document.body.appendChild(a); a.click(); a.remove();
+      URL.revokeObjectURL(url);
+      toast.success(`Headcount exported — ${rows.length} employees`);
+    } catch (e) {
+      toast.error(e.message || 'Headcount export failed');
+    } finally { setHcLoading(false); }
+  };
+
   return (
     <div className="animate-slide-up" style={{ maxWidth: 1200, margin: '0 auto' }}>
       {!embedded && (
@@ -196,6 +224,14 @@ export default function ZeltReportPage({ embedded = false }) {
           subtitle="Filter live Zelt people by business line, org, department or entity — then generate a report or export."
         />
       )}
+
+      {/* Headcount: full employee roster, one click */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 10, marginBottom: 12 }}>
+        <span style={{ fontSize: 12.5, color: 'var(--ink-500)' }}>Full employee list (test &amp; payroll accounts excluded)</span>
+        <Btn variant="primary" icon="Download" onClick={downloadHeadcount} disabled={hcLoading || !index.ready}>
+          {hcLoading ? 'Preparing…' : 'Headcount'}
+        </Btn>
+      </div>
 
       {/* Index building banner */}
       {!index.ready && (

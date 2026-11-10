@@ -138,6 +138,7 @@ async function buildIndex() {
           entity: readEntity(u),
           startDate: u.startDate || u?.lifecycle?.startDate || null,
           accountStatus: u.accountStatus || null,
+          email: u.emailAddress || null,   // headcount ghost-filter only; never projected to report output
           ...dims,
         };
         index.progress.done++;
@@ -382,6 +383,48 @@ export async function runReport({ filters = {}, fields = [], isAdmin = false }) 
     sensitiveDenied,
     indexAgeMinutes: status.ageMinutes,
   };
+}
+
+// ---- Headcount export -----------------------------------------------------
+// Clean full roster for HR headcount: everyone live (3rd-party included), minus
+// test rigs, payroll-only placeholders, bots, and payroll ghost accounts. A
+// CALO-entity account carrying a dummy (@dummy/@noreply) email is the tell for a
+// payroll ghost — real staff never have one, while 3rd-party workers legitimately
+// do, so the dummy-email rule is scoped to non-3rd-party. DENYLIST holds the
+// marker-less ghosts the rules cannot see; extend it as they surface.
+const HEADCOUNT_DENYLIST = new Set(['109999']);
+const THIRD_PARTY_ENTITIES = new Set(['nasco', 'ewan', 'fakihi', 'jussur', 'alahlam', 'ahlam']);
+const DUMMY_EMAIL = /@dummy|@noreply/i;
+function isThirdPartyRow(r) {
+  return THIRD_PARTY_ENTITIES.has(String(r.entity || '').toLowerCase().trim()) || String(r.employeeId || '').startsWith('240');
+}
+function isNonHeadcountAccount(r) {
+  const idv = String(r.employeeId || '');
+  const nm = r.name || '';
+  if (HEADCOUNT_DENYLIST.has(idv)) return true;
+  if (/test/i.test(nm) || /test/i.test(idv)) return true;
+  if (/^placeholder/i.test(idv) || /bot$/i.test(idv)) return true;        // Placeholder001, 999BOT
+  if (/\[for payroll only\]|payroll|\bbot\b|dummymurph/i.test(nm)) return true;
+  if (!isThirdPartyRow(r) && r.email && DUMMY_EMAIL.test(r.email)) return true;
+  return false;
+}
+
+export function runHeadcount() {
+  const status = getIndexStatus();
+  if (!status.ready) { warmIndex(); const e = new Error('People index is still building — try again in a moment.'); e.code = 'INDEX_BUILDING'; throw e; }
+  const rows = index.rows
+    .filter(r => !isNonHeadcountAccount(r))
+    .map(r => ({
+      employeeId: r.employeeId || '',
+      name: r.name || '',
+      position: r.jobTitle || '',
+      department: r.department || '',
+      businessLine: r.businessLine || '',
+      org: r.org || '',
+      startDate: r.startDate || '',
+    }))
+    .sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  return { rows, count: rows.length, generatedAt: new Date().toISOString(), indexAgeMinutes: status.ageMinutes };
 }
 
 // Pure helpers exposed for unit tests (no I/O).

@@ -347,8 +347,8 @@ class ApiClient {
   async zeltAudit({ force = false } = {}) {
     return this.request('/zelt/audit' + (force ? '?force=1' : ''));
   }
-  async zeltMobility() {
-    return this.request('/zelt/mobility');
+  async zeltMobility(refresh = false) {
+    return this.request(`/zelt/mobility${refresh ? '?refresh=true' : ''}`);
   }
   async zeltWatch() {
     return this.request('/zelt/watch');

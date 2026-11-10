@@ -558,6 +558,11 @@ export async function getTerminationDates(users = null) {
   return map;
 }
 
+// Drop just the cached user list so the next pull is live (manual Refresh).
+export function invalidateUserCache() {
+  cache.allUsers = { value: null, expiresAt: 0 };
+}
+
 export function clearCaches() {
   cache.entities = { value: null, expiresAt: 0 };
   cache.departments = { value: null, expiresAt: 0 };

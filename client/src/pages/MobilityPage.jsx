@@ -59,10 +59,10 @@ export default function MobilityPage() {
   const [error, setError] = useState(null);
   const [search, setSearch] = useState('');
 
-  const load = useCallback(() => {
+  const load = useCallback((refresh = false) => {
     setLoading(true);
     setError(null);
-    api.zeltMobility()
+    api.zeltMobility(refresh === true)
       .then(r => setData(r))
       .catch(e => setError(e))
       .finally(() => setLoading(false));
@@ -131,7 +131,14 @@ export default function MobilityPage() {
   return (
     <div style={{ maxWidth: 1180, margin: '0 auto' }}>
       <Header
-        actions={data.asOf && <Pill tone="neutral" size="sm" icon="Clock">as of {fmtDate(data.asOf)}</Pill>}
+        actions={
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            {data.asOf && <Pill tone="neutral" size="sm" icon="Clock">as of {fmtDate(data.asOf)}</Pill>}
+            <Btn variant="secondary" size="sm" icon="RefreshCw" onClick={() => load(true)} disabled={loading}>
+              {loading ? 'Refreshing…' : 'Refresh'}
+            </Btn>
+          </div>
+        }
       />
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>

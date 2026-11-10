@@ -11,7 +11,7 @@
  * leaveDate, actives with no startDate) are EXCLUDED from the series and
  * surfaced in `coverage` instead of silently inflating headcount.
  */
-import { fetchAllUsersForAudit, getTerminationDates } from './zeltCompute.js';
+import { fetchAllUsersForAudit, getTerminationDates, invalidateUserCache } from './zeltCompute.js';
 import { isNonHeadcountAccount } from './zeltReport.js';
 
 const MOBILITY_TTL_MS = 15 * 60 * 1000; // recomputing over ~2k users is cheap but the fetch isn't
@@ -300,8 +300,9 @@ export function computeMobilityFromUsers(users, now = new Date()) {
  * mobility, memoized for ~15 min. Includes asOf so the client can show
  * data freshness.
  */
-export async function getMobility() {
-  if (cache.value && cache.expiresAt > Date.now()) return cache.value;
+export async function getMobility(force = false) {
+  if (!force && cache.value && cache.expiresAt > Date.now()) return cache.value;
+  if (force) invalidateUserCache();   // Refresh: re-pull the live user list (term dates keep their 6h cache)
   const users = await fetchAllUsersForAudit();
   // Leavers carry no exit date in the cache — enrich from lifecycle.terminationDate
   // so the monthly leaver/turnover series is populated, not stuck at 0.

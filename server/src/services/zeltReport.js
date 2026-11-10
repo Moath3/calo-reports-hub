@@ -469,29 +469,33 @@ export async function runHeadcount(asOf) {
 // cached 6h. `complete` is false when the index wasn't ready, so callers can
 // avoid caching a partial result for long.
 let leaverRoleCache = { value: null, expiresAt: 0 };
-export async function getOrgBlMap(users) {
+export async function getOrgBlMap(leaverIds = []) {
+  // Deliberately do NOT warmIndex() here: a 1550-fetch build running concurrently
+  // with Mobility's own lifecycle/role fetches blows Zelt's ~1500/session WAF.
+  // Actives come from the index only if it's already warm (From Zelt / headcount).
   const ready = getIndexStatus().ready;
-  if (!ready) warmIndex();
   const map = new Map();
   if (index.rows) for (const r of index.rows) if (r.userId != null) map.set(r.userId, { org: r.org || null, businessLine: r.businessLine || null });
 
   const now = Date.now();
-  if (!(leaverRoleCache.value && leaverRoleCache.expiresAt > now)) {
-    const roleMap = (await getFormFieldMap())['role'] || {};
-    const ids = (users || []).filter(u => !isLive(u)).map(u => u.userId || u.id).filter(Boolean);
+  const wanted = [...new Set((leaverIds || []).filter(Boolean))];
+  if (wanted.length && !(leaverRoleCache.value && leaverRoleCache.expiresAt > now)) {
     const lmap = new Map();
-    const queue = [...ids];
-    const worker = async () => {
-      while (queue.length) {
-        const uid = queue.shift();
-        const d = await fetchRoleDims(uid, roleMap);   // defensive: {} on a per-user miss
-        lmap.set(uid, { org: d.org || null, businessLine: d.businessLine || null });
-      }
-    };
-    await Promise.all(Array.from({ length: ROLE_CONCURRENCY }, worker));
-    leaverRoleCache = { value: lmap, expiresAt: now + INDEX_TTL_MS };
+    try {
+      const roleMap = (await getFormFieldMap())['role'] || {};
+      const queue = [...wanted];
+      const worker = async () => {
+        while (queue.length) {
+          const uid = queue.shift();
+          const d = await fetchRoleDims(uid, roleMap);   // defensive: {} on a per-user miss
+          lmap.set(uid, { org: d.org || null, businessLine: d.businessLine || null });
+        }
+      };
+      await Promise.all(Array.from({ length: ROLE_CONCURRENCY }, worker));
+      leaverRoleCache = { value: lmap, expiresAt: now + INDEX_TTL_MS };
+    } catch { /* Zelt degraded — serve actives-only this run, don't cache the partial */ }
   }
-  for (const [uid, v] of leaverRoleCache.value) map.set(uid, v);
+  if (leaverRoleCache.value) for (const [uid, v] of leaverRoleCache.value) map.set(uid, v);
   return { map, complete: ready };
 }
 

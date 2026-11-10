@@ -311,19 +311,21 @@ export async function getMobility(force = false) {
   if (!force && cache.value && cache.expiresAt > Date.now()) return cache.value;
   if (force) invalidateUserCache();   // Refresh: re-pull the live user list (term dates keep their 6h cache)
   const users = await fetchAllUsersForAudit();
-  // Leavers carry no exit date in the cache — enrich from lifecycle.terminationDate
-  // so the monthly leaver/turnover series is populated, not stuck at 0.
-  const termMap = await getTerminationDates(users);
+  // Exit dates aren't in the cache; enrich from lifecycle.terminationDate (else leavers=0).
+  let termMap = new Map();
+  try { termMap = await getTerminationDates(users); } catch { /* degrade: leavers stay undated */ }
   const enriched = termMap.size
     ? users.map(u => { const uid = u.userId || u.id; return termMap.has(uid) ? { ...u, leaveDate: u.leaveDate || termMap.get(uid) } : u; })
     : users;
-  // Org/BL per user (actives from the index, leavers via /role) for the by-Org /
-  // by-Business-Line breakdowns.
-  const { map: orgBlByUser, complete } = await getOrgBlMap(users);
+  // Only leavers from the last ~13m feed leavers12m, so fetch Org/BL for just those.
+  const since = Date.now() - 400 * 24 * 60 * 60 * 1000;
+  const windowLeaverIds = enriched
+    .filter(u => { const t = Date.parse(u.leaveDate); return !Number.isNaN(t) && t >= since; })
+    .map(u => u.userId || u.id).filter(Boolean);
+  let orgBlByUser = new Map(), complete = false;
+  try { ({ map: orgBlByUser, complete } = await getOrgBlMap(windowLeaverIds)); } catch { /* degrade: Org/BL unknown */ }
   const result = { asOf: new Date().toISOString(), ...computeMobilityFromUsers(enriched, new Date(), orgBlByUser) };
   cache.value = result;
-  // If the people index wasn't ready, actives lack Org/BL this run — cache briefly
-  // so it self-heals once the index warms, instead of serving a partial for 15m.
-  cache.expiresAt = Date.now() + (complete ? MOBILITY_TTL_MS : 60 * 1000);
+  cache.expiresAt = Date.now() + (complete ? MOBILITY_TTL_MS : 60 * 1000); // short cache if index wasn't warm
   return result;
 }

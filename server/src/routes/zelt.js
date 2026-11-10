@@ -157,7 +157,7 @@ router.get('/status', statusLimiter, requireAuth, (req, res) => {
 
 const dataLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 30,
+  max: 60,
   message: { error: 'Too many data requests, please wait.' },
 });
 

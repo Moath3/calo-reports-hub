@@ -75,20 +75,30 @@ export default function ZeltReportPage({ embedded = false }) {
   }, []);
   const pollRef = useRef(null);
 
-  // Warm the people index on mount, then poll dimensions until ready.
+  // Warm the index on mount, then poll the CHEAP status endpoint (200/15min) —
+  // never /dimensions, which shares the 30/15min data limiter and gets throttled
+  // long before a first build finishes. Fetch dimensions once, when ready.
   useEffect(() => {
     let alive = true;
+    let n = 0;
     const tick = async () => {
       try {
-        const d = await api.zeltReportDimensions();
+        const s = await api.zeltReportStatus();
         if (!alive) return;
-        setIndex(d.status || { ready: d.ready });
-        if (d.ready) { setDims(d.dimensions); if (pollRef.current) clearInterval(pollRef.current); }
-      } catch { /* keep polling */ }
+        setIndex(s);
+        if (s.ready) {
+          if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+          const d = await api.zeltReportDimensions();
+          if (alive && d.ready) setDims(d.dimensions);
+          return;
+        }
+        if (!s.building && n % 6 === 5) api.zeltReportWarm(false).catch(() => {}); // re-kick ~every 30s if stalled
+        n++;
+      } catch { /* status limiter is generous — keep polling */ }
     };
     api.zeltReportWarm(false).catch(() => {});
     tick();
-    pollRef.current = setInterval(tick, 3000);
+    pollRef.current = setInterval(tick, 5000);
     return () => { alive = false; if (pollRef.current) clearInterval(pollRef.current); };
   }, []);
 

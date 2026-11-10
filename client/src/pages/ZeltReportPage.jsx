@@ -107,7 +107,7 @@ export default function ZeltReportPage({ embedded = false }) {
     setRunning(true); setResult(null);
     try {
       const r = await api.zeltReportRun(filters, fields);
-      if (r.building) { toast('Still building the people index — try again in a moment.'); setIndex(r.status); return; }
+      if (r.building) { toast('Still building the people index — try again in a moment.'); setIndex(prev => r.status || prev); return; }
       setResult(r);
       if (r.sensitiveDenied) toast('Salary / age / gender need admin access — those columns were dropped.', { icon: '🔒' });
     } catch (err) { toast.error(err.message || 'Report failed'); }
@@ -235,7 +235,7 @@ export default function ZeltReportPage({ embedded = false }) {
       )}
 
       {/* Headcount: full employee roster, one click (live or a 2026 month) */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 10, marginBottom: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', flexWrap: 'wrap', gap: 10, marginBottom: 12 }}>
         <span style={{ fontSize: 12.5, color: 'var(--ink-500)' }}>Full employee list (test &amp; payroll accounts excluded)</span>
         <select value={hcMonth} onChange={(e) => setHcMonth(e.target.value)} disabled={hcLoading}
           style={{ fontSize: 13, padding: '7px 10px', borderRadius: 8, border: '1px solid var(--line, #d9e2dd)', background: '#fff', color: 'var(--ink-700, #1a2b23)' }}>

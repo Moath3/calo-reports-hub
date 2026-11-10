@@ -36,7 +36,7 @@ function logUsage(userId, provider, result, requestType, duration) {
 // Redact salary / phone / personal-email before any NON-admin's data reaches the
 // external model. Key-based for structured fields; emails masked in free text.
 // Numeric values are left intact (reports are numbers-first). Admins are exempt.
-const PII_KEY = /salary|basic[\s_-]?pay|compensation|\bwage\b|\bphone\b|mobile|personal[\s_-]?e?-?mail|home[\s_-]?e?-?mail|\biban\b|bank[\s_-]?acc/i;
+const PII_KEY = /salary|basic[\s_-]?pay|net[\s_-]?pay|gross[\s_-]?pay|take[\s_-]?home|compensation|remuneration|\bctc\b|allowance|bonus|deduction|earnings|payslip|\bwage\b|\bphone\b|mobile|personal[\s_-]?e?-?mail|home[\s_-]?e?-?mail|\biban\b|bank[\s_-]?acc/i;
 const EMAIL_RE = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g;
 function scrubPII(v) {
   if (typeof v === "string") return v.replace(EMAIL_RE, "[redacted-email]");

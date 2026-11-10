@@ -2,6 +2,17 @@
 @tailwind components;
 @tailwind utilities;
 
+/* CALO brand font. Lato's lowercase "l" reads as a capital "I"; Healthy Sans
+   disambiguates and is the brand face. OTF (no woff2 toolchain here); cached. */
+@font-face { font-family: 'Healthy Sans'; src: url('/fonts/HealthySans-Regular.otf') format('opentype'); font-weight: 400; font-style: normal; font-display: swap; }
+@font-face { font-family: 'Healthy Sans'; src: url('/fonts/HealthySans-Medium.otf') format('opentype'); font-weight: 500; font-style: normal; font-display: swap; }
+@font-face { font-family: 'Healthy Sans'; src: url('/fonts/HealthySans-Bold.otf') format('opentype'); font-weight: 700; font-style: normal; font-display: swap; }
+@font-face { font-family: 'Healthy Sans'; src: url('/fonts/HealthySans-Black.otf') format('opentype'); font-weight: 900; font-style: normal; font-display: swap; }
+
+/* Responsive page padding — 40px gutters eat a phone's width. */
+.app-main { padding: 28px 40px; }
+@media (max-width: 640px) { .app-main { padding: 20px 16px; } }
+
 /* Design tokens from claude.ai/design handoff */
 :root {
   /* CALO brand green scale */
@@ -62,11 +73,11 @@
   --shadow-lg: 0 12px 32px rgba(10,31,23,0.08), 0 4px 10px rgba(10,31,23,0.04);
   --shadow-xl: 0 24px 60px rgba(10,31,23,0.10), 0 8px 24px rgba(10,31,23,0.06);
 
-  --font-sans: 'Lato', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-sans: 'Healthy Sans', 'Lato', system-ui, -apple-system, 'Segoe UI', sans-serif;
   --gutter: 24px;
 }
 
-html { font-family: 'Lato', system-ui, -apple-system, 'Segoe UI', sans-serif; }
+html { font-family: var(--font-sans); }
 
 @layer base {
   * { @apply border-gray-200; box-sizing: border-box; }

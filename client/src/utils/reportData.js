@@ -9,19 +9,24 @@
 
 const DEFAULT_BRAND_COLOR = '#02B376';
 
+// Stable per-block id so React keys survive reorder/remove (otherwise index keys
+// leave block editors' local state attached to the wrong block). Persisted in
+// report_data; htmlBuilder and the AI ignore unknown keys.
+let _bidSeq = 0;
+export const genBlockId = () => `b_${Date.now().toString(36)}_${(_bidSeq++).toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+
 function normalizeBlock(block) {
   if (!block || typeof block !== 'object') return block;
+  let b = block;
   // Legacy notes: { content: "line1\nline2" } -> { items: ['line1', 'line2'] } (label kept)
-  if (block.type === 'notes' && !Array.isArray(block.items) && typeof block.content === 'string') {
-    const { content, ...rest } = block;
-    return { ...rest, items: content.split('\n').filter(Boolean) };
+  if (b.type === 'notes' && !Array.isArray(b.items) && typeof b.content === 'string') {
+    const { content, ...rest } = b;
+    b = { ...rest, items: content.split('\n').filter(Boolean) };
+  } else if (b.type === 'badge' && !b.title && b.label) {
+    // Legacy badge: { label, style } without a title -> title = label
+    b = { ...b, title: b.label };
   }
-  // Legacy badge: { label, style } without a title -> title = label
-  if (block.type === 'badge' && !block.title && block.label) {
-    return { ...block, title: block.label };
-  }
-  // All other block types pass through untouched.
-  return block;
+  return b._id ? b : { ...b, _id: genBlockId() };
 }
 
 function normalizeSection(section) {

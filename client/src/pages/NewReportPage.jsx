@@ -107,7 +107,7 @@ function GenerationProgress() {
   );
 }
 
-export default function NewReportPage() {
+export default function NewReportPage({ embedded = false }) {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const chatTextareaRef = useRef(null);
@@ -411,20 +411,24 @@ export default function NewReportPage() {
 
   return (
     <div className="animate-slide-up" style={{ maxWidth: 880, margin: '0 auto' }}>
-      <div style={{ marginBottom: 28 }}>
-        <button
-          onClick={() => navigate('/')}
-          style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13, color: 'var(--ink-500)', fontWeight: 700, marginBottom: 12, background: 'none', border: 'none', cursor: 'pointer' }}
-        >
-          <Icon name="ArrowLeft" size={14} /> Home
-        </button>
-        <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
-          <div>
-            <h1 style={{ margin: 0, fontSize: 40, fontWeight: 900, letterSpacing: '-0.03em', lineHeight: 1.05 }}>New report</h1>
-            <p style={{ fontSize: 16, color: 'var(--ink-500)', margin: '8px 0 0', maxWidth: 560 }}>
-              Describe what you need — Calo AI builds the whole report. No file required.
-            </p>
-          </div>
+      <div style={{ marginBottom: embedded ? 12 : 28 }}>
+        {!embedded && (
+          <button
+            onClick={() => navigate('/')}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13, color: 'var(--ink-500)', fontWeight: 700, marginBottom: 12, background: 'none', border: 'none', cursor: 'pointer' }}
+          >
+            <Icon name="ArrowLeft" size={14} /> Home
+          </button>
+        )}
+        <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: embedded ? 'flex-end' : 'space-between', flexWrap: 'wrap', gap: 12 }}>
+          {!embedded && (
+            <div>
+              <h1 style={{ margin: 0, fontSize: 40, fontWeight: 900, letterSpacing: '-0.03em', lineHeight: 1.05 }}>New report</h1>
+              <p style={{ fontSize: 16, color: 'var(--ink-500)', margin: '8px 0 0', maxWidth: 560 }}>
+                Describe what you need — Calo AI builds the whole report. No file required.
+              </p>
+            </div>
+          )}
           <Btn variant="ghost" onClick={handleBlank}>Blank report</Btn>
         </div>
       </div>
@@ -814,7 +818,7 @@ export default function NewReportPage() {
                 </div>
               </div>
               <button
-                onClick={() => { setPhase('drop'); setFile(null); setDataSummary(null); }}
+                onClick={() => { setPhase('start'); setFile(null); setDataSummary(null); }}
                 style={{ padding: 6, color: 'var(--ink-400)', background: 'none', border: 'none', cursor: 'pointer' }}
               >
                 <Icon name="X" size={16} />

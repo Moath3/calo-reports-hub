@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import api from '../utils/api';
-import { normalizeReportData } from '../utils/reportData';
+import { normalizeReportData, genBlockId } from '../utils/reportData';
 import toast from 'react-hot-toast';
 import {
   Save, Eye, ArrowLeft, Plus, Trash2, GripVertical, ChevronDown, ChevronUp,
@@ -568,7 +568,7 @@ export default function ReportEditorPage() {
   });
 
   const addBlock = (sIdx, type) => updateSection(sIdx, (s) => {
-    const nb = { type };
+    const nb = { type, _id: genBlockId() };
     if (type === 'notes') nb.items = [''];
     if (type === 'metrics') nb.items = [{ label: 'Metric', value: '0', change: '', trend: 'stable' }];
     if (type === 'table') { nb.headers = ['Column 1']; nb.rows = [['']]; }
@@ -597,7 +597,7 @@ export default function ReportEditorPage() {
   const handleSave = async () => {
     setSaving(true);
     try {
-      await api.updateReport(id, { title: report.title, description: report.description, reportData: report.report_data });
+      await api.updateReport(id, { title: report.title, description: report.description, reportType: report.report_type, reportData: report.report_data });
       lastSavedRef.current = JSON.stringify({ title: report.title, description: report.description, report_type: report.report_type, report_data: report.report_data });
       toast.success('Saved!');
     } catch (err) { toast.error(err.message || 'Save failed'); }
@@ -795,7 +795,7 @@ export default function ReportEditorPage() {
               </div>
               <div className="p-4 space-y-3">
                 {(section.blocks || []).map((block, bIdx) => (
-                  <BlockEditor key={bIdx} block={block}
+                  <BlockEditor key={block._id || bIdx} block={block}
                     onChange={b => updateBlock(sIdx, bIdx, b)}
                     onRemove={() => removeBlock(sIdx, bIdx)}
                     onMoveUp={() => moveBlock(sIdx, bIdx, -1)}

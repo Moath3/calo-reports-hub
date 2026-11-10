@@ -143,6 +143,8 @@ if (existsSync(clientDist)) {
     etag: true
   }));
   app.get('*', (req, res) => {
+    // Unknown API routes get a JSON 404, not the SPA shell.
+    if (req.path.startsWith('/api/')) return res.status(404).json({ error: 'Not found' });
     res.sendFile(join(clientDist, 'index.html'));
   });
 }

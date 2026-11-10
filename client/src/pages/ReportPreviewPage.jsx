@@ -304,19 +304,23 @@ export default function ReportPreviewPage() {
       showHero, showKpis, showSummary, showSections, showInsights, showFooter,
       densifySections,
     };
-    api.exportHTML(report.report_data, brandColor, report.title, null, variant, tweaks)
-      .then(res => {
-        if (cancelled || !iframeRef.current) return;
-        const doc = iframeRef.current.contentDocument;
-        doc.open(); doc.write(res.html); doc.close();
-      })
-      .catch(() => {
-        if (cancelled || !iframeRef.current) return;
-        const html = renderReportHTML(report.report_data);
-        const doc = iframeRef.current.contentDocument;
-        doc.open(); doc.write(html); doc.close();
-      });
-    return () => { cancelled = true; };
+    // Debounce: color-drag and hex typing fire a burst of dep changes; without this
+    // each one is a server export and the preview trips the export rate limit.
+    const t = setTimeout(() => {
+      api.exportHTML(report.report_data, brandColor, report.title, null, variant, tweaks)
+        .then(res => {
+          if (cancelled || !iframeRef.current) return;
+          const doc = iframeRef.current.contentDocument;
+          doc.open(); doc.write(res.html); doc.close();
+        })
+        .catch(() => {
+          if (cancelled || !iframeRef.current) return;
+          const html = renderReportHTML(report.report_data);
+          const doc = iframeRef.current.contentDocument;
+          doc.open(); doc.write(html); doc.close();
+        });
+    }, 350);
+    return () => { cancelled = true; clearTimeout(t); };
   }, [report, variant, brandColor, density, pageWidth, showHero, showKpis, showSummary, showSections, showInsights, showFooter, densifySections]);
 
   const currentTweaks = () => ({

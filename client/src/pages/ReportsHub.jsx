@@ -24,7 +24,7 @@ export default function ReportsHub() {
         actions={tab !== 'new' ? <Btn variant="primary" icon="Plus" onClick={() => setTab('new')}>New report</Btn> : null}
       />
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: 3, background: 'var(--ink-100)', borderRadius: 'var(--r-pill)', width: 'fit-content', marginBottom: 18 }}>
+      <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 4, padding: 3, background: 'var(--ink-100)', borderRadius: 'var(--r-pill)', width: 'fit-content', maxWidth: '100%', marginBottom: 18 }}>
         {TABS.map(t => (
           <button
             key={t.id}

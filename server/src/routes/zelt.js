@@ -460,7 +460,7 @@ router.get('/hr-access', dataLimiter, requireAuth, requireAdmin, asyncHandler(as
 
 // Admin: set which entities an HR user may see salaries for.
 router.post('/hr-access', dataLimiter, requireAuth, requireAdmin, asyncHandler(async (req, res) => {
-  const userId = Number(req.body?.userId);
+  const userId = String(req.body?.userId || '').trim();   // users.id is a UUID string, never a number
   if (!userId) throw badRequest('userId is required');
   const entities = Array.isArray(req.body?.entities) ? req.body.entities : [];
   const saved = setHrEntityAccess(userId, entities);

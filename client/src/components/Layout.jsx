@@ -322,7 +322,7 @@ export default function Layout() {
           </button>
         </header>
 
-        <main style={{ flex: 1, padding: '28px 40px', minWidth: 0, overflowX: 'hidden' }}>
+        <main className="app-main" style={{ flex: 1, minWidth: 0, overflowX: 'hidden' }}>
           <Outlet />
         </main>
       </div>

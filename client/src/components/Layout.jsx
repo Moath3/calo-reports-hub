@@ -23,7 +23,11 @@ const navGroups = [
     { to: '/activity',        icon: 'Activity',       label: 'Activity log', adminOnly: true },
   ]},
   { label: 'Reports', items: [
-    { to: '/reports',         icon: 'FileText',       label: 'Reports', accent: true },
+    { to: '/reports', icon: 'FileText', label: 'Reports', accent: true, children: [
+      { tab: 'list', icon: 'FolderOpen', label: 'My reports' },
+      { tab: 'new',  icon: 'Plus',       label: 'New report' },
+      { tab: 'zelt', icon: 'Table',      label: 'From Zelt' },
+    ]},
   ]},
 ];
 
@@ -32,9 +36,9 @@ const footerNav = [
   { to: '/settings', icon: 'Settings', label: 'Settings' },
 ];
 
-function NavItem({ to, icon, label, active, accent, beta, collapsed, onClick }) {
+function NavItem({ to, icon, label, active, accent, beta, collapsed, onClick, child }) {
   const [hovered, setHovered] = useState(false);
-  let bg = 'transparent', fg = 'var(--ink-700)';
+  let bg = 'transparent', fg = child ? 'var(--ink-500)' : 'var(--ink-700)';
   if (accent && !active) { bg = 'var(--calo-500)'; fg = '#fff'; }
   if (active) { bg = 'var(--ink-900)'; fg = '#fff'; }
   else if (hovered && !accent) { bg = 'var(--ink-100)'; fg = 'var(--ink-900)'; }
@@ -46,15 +50,15 @@ function NavItem({ to, icon, label, active, accent, beta, collapsed, onClick }) 
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       style={{
-        display: 'flex', alignItems: 'center', gap: 12,
-        padding: '10px 12px', borderRadius: 'var(--r-md)',
-        background: bg, color: fg, fontSize: 14, fontWeight: 700,
+        display: 'flex', alignItems: 'center', gap: child ? 10 : 12,
+        padding: child ? '7px 12px' : '10px 12px', borderRadius: 'var(--r-md)',
+        background: bg, color: fg, fontSize: child ? 13 : 14, fontWeight: child ? 600 : 700,
         textDecoration: 'none', letterSpacing: '-0.01em',
         justifyContent: collapsed ? 'center' : 'flex-start',
         transition: 'all .16s ease',
       }}
     >
-      <Icon name={icon} size={18} />
+      <Icon name={icon} size={child ? 16 : 18} />
       {!collapsed && <span>{label}</span>}
       {!collapsed && beta && (
         <span style={{
@@ -92,6 +96,7 @@ export default function Layout() {
 
   const sidebarWidth = collapsed ? SIDEBAR_WIDTH_COLLAPSED : SIDEBAR_WIDTH;
   const isActive = (to) => to === '/' ? location.pathname === '/' : location.pathname.startsWith(to);
+  const reportsTab = new URLSearchParams(location.search).get('tab') || 'list';
 
   return (
     <div style={{ display: 'flex', minHeight: '100vh', background: 'var(--ink-50)' }}>
@@ -178,13 +183,31 @@ export default function Layout() {
                 )}
                 {g.label && collapsed && <div style={{ height: 1, background: 'var(--ink-100)', margin: '10px 8px' }} />}
                 {items.map(n => (
-                  <NavItem
-                    key={n.to}
-                    {...n}
-                    active={isActive(n.to)}
-                    collapsed={collapsed}
-                    onClick={() => setSideOpen(false)}
-                  />
+                  <div key={n.to} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                    <NavItem
+                      {...n}
+                      active={isActive(n.to)}
+                      collapsed={collapsed}
+                      onClick={() => setSideOpen(false)}
+                    />
+                    {/* Reports sub-tabs expand while you're in the Reports section. */}
+                    {n.children && !collapsed && isActive(n.to) && (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 2, marginLeft: 14 }}>
+                        {n.children.map(c => (
+                          <NavItem
+                            key={c.tab}
+                            to={`/reports?tab=${c.tab}`}
+                            icon={c.icon}
+                            label={c.label}
+                            active={location.pathname === '/reports' && reportsTab === c.tab}
+                            collapsed={collapsed}
+                            onClick={() => setSideOpen(false)}
+                            child
+                          />
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 ))}
               </div>
             );

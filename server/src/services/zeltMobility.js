@@ -12,6 +12,7 @@
  * surfaced in `coverage` instead of silently inflating headcount.
  */
 import { fetchAllUsersForAudit } from './zeltCompute.js';
+import { isNonHeadcountAccount } from './zeltReport.js';
 
 const MOBILITY_TTL_MS = 15 * 60 * 1000; // recomputing over ~2k users is cheap but the fetch isn't
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -89,6 +90,7 @@ function deriveUser(u) {
   return {
     name: readName(u),
     employeeId: readEmployeeId(u),
+    email: u?.emailAddress || null,   // for the headcount ghost-account filter
     entity: readEntity(u),
     department: u?.role?.department?.name || u?.department?.name || u?.department || null,
     site: u?.role?.site?.name || u?.site?.name || u?.site || null,
@@ -138,7 +140,11 @@ export function computeMobilityFromUsers(users, now = new Date()) {
     const k = u.userId || u.id || readEmployeeId(u) || JSON.stringify(u).slice(0, 40);
     if (!seen.has(k)) seen.set(k, u);
   }
-  const records = Array.from(seen.values()).map(deriveUser);
+  const allRecords = Array.from(seen.values()).map(deriveUser);
+  // Drop test rigs, payroll placeholders, bots and ghost accounts — same rule as
+  // the headcount export — so turnover isn't skewed by non-people.
+  const records = allRecords.filter(r => !isNonHeadcountAccount(r));
+  const excludedAccounts = allRecords.length - records.length;
 
   // Coverage — excluded-from-series counts, surfaced honestly.
   const leaversNoDate = records.filter(r => r.isLeaver && !r.leaveDate).length;
@@ -273,6 +279,7 @@ export function computeMobilityFromUsers(users, now = new Date()) {
     leavers,
     coverage: {
       totalUsers: records.length,
+      excludedAccounts,   // test/payroll/bot/ghost accounts dropped before counting
       activeTotal: records.filter(r => r.isActive).length,
       // Every record the source flags as a leaver, regardless of whether we can
       // date the exit. If this is 0 while the company clearly has leavers, the

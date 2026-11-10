@@ -398,7 +398,7 @@ const DUMMY_EMAIL = /@dummy|@noreply/i;
 function isThirdPartyRow(r) {
   return THIRD_PARTY_ENTITIES.has(String(r.entity || '').toLowerCase().trim()) || String(r.employeeId || '').startsWith('240');
 }
-function isNonHeadcountAccount(r) {
+export function isNonHeadcountAccount(r) {
   const idv = String(r.employeeId || '');
   const nm = r.name || '';
   if (HEADCOUNT_DENYLIST.has(idv)) return true;

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Btn, PageHeader, Icon } from '../components/ui';
 import ReportsListPage from './ReportsListPage';
 import NewReportPage from './NewReportPage';
@@ -13,7 +13,10 @@ const TABS = [
 ];
 
 export default function ReportsHub() {
-  const [tab, setTab] = useState('list');
+  // Tab lives in the URL (?tab=) so the sidebar can deep-link each one.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tab = TABS.some(t => t.id === searchParams.get('tab')) ? searchParams.get('tab') : 'list';
+  const setTab = (t) => setSearchParams(t === 'list' ? {} : { tab: t });
 
   return (
     <div className="animate-slide-up">

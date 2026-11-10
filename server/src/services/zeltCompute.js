@@ -1560,6 +1560,32 @@ export async function debugSampleUser(opts = {}) {
   const pat = opts.leaver ? /date|leav|end|term|offboard|depart|exit|resign|start|effective|last/i
                           : /id|allowance|days|leave|employee|contract/i;
   const interesting = findKeysByPattern(u, pat);
+
+  // The cache has no exit date — probe per-user endpoints to find where Zelt
+  // keeps the termination date (so we can enrich leavers in bulk).
+  let probes;
+  if (opts.leaver) {
+    const uid = u.userId || u.id;
+    const evId = u?.userEvent?.id;
+    const candidates = [
+      ['userFull', `/apiv2/users/${uid}`],
+      ['employment', `/apiv2/users/${uid}/employment`],
+      ['contract', `/apiv2/users/${uid}/contract`],
+      ['lifecycle', `/apiv2/users/${uid}/lifecycle`],
+      ['offboarding', `/apiv2/users/${uid}/offboarding`],
+      ['events', `/apiv2/users/${uid}/events`],
+      ['userEvent', evId ? `/apiv2/user-events/${evId}` : null],
+    ];
+    probes = {};
+    for (const [label, path] of candidates) {
+      if (!path) continue;
+      try {
+        const r = await botGet(path);
+        probes[label] = { ok: true, dateKeys: findKeysByPattern(r, /date|leav|end|term|offboard|last|exit|effective/i).slice(0, 25) };
+      } catch (e) { probes[label] = { ok: false, status: e?.status || e?.message || 'err' }; }
+    }
+  }
+
   return {
     isLeaverSample: isLeaverish(u),
     extracted: {
@@ -1574,6 +1600,7 @@ export async function debugSampleUser(opts = {}) {
     lifecycle: u?.lifecycle ?? null,
     userEvent: u?.userEvent ?? null,
     dateLikeKeys: interesting,
+    probes,
   };
 }
 

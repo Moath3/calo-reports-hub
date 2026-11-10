@@ -1599,9 +1599,19 @@ export async function debugSampleUser(opts = {}) {
   const interesting = findKeysByPattern(u, pat);
   // Exit date isn't in the cache; it's on /users/{id}/lifecycle.terminationDate
   // (see getTerminationDates). Surface it here too when sampling a leaver.
-  let lifecycleDetail = null;
+  let lifecycleDetail = null, orgBlProbe = null;
   if (opts.leaver) {
-    try { lifecycleDetail = await botGet(`/apiv2/users/${u.userId || u.id}/lifecycle`); } catch { /* ignore */ }
+    const uid = u.userId || u.id;
+    try { lifecycleDetail = await botGet(`/apiv2/users/${uid}/lifecycle`); } catch { /* ignore */ }
+    // Does a leaver expose role custom fields (Business Line / Organization)?
+    const probe = async (p) => {
+      try {
+        const r = await botGet(p);
+        const cu = r?.effectiveRecord?.customUpdates || r?.customUpdates || r?.entries?.[0]?.effectiveRecord?.customUpdates || r?.entries?.[0]?.customUpdates;
+        return { ok: true, customFields: Array.isArray(cu) ? cu.length : 0 };
+      } catch (e) { return { ok: false, status: e?.status || e?.message || 'err' }; }
+    };
+    orgBlProbe = { role: await probe(`/apiv2/users/${uid}/role`), events: await probe(`/apiv2/users/${uid}/events`) };
   }
   return {
     isLeaverSample: isLeaverish(u),
@@ -1616,6 +1626,7 @@ export async function debugSampleUser(opts = {}) {
       terminationDate: lifecycleDetail?.terminationDate ?? null,
     },
     lifecycleDetail,
+    orgBlProbe,
     dateLikeKeys: interesting,
   };
 }

@@ -161,7 +161,9 @@ export function computeMobilityFromUsers(users, now = new Date()) {
   const months = [];
   for (let i = 11; i >= 0; i--) {
     const monthStart = Date.UTC(y, m - i, 1);
-    const monthEnd = Date.UTC(y, m - i + 1, 1) - 1; // last ms of the month
+    // Cap the in-progress current month at "now" so its headcount/joiners match
+    // the live figure and don't count joiners scheduled later this month.
+    const monthEnd = Math.min(Date.UTC(y, m - i + 1, 1) - 1, nowMs);
     const d = new Date(monthStart);
     const key = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
 

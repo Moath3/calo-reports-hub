@@ -207,12 +207,12 @@ export default function MobilityPage() {
           </div>
         </Card>
 
-        {/* By org / business line / department */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(380px, 1fr))', gap: 20 }}>
+        {/* Organization + Business Line side by side; Department full-width below */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 20 }}>
           <BreakdownCard title="By Organization" rows={data.byOrg || []} />
           <BreakdownCard title="By business line" rows={data.byBusinessLine || []} />
-          <BreakdownCard title="By department" rows={data.byDept || []} />
         </div>
+        <BreakdownCard title="By department" rows={data.byDept || []} />
 
         {/* Tenure mix */}
         <Card padding={24}>

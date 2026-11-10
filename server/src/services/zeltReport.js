@@ -16,7 +16,7 @@
  * the server in any AI payload (aggregates to the narrative are PII-free).
  */
 import { botGet, botConfigured } from './zeltBot.js';
-import { fetchAllUsersForAudit } from './zeltCompute.js';
+import { fetchAllUsersForAudit, getTerminationDates } from './zeltCompute.js';
 
 const INDEX_TTL_MS = 6 * 60 * 60 * 1000;   // 6h — role/BL/org barely change intraday
 const ROLE_CONCURRENCY = 5;                 // stay well under Zelt's Akamai WAF threshold
@@ -441,12 +441,13 @@ export async function runHeadcount(asOf) {
   // BL/org only live on the warm index (current staff); leavers fall back to blank.
   const dimByUser = new Map(index.rows.map(r => [r.userId, { businessLine: r.businessLine || '', org: r.org || '' }]));
   const users = await fetchAllUsersForAudit();
+  const termMap = await getTerminationDates(users);   // exit dates aren't in the cache
   const rows = [];
   for (const u of users) {
     const sdRaw = u.startDate || u?.lifecycle?.startDate;
     const sd = sdRaw ? new Date(sdRaw) : null;
     if (!sd || Number.isNaN(sd.getTime()) || sd > asOfEnd) continue;        // not yet joined
-    const ldRaw = u.leaveDate || u?.lifecycle?.leaveDate;
+    const ldRaw = u.leaveDate || u?.lifecycle?.leaveDate || termMap.get(u.userId || u.id);
     const ld = ldRaw ? new Date(ldRaw) : null;
     if (ld && !Number.isNaN(ld.getTime()) && ld <= asOfEnd) continue;       // already left
     const row = {

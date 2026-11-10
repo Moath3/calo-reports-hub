@@ -527,6 +527,37 @@ export async function fetchAllUsersForAudit() {
   return fetchAllUsers();
 }
 
+// users/cache carries the Terminated STATUS but no exit date — that lives on
+// /apiv2/users/{id}/lifecycle as `terminationDate`. Fetch it for leavers only
+// (concurrency-limited), cached 6h since an exit date is immutable once set.
+let termCache = { value: null, expiresAt: 0 };
+const TERM_TTL_MS = 6 * 60 * 60 * 1000;
+const TERM_CONCURRENCY = 5;
+function isLeaverStatus(u) {
+  const s = u?.accountStatus || u?.status || u?.lifecycle?.status;
+  const ev = u?.userEvent?.status || u?.lifecycle?.status;
+  return s === 'Deactivated' || s === 'Terminated' || ['Terminated', 'Resigned', 'Offboarded'].includes(ev);
+}
+export async function getTerminationDates(users = null) {
+  if (termCache.value && termCache.expiresAt > Date.now()) return termCache.value;
+  const leavers = (users || await fetchAllUsers()).filter(isLeaverStatus);
+  const map = new Map(); // userId -> 'YYYY-MM-DD'
+  const queue = [...leavers];
+  const worker = async () => {
+    while (queue.length) {
+      const u = queue.shift();
+      const uid = u.userId || u.id;
+      try {
+        const lc = await botGet(`/apiv2/users/${uid}/lifecycle`);
+        if (lc?.terminationDate) map.set(uid, lc.terminationDate);
+      } catch { /* leaver without a readable lifecycle — stays undated */ }
+    }
+  };
+  await Promise.all(Array.from({ length: TERM_CONCURRENCY }, worker));
+  termCache = { value: map, expiresAt: Date.now() + TERM_TTL_MS };
+  return map;
+}
+
 export function clearCaches() {
   cache.entities = { value: null, expiresAt: 0 };
   cache.departments = { value: null, expiresAt: 0 };
@@ -534,6 +565,7 @@ export function clearCaches() {
   cache.balancesMap.clear();
   cache.allUsers = { value: null, expiresAt: 0 };
   cache.basics = { value: new Map(), expiresAt: 0 };
+  termCache = { value: null, expiresAt: 0 };
 }
 
 // ---- Internals -------------------------------------------------------
@@ -1560,32 +1592,12 @@ export async function debugSampleUser(opts = {}) {
   const pat = opts.leaver ? /date|leav|end|term|offboard|depart|exit|resign|start|effective|last/i
                           : /id|allowance|days|leave|employee|contract/i;
   const interesting = findKeysByPattern(u, pat);
-
-  // The cache has no exit date — probe per-user endpoints to find where Zelt
-  // keeps the termination date (so we can enrich leavers in bulk).
-  let probes;
+  // Exit date isn't in the cache; it's on /users/{id}/lifecycle.terminationDate
+  // (see getTerminationDates). Surface it here too when sampling a leaver.
+  let lifecycleDetail = null;
   if (opts.leaver) {
-    const uid = u.userId || u.id;
-    const evId = u?.userEvent?.id;
-    const candidates = [
-      ['userFull', `/apiv2/users/${uid}`],
-      ['employment', `/apiv2/users/${uid}/employment`],
-      ['contract', `/apiv2/users/${uid}/contract`],
-      ['lifecycle', `/apiv2/users/${uid}/lifecycle`],
-      ['offboarding', `/apiv2/users/${uid}/offboarding`],
-      ['events', `/apiv2/users/${uid}/events`],
-      ['userEvent', evId ? `/apiv2/user-events/${evId}` : null],
-    ];
-    probes = {};
-    for (const [label, path] of candidates) {
-      if (!path) continue;
-      try {
-        const r = await botGet(path);
-        probes[label] = { ok: true, dateKeys: findKeysByPattern(r, /date|leav|end|term|offboard|last|exit|effective/i).slice(0, 25) };
-      } catch (e) { probes[label] = { ok: false, status: e?.status || e?.message || 'err' }; }
-    }
+    try { lifecycleDetail = await botGet(`/apiv2/users/${u.userId || u.id}/lifecycle`); } catch { /* ignore */ }
   }
-
   return {
     isLeaverSample: isLeaverish(u),
     extracted: {
@@ -1596,11 +1608,10 @@ export async function debugSampleUser(opts = {}) {
       accountStatus: u?.accountStatus ?? null,
       lifecycleStatus: u?.lifecycle?.status ?? null,
       userEventStatus: u?.userEvent?.status ?? null,
+      terminationDate: lifecycleDetail?.terminationDate ?? null,
     },
-    lifecycle: u?.lifecycle ?? null,
-    userEvent: u?.userEvent ?? null,
+    lifecycleDetail,
     dateLikeKeys: interesting,
-    probes,
   };
 }
 

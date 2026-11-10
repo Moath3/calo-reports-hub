@@ -560,11 +560,13 @@ router.post('/report/run', dataLimiter, requireAuth, asyncHandler(async (req, re
 // HR/admin: clean full-employee roster for headcount (test/payroll/ghost accounts
 // excluded, 3rd-party included). Fixed 7-column shape — no salary, no email.
 router.get('/headcount', dataLimiter, requireAuth, requireHrOrAdmin, asyncHandler(async (req, res) => {
+  const asOf = req.query.asOf ? String(req.query.asOf) : null;
   try {
-    const result = runHeadcount();
-    logZeltAudit(req.user.id, 'zelt.headcount', { count: result.count });
+    const result = await runHeadcount(asOf);
+    logZeltAudit(req.user.id, 'zelt.headcount', { count: result.count, asOf: result.asOf });
     res.json(result);
   } catch (err) {
+    if (err.code === 'BAD_ASOF') throw badRequest(err.message);
     if (err.code === 'INDEX_BUILDING') {
       return res.status(202).json({ building: true, status: err.status, message: err.message });
     }

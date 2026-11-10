@@ -404,27 +404,62 @@ function isNonHeadcountAccount(r) {
   if (HEADCOUNT_DENYLIST.has(idv)) return true;
   if (/test/i.test(nm) || /test/i.test(idv)) return true;
   if (/^placeholder/i.test(idv) || /bot$/i.test(idv)) return true;        // Placeholder001, 999BOT
-  if (/\[for payroll only\]|payroll|\bbot\b|dummymurph/i.test(nm)) return true;
+  if (/\[for payroll only\]|payroll|\bbot\b|dummymurph|\bzelt\b/i.test(nm)) return true;  // incl. "Zelt Support" system acct
   if (!isThirdPartyRow(r) && r.email && DUMMY_EMAIL.test(r.email)) return true;
   return false;
 }
 
-export function runHeadcount() {
+const byName = (a, b) => String(a.name).localeCompare(String(b.name));
+const projectHeadcount = (r) => ({
+  employeeId: r.employeeId || '',
+  name: r.name || '',
+  position: r.jobTitle || '',
+  department: r.department || '',
+  businessLine: r.businessLine || '',
+  org: r.org || '',
+  startDate: r.startDate || '',
+});
+
+// `asOf` (optional, "YYYY-MM", 2026 only) gives a point-in-time headcount from
+// start/leave dates: everyone who had joined by, and had not left by, the end of
+// that month. Attribute columns (position/dept/BL/org) are current/last-known,
+// not a historical snapshot — Zelt doesn't expose point-in-time role records.
+export async function runHeadcount(asOf) {
   const status = getIndexStatus();
   if (!status.ready) { warmIndex(); const e = new Error('People index is still building — try again in a moment.'); e.code = 'INDEX_BUILDING'; throw e; }
-  const rows = index.rows
-    .filter(r => !isNonHeadcountAccount(r))
-    .map(r => ({
-      employeeId: r.employeeId || '',
-      name: r.name || '',
-      position: r.jobTitle || '',
-      department: r.department || '',
-      businessLine: r.businessLine || '',
-      org: r.org || '',
-      startDate: r.startDate || '',
-    }))
-    .sort((a, b) => String(a.name).localeCompare(String(b.name)));
-  return { rows, count: rows.length, generatedAt: new Date().toISOString(), indexAgeMinutes: status.ageMinutes };
+
+  if (!asOf) {
+    const rows = index.rows.filter(r => !isNonHeadcountAccount(r)).map(projectHeadcount).sort(byName);
+    return { rows, count: rows.length, asOf: null, generatedAt: new Date().toISOString(), indexAgeMinutes: status.ageMinutes };
+  }
+
+  const m = /^2026-(0[1-9]|1[0-2])$/.exec(asOf);
+  if (!m) { const e = new Error('asOf must be a 2026 month (YYYY-MM), e.g. 2026-06.'); e.code = 'BAD_ASOF'; throw e; }
+  const asOfEnd = new Date(Date.UTC(2026, Number(m[1]), 0, 23, 59, 59));   // last day of that month
+  if (asOfEnd > new Date()) { const e = new Error('That month is in the future.'); e.code = 'BAD_ASOF'; throw e; }
+
+  // BL/org only live on the warm index (current staff); leavers fall back to blank.
+  const dimByUser = new Map(index.rows.map(r => [r.userId, { businessLine: r.businessLine || '', org: r.org || '' }]));
+  const users = await fetchAllUsersForAudit();
+  const rows = [];
+  for (const u of users) {
+    const sdRaw = u.startDate || u?.lifecycle?.startDate;
+    const sd = sdRaw ? new Date(sdRaw) : null;
+    if (!sd || Number.isNaN(sd.getTime()) || sd > asOfEnd) continue;        // not yet joined
+    const ldRaw = u.leaveDate || u?.lifecycle?.leaveDate;
+    const ld = ldRaw ? new Date(ldRaw) : null;
+    if (ld && !Number.isNaN(ld.getTime()) && ld <= asOfEnd) continue;       // already left
+    const row = {
+      employeeId: readEmployeeId(u) || '', name: readName(u), entity: readEntity(u),
+      email: u.emailAddress || null, jobTitle: readTitle(u), department: readDept(u),
+      ...(dimByUser.get(u.userId || u.id) || { businessLine: '', org: '' }),
+      startDate: sdRaw || '',
+    };
+    if (isNonHeadcountAccount(row)) continue;
+    rows.push(projectHeadcount(row));
+  }
+  rows.sort(byName);
+  return { rows, count: rows.length, asOf, generatedAt: new Date().toISOString(), indexAgeMinutes: status.ageMinutes };
 }
 
 // Pure helpers exposed for unit tests (no I/O).

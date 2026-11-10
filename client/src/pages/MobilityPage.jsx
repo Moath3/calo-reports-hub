@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import api from '../utils/api';
 import { Icon, Btn, Card, Pill, KpiTile, PageHeader } from '../components/ui';
+import HeadcountButton from '../components/HeadcountButton';
 
 /**
  * MobilityPage — headcount, joiners/leavers and turnover computed live from
@@ -134,6 +135,7 @@ export default function MobilityPage() {
         actions={
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
             {data.asOf && <Pill tone="neutral" size="sm" icon="Clock">as of {fmtDate(data.asOf)}</Pill>}
+            <HeadcountButton compact />
             <Btn variant="secondary" size="sm" icon="RefreshCw" onClick={() => load(true)} disabled={loading}>
               {loading ? 'Refreshing…' : 'Refresh'}
             </Btn>

@@ -1,9 +1,10 @@
-import { useState, useEffect, useRef, useMemo } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import api from '../utils/api';
 import toast from 'react-hot-toast';
 import { Card, Pill, Eyebrow, Btn, Icon, PageHeader } from '../components/ui';
+import HeadcountButton from '../components/HeadcountButton';
 
 // Field catalogue — mirrors server ALL_FIELDS.
 //   sensitive = admin-only, never sent to AI.  hidden = defined but not shown yet.
@@ -64,15 +65,6 @@ export default function ZeltReportPage({ embedded = false }) {
   const [fields, setFields] = useState(['name', 'department', 'businessLine', 'entity']);
   const [result, setResult] = useState(null);
   const [running, setRunning] = useState(false);
-  const [hcLoading, setHcLoading] = useState(false);
-  const [hcMonth, setHcMonth] = useState(''); // '' = current live; else '2026-MM'
-  // 2026 only, up to the current month (point-in-time history earlier than 2026 isn't offered).
-  const hcMonths = useMemo(() => {
-    const now = new Date();
-    const max = now.getUTCFullYear() > 2026 ? 12 : now.getUTCMonth() + 1;
-    const names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    return Array.from({ length: Math.min(12, max) }, (_, i) => ({ value: `2026-${String(i + 1).padStart(2, '0')}`, label: `${names[i]} 2026` }));
-  }, []);
   const pollRef = useRef(null);
 
   // Warm the index on mount, then poll the CHEAP status endpoint (200/15min) —
@@ -206,34 +198,6 @@ export default function ZeltReportPage({ embedded = false }) {
     } catch (err) { toast.error(err.message || 'Failed to create report'); }
   };
 
-  // One-click full-employee Excel (test/payroll/ghost accounts excluded server-side).
-  const downloadHeadcount = async () => {
-    if (hcLoading) return;
-    setHcLoading(true);
-    try {
-      const data = await api.zeltHeadcount(hcMonth || undefined);
-      if (data?.building) { toast.error('People index is still building — try again in a moment.'); return; }
-      const rows = data?.rows || [];
-      if (!rows.length) { toast.error('No employees returned.'); return; }
-      const mod = await import('exceljs');
-      const ExcelJS = mod.default ?? mod;
-      const { buildHeadcountWorkbook } = await import('../utils/headcountWorkbook');
-      const wb = buildHeadcountWorkbook(ExcelJS, data);
-      const buf = await wb.xlsx.writeBuffer();
-      const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      const period = hcMonth || new Date().toISOString().slice(0, 10);
-      a.download = `CALO Headcount ${period}.xlsx`;
-      document.body.appendChild(a); a.click(); a.remove();
-      URL.revokeObjectURL(url);
-      toast.success(`Headcount exported — ${rows.length} employees${hcMonth ? ` as of ${hcMonth}` : ''}`);
-    } catch (e) {
-      toast.error(e.message || 'Headcount export failed');
-    } finally { setHcLoading(false); }
-  };
-
   return (
     <div className="animate-slide-up" style={{ maxWidth: 1200, margin: '0 auto' }}>
       {!embedded && (
@@ -245,16 +209,8 @@ export default function ZeltReportPage({ embedded = false }) {
       )}
 
       {/* Headcount: full employee roster, one click (live or a 2026 month) */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', flexWrap: 'wrap', gap: 10, marginBottom: 12 }}>
-        <span style={{ fontSize: 12.5, color: 'var(--ink-500)' }}>Full employee list (test &amp; payroll accounts excluded)</span>
-        <select value={hcMonth} onChange={(e) => setHcMonth(e.target.value)} disabled={hcLoading}
-          style={{ fontSize: 13, padding: '7px 10px', borderRadius: 8, border: '1px solid var(--line, #d9e2dd)', background: '#fff', color: 'var(--ink-700, #1a2b23)' }}>
-          <option value="">Current (live)</option>
-          {hcMonths.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
-        </select>
-        <Btn variant="primary" icon="Download" onClick={downloadHeadcount} disabled={hcLoading || !index.ready}>
-          {hcLoading ? 'Preparing…' : 'Headcount'}
-        </Btn>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
+        <HeadcountButton />
       </div>
 
       {/* Index building banner */}

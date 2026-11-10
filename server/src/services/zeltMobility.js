@@ -12,7 +12,7 @@
  * surfaced in `coverage` instead of silently inflating headcount.
  */
 import { fetchAllUsersForAudit, getTerminationDates, invalidateUserCache } from './zeltCompute.js';
-import { isNonHeadcountAccount } from './zeltReport.js';
+import { isNonHeadcountAccount, getOrgBlMap } from './zeltReport.js';
 
 const MOBILITY_TTL_MS = 15 * 60 * 1000; // recomputing over ~2k users is cheap but the fetch isn't
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -71,7 +71,9 @@ function round1(v) {
 
 // One derived record per user — everything downstream reads these, never the
 // raw Zelt shape.
-function deriveUser(u) {
+function deriveUser(u, orgBlByUser) {
+  const uid = u?.userId || u?.id;
+  const ob = (orgBlByUser && orgBlByUser.get(uid)) || {};
   const status = u?.accountStatus || u?.status || u?.lifecycle?.status || null;
   const eventStatus = u?.userEvent?.status || u?.lifecycle?.status || null;
   const startDate = parseDateSafe(u?.startDate || u?.lifecycle?.startDate);
@@ -88,10 +90,13 @@ function deriveUser(u) {
   else if (eventStatus === 'Terminated' || eventStatus === 'Offboarded') reason = 'involuntary';
 
   return {
+    userId: uid,
     name: readName(u),
     employeeId: readEmployeeId(u),
     email: u?.emailAddress || null,   // for the headcount ghost-account filter
     entity: readEntity(u),
+    org: ob.org || null,              // from the index (actives) / per-user role fetch (leavers)
+    businessLine: ob.businessLine || null,
     department: u?.role?.department?.name || u?.department?.name || u?.department || null,
     site: u?.role?.site?.name || u?.site?.name || u?.site || null,
     jobTitle: u?.role?.jobPosition?.title || u?.jobTitle || u?.position || null,
@@ -132,7 +137,7 @@ const TENURE_BUCKETS = ['<3m', '3–12m', '1–2y', '2–5y', '5y+'];
  * Pure computation — no I/O. `users` are raw Zelt user records, `now` fixes
  * the reference point (tests pass a frozen date).
  */
-export function computeMobilityFromUsers(users, now = new Date()) {
+export function computeMobilityFromUsers(users, now = new Date(), orgBlByUser = new Map()) {
   // Dedupe the way zeltCompute does — partner endpoint sometimes returns one
   // row per contract.
   const seen = new Map();
@@ -140,7 +145,7 @@ export function computeMobilityFromUsers(users, now = new Date()) {
     const k = u.userId || u.id || readEmployeeId(u) || JSON.stringify(u).slice(0, 40);
     if (!seen.has(k)) seen.set(k, u);
   }
-  const allRecords = Array.from(seen.values()).map(deriveUser);
+  const allRecords = Array.from(seen.values()).map(u => deriveUser(u, orgBlByUser));
   // Drop test rigs, payroll placeholders, bots and ghost accounts — same rule as
   // the headcount export — so turnover isn't skewed by non-people.
   const records = allRecords.filter(r => !isNonHeadcountAccount(r));
@@ -245,7 +250,8 @@ export function computeMobilityFromUsers(users, now = new Date()) {
       }))
       .sort((a, b) => b.headcount - a.headcount);
   };
-  const byEntity = groupBy(r => r.entity);
+  const byOrg = groupBy(r => r.org);
+  const byBusinessLine = groupBy(r => r.businessLine);
   const byDept = groupBy(r => r.department);
 
   // Trailing-12m leaver list, newest exits first.
@@ -276,7 +282,8 @@ export function computeMobilityFromUsers(users, now = new Date()) {
       earlyAttritionPct,
     },
     tenure,
-    byEntity,
+    byOrg,
+    byBusinessLine,
     byDept,
     leavers,
     coverage: {
@@ -310,8 +317,13 @@ export async function getMobility(force = false) {
   const enriched = termMap.size
     ? users.map(u => { const uid = u.userId || u.id; return termMap.has(uid) ? { ...u, leaveDate: u.leaveDate || termMap.get(uid) } : u; })
     : users;
-  const result = { asOf: new Date().toISOString(), ...computeMobilityFromUsers(enriched) };
+  // Org/BL per user (actives from the index, leavers via /role) for the by-Org /
+  // by-Business-Line breakdowns.
+  const { map: orgBlByUser, complete } = await getOrgBlMap(users);
+  const result = { asOf: new Date().toISOString(), ...computeMobilityFromUsers(enriched, new Date(), orgBlByUser) };
   cache.value = result;
-  cache.expiresAt = Date.now() + MOBILITY_TTL_MS;
+  // If the people index wasn't ready, actives lack Org/BL this run — cache briefly
+  // so it self-heals once the index warms, instead of serving a partial for 15m.
+  cache.expiresAt = Date.now() + (complete ? MOBILITY_TTL_MS : 60 * 1000);
   return result;
 }

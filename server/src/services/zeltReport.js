@@ -165,6 +165,7 @@ export function clearIndex() {
   index.rows = null; index.builtAt = 0; index.progress = { done: 0, total: 0 }; index.error = null;
   formMapCache = { value: null, expiresAt: 0 };
   leaveCache = { value: null, expiresAt: 0 };
+  leaverRoleCache = { value: null, expiresAt: 0 };
 }
 
 // ---- Dimensions (filter options) ------------------------------------------
@@ -461,6 +462,37 @@ export async function runHeadcount(asOf) {
   }
   rows.sort(byName);
   return { rows, count: rows.length, asOf, generatedAt: new Date().toISOString(), indexAgeMinutes: status.ageMinutes };
+}
+
+// Org / Business Line per userId for Mobility. Actives come free from the warm
+// index; leavers (dropped from the index by isLive) get a per-user /role fetch,
+// cached 6h. `complete` is false when the index wasn't ready, so callers can
+// avoid caching a partial result for long.
+let leaverRoleCache = { value: null, expiresAt: 0 };
+export async function getOrgBlMap(users) {
+  const ready = getIndexStatus().ready;
+  if (!ready) warmIndex();
+  const map = new Map();
+  if (index.rows) for (const r of index.rows) if (r.userId != null) map.set(r.userId, { org: r.org || null, businessLine: r.businessLine || null });
+
+  const now = Date.now();
+  if (!(leaverRoleCache.value && leaverRoleCache.expiresAt > now)) {
+    const roleMap = (await getFormFieldMap())['role'] || {};
+    const ids = (users || []).filter(u => !isLive(u)).map(u => u.userId || u.id).filter(Boolean);
+    const lmap = new Map();
+    const queue = [...ids];
+    const worker = async () => {
+      while (queue.length) {
+        const uid = queue.shift();
+        const d = await fetchRoleDims(uid, roleMap);   // defensive: {} on a per-user miss
+        lmap.set(uid, { org: d.org || null, businessLine: d.businessLine || null });
+      }
+    };
+    await Promise.all(Array.from({ length: ROLE_CONCURRENCY }, worker));
+    leaverRoleCache = { value: lmap, expiresAt: now + INDEX_TTL_MS };
+  }
+  for (const [uid, v] of leaverRoleCache.value) map.set(uid, v);
+  return { map, complete: ready };
 }
 
 // Pure helpers exposed for unit tests (no I/O).

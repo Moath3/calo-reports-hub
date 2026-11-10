@@ -148,16 +148,16 @@ test('leaver list: trailing 12m, newest exit first, tenure + reason attached', (
   assert.equal(leavers[1].tenureMonths, 2.1);
 });
 
-test('byEntity: grouped, sorted by headcount desc', () => {
-  const { byEntity } = computeMobilityFromUsers(fixtureUsers(), NOW);
-  assert.equal(byEntity[0].key, 'Mountain Peak KSA');
-  assert.equal(byEntity[0].headcount, 3);    // Jane, Vik, Omar
-  assert.equal(byEntity[0].joiners12m, 2);   // Rania, Jane
-  assert.equal(byEntity[0].leavers12m, 1);   // Rania
-  const bc = byEntity.find(x => x.key === 'Basecamp KSA');
-  assert.equal(bc.headcount, 1);             // Noor (Nadia has no startDate)
-  assert.equal(bc.leavers12m, 1);            // Tarek
-  assert.equal(bc.turnoverPct, 100);
+test('byDept: grouped, sorted by headcount desc', () => {
+  const { byDept } = computeMobilityFromUsers(fixtureUsers(), NOW);
+  assert.equal(byDept[0].key, 'Kitchen');
+  assert.equal(byDept[0].headcount, 3);      // Jane, Vik, Omar
+  assert.equal(byDept[0].joiners12m, 2);     // Rania, Jane
+  assert.equal(byDept[0].leavers12m, 1);     // Rania
+  const dp = byDept.find(x => x.key === 'Dispatch');
+  assert.equal(dp.headcount, 1);             // Noor (Tarek left)
+  assert.equal(dp.leavers12m, 1);            // Tarek
+  assert.equal(dp.turnoverPct, 100);
 });
 
 test('user missing startDate never appears in the monthly headcount series', () => {

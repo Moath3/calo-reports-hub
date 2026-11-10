@@ -208,9 +208,10 @@ export default function MobilityPage() {
           </div>
         </Card>
 
-        {/* By entity / by department */}
+        {/* By org / business line / department */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(380px, 1fr))', gap: 20 }}>
-          <BreakdownCard title="By entity" rows={data.byEntity || []} />
+          <BreakdownCard title="By org" rows={data.byOrg || []} />
+          <BreakdownCard title="By business line" rows={data.byBusinessLine || []} />
           <BreakdownCard title="By department" rows={data.byDept || []} />
         </div>
 

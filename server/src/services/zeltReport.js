@@ -469,7 +469,7 @@ export async function runHeadcount(asOf) {
 // cached 6h. `complete` is false when the index wasn't ready, so callers can
 // avoid caching a partial result for long.
 let leaverRoleCache = { value: null, expiresAt: 0 };
-export async function getOrgBlMap(leaverIds = []) {
+export async function getOrgBlMap(leaverIds = [], force = false) {
   // Deliberately do NOT warmIndex() here: a 1550-fetch build running concurrently
   // with Mobility's own lifecycle/role fetches blows Zelt's ~1500/session WAF.
   // Actives come from the index only if it's already warm (From Zelt / headcount).
@@ -479,7 +479,7 @@ export async function getOrgBlMap(leaverIds = []) {
 
   const now = Date.now();
   const wanted = [...new Set((leaverIds || []).filter(Boolean))];
-  if (wanted.length && !(leaverRoleCache.value && leaverRoleCache.expiresAt > now)) {
+  if (wanted.length && (force || !(leaverRoleCache.value && leaverRoleCache.expiresAt > now))) {
     const lmap = new Map();
     try {
       const roleMap = (await getFormFieldMap())['role'] || {};

@@ -313,7 +313,7 @@ export async function getMobility(force = false) {
   const users = await fetchAllUsersForAudit();
   // Exit dates aren't in the cache; enrich from lifecycle.terminationDate (else leavers=0).
   let termMap = new Map();
-  try { termMap = await getTerminationDates(users); } catch { /* degrade: leavers stay undated */ }
+  try { termMap = await getTerminationDates(users, force); } catch { /* degrade: leavers stay undated */ }
   const enriched = termMap.size
     ? users.map(u => { const uid = u.userId || u.id; return termMap.has(uid) ? { ...u, leaveDate: u.leaveDate || termMap.get(uid) } : u; })
     : users;
@@ -323,7 +323,7 @@ export async function getMobility(force = false) {
     .filter(u => { const t = Date.parse(u.leaveDate); return !Number.isNaN(t) && t >= since; })
     .map(u => u.userId || u.id).filter(Boolean);
   let orgBlByUser = new Map(), complete = false;
-  try { ({ map: orgBlByUser, complete } = await getOrgBlMap(windowLeaverIds)); } catch { /* degrade: Org/BL unknown */ }
+  try { ({ map: orgBlByUser, complete } = await getOrgBlMap(windowLeaverIds, force)); } catch { /* degrade: Org/BL unknown */ }
   const result = { asOf: new Date().toISOString(), ...computeMobilityFromUsers(enriched, new Date(), orgBlByUser) };
   cache.value = result;
   cache.expiresAt = Date.now() + (complete ? MOBILITY_TTL_MS : 60 * 1000); // short cache if index wasn't warm

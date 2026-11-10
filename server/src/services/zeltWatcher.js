@@ -12,6 +12,8 @@ import { getDb, persistNow, kvGet, kvSet, listEntityAdmins } from '../db/databas
 import { runAudit } from './zeltAudit.js';
 import { generateHygieneDigest } from './aiService.js';
 import { getCompExpiryAggregates, getCompExpiryByEntity } from './zeltCompute.js';
+import { warmIndex, getIndexStatus } from './zeltReport.js';
+import { getMobility } from './zeltMobility.js';
 import { postSlackDM, slackBotConfigured } from './slackBot.js';
 import { sendCompExpiryReminder } from './emailService.js';
 
@@ -264,6 +266,17 @@ export async function runSnapshotAndDiff() {
       JSON.stringify(storedChecks),
     );
     persistNow();
+
+    // Pre-warm the HR tools so the people index + Mobility serve instantly and from
+    // COMPLETE data when opened, not on the user's click (where the index build +
+    // Mobility's fetches would collide on Zelt's WAF). Best-effort; botGet re-logins
+    // past the WAF budget during the big fetches. Index first, then Mobility.
+    try {
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      warmIndex(true);
+      for (let i = 0; i < 60 && !getIndexStatus().ready; i++) await sleep(5000);
+      await getMobility(true);
+    } catch (e) { console.warn('[zelt-watcher] HR-tools pre-warm failed:', e.message); }
 
     const diff = prev ? diffSnapshots(prev.checks, storedChecks) : null;
     return {

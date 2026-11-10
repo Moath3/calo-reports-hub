@@ -538,10 +538,11 @@ function isLeaverStatus(u) {
   const ev = u?.userEvent?.status || u?.lifecycle?.status;
   return s === 'Deactivated' || s === 'Terminated' || ['Terminated', 'Resigned', 'Offboarded'].includes(ev);
 }
-export async function getTerminationDates(users = null) {
-  if (termCache.value && termCache.expiresAt > Date.now()) return termCache.value;
+export async function getTerminationDates(users = null, force = false) {
+  if (!force && termCache.value && termCache.expiresAt > Date.now()) return termCache.value;
   const leavers = (users || await fetchAllUsers()).filter(isLeaverStatus);
   const map = new Map(); // userId -> 'YYYY-MM-DD'
+  let failed = 0;
   const queue = [...leavers];
   const worker = async () => {
     while (queue.length) {
@@ -550,11 +551,14 @@ export async function getTerminationDates(users = null) {
       try {
         const lc = await botGet(`/apiv2/users/${uid}/lifecycle`);
         if (lc?.terminationDate) map.set(uid, lc.terminationDate);
-      } catch { /* leaver without a readable lifecycle — stays undated */ }
+      } catch { failed++; /* leaver without a readable lifecycle — stays undated */ }
     }
   };
   await Promise.all(Array.from({ length: TERM_CONCURRENCY }, worker));
-  termCache = { value: map, expiresAt: Date.now() + TERM_TTL_MS };
+  // A WAF-truncated run (many failures) gets a short TTL so it retries soon; a
+  // partial leaver count must not persist for the full 6h.
+  const degraded = failed > Math.max(5, leavers.length * 0.15);
+  termCache = { value: map, expiresAt: Date.now() + (degraded ? 2 * 60 * 1000 : TERM_TTL_MS) };
   return map;
 }
 

@@ -200,7 +200,7 @@ async function login() {
 
 /**
  * Authenticated GET via the bot session cookie. Auto-logs in if no cookie,
- * auto-re-logs-in once on 401.
+ * auto-re-logs-in once on 401 (dead cookie) or 403 (WAF budget exhausted).
  */
 export async function botGet(path, params = {}) {
   if (!cookieJar) {
@@ -222,7 +222,9 @@ export async function botGet(path, params = {}) {
   };
 
   let resp = await attempt();
-  if (resp.status === 401) {
+  if (resp.status === 401 || resp.status === 403) {
+    // 401 = dead cookie; 403 = WAF per-session budget exhausted. A fresh login
+    // fixes both (re-login resets the WAF budget). login() is single-flight.
     cookieJar = null;
     clearCookieDb();
     resp = await attempt(true); // re-login + retry

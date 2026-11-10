@@ -18,7 +18,7 @@ const navGroups = [
     { to: '/leave-balances',  icon: 'CalendarCheck',  label: 'Leave Balances' },
     { to: '/time-attendance', icon: 'Clock',          label: 'Time & Attendance' },
     { to: '/data-hygiene',    icon: 'ShieldCheck',    label: 'Data Hygiene', hrOrAdmin: true, beta: true },
-    { to: '/mobility',        icon: 'TrendingUp',     label: 'Mobility', hrOrAdmin: true, beta: true },
+    { to: '/mobility',        icon: 'TrendingUp',     label: 'Mobility', hrOrAdmin: true },
     { to: '/entity-admins',   icon: 'Users',          label: 'Entity Admins', hrOrAdmin: true },
     { to: '/activity',        icon: 'Activity',       label: 'Activity log', adminOnly: true },
   ]},

@@ -112,7 +112,7 @@ const ORG_PATTERNS = [
   { org: 'MP KW',    pattern: /mountain\s*peak.*kuwait|^mp\s*kw/i },
 ];
 
-function classifyCountry(u) {
+export function classifyCountry(u) {
   const ent = readEntity(u) || '';
   const mapped = ENTITY_MAP[ent.toLowerCase()];
   if (mapped) return mapped.country;

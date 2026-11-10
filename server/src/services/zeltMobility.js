@@ -13,6 +13,7 @@
  */
 import { fetchAllUsersForAudit, getTerminationDates, invalidateUserCache } from './zeltCompute.js';
 import { isNonHeadcountAccount, getOrgBlMap } from './zeltReport.js';
+import { classifyCountry } from './zeltAudit.js';
 
 const MOBILITY_TTL_MS = 15 * 60 * 1000; // recomputing over ~2k users is cheap but the fetch isn't
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -95,6 +96,7 @@ function deriveUser(u, orgBlByUser) {
     employeeId: readEmployeeId(u),
     email: u?.emailAddress || null,   // for the headcount ghost-account filter
     entity: readEntity(u),
+    country: classifyCountry(u),      // entity-derived, so leavers get it too
     org: ob.org || null,              // from the index (actives) / per-user role fetch (leavers)
     businessLine: ob.businessLine || null,
     department: u?.role?.department?.name || u?.department?.name || u?.department || null,
@@ -137,7 +139,9 @@ const TENURE_BUCKETS = ['<3m', '3–12m', '1–2y', '2–5y', '5y+'];
  * Pure computation — no I/O. `users` are raw Zelt user records, `now` fixes
  * the reference point (tests pass a frozen date).
  */
-export function computeMobilityFromUsers(users, now = new Date(), orgBlByUser = new Map()) {
+const uniqSorted = (arr) => [...new Set(arr.filter(Boolean))].sort((a, b) => String(a).localeCompare(String(b)));
+
+export function computeMobilityFromUsers(users, now = new Date(), orgBlByUser = new Map(), filters = {}) {
   // Dedupe the way zeltCompute does — partner endpoint sometimes returns one
   // row per contract.
   const seen = new Map();
@@ -148,8 +152,22 @@ export function computeMobilityFromUsers(users, now = new Date(), orgBlByUser = 
   const allRecords = Array.from(seen.values()).map(u => deriveUser(u, orgBlByUser));
   // Drop test rigs, payroll placeholders, bots and ghost accounts — same rule as
   // the headcount export — so turnover isn't skewed by non-people.
-  const records = allRecords.filter(r => !isNonHeadcountAccount(r));
-  const excludedAccounts = allRecords.length - records.length;
+  const real = allRecords.filter(r => !isNonHeadcountAccount(r));
+  const excludedAccounts = allRecords.length - real.length;
+
+  // Filter options come from the FULL real set (so the dropdowns don't shrink as
+  // you filter); the dashboard itself is computed from the filtered subset.
+  const filterOptions = {
+    entities: uniqSorted(real.map(r => r.entity)),
+    organizations: uniqSorted(real.map(r => r.org)),
+    businessLines: uniqSorted(real.map(r => r.businessLine)),
+    countries: uniqSorted(real.map(r => r.country)),
+  };
+  const F = filters || {};
+  const inF = (val, allowed) => !allowed || !allowed.length || allowed.includes(val);
+  const records = real.filter(r =>
+    inF(r.entity, F.entities) && inF(r.org, F.orgs) &&
+    inF(r.businessLine, F.businessLines) && inF(r.country, F.countries));
 
   // Coverage — excluded-from-series counts, surfaced honestly.
   const leaversNoDate = records.filter(r => r.isLeaver && !r.leaveDate).length;
@@ -282,6 +300,7 @@ export function computeMobilityFromUsers(users, now = new Date(), orgBlByUser = 
       earlyAttritionPct,
     },
     tenure,
+    filterOptions,
     byOrg,
     byBusinessLine,
     byDept,
@@ -307,8 +326,11 @@ export function computeMobilityFromUsers(users, now = new Date(), orgBlByUser = 
  * mobility, memoized for ~15 min. Includes asOf so the client can show
  * data freshness.
  */
-export async function getMobility(force = false) {
-  if (!force && cache.value && cache.expiresAt > Date.now()) return cache.value;
+export async function getMobility(force = false, filters = {}) {
+  const noFilters = !filters || Object.values(filters).every((a) => !a || !a.length);
+  // Only the unfiltered view is cached; filtered views recompute in-memory over
+  // the already-cached user list (no extra Zelt calls), so they're cheap.
+  if (!force && noFilters && cache.value && cache.expiresAt > Date.now()) return cache.value;
   if (force) invalidateUserCache();   // Refresh: re-pull the live user list (term dates keep their 6h cache)
   const users = await fetchAllUsersForAudit();
   // Exit dates aren't in the cache; enrich from lifecycle.terminationDate (else leavers=0).
@@ -324,8 +346,10 @@ export async function getMobility(force = false) {
     .map(u => u.userId || u.id).filter(Boolean);
   let orgBlByUser = new Map(), complete = false;
   try { ({ map: orgBlByUser, complete } = await getOrgBlMap(windowLeaverIds, force)); } catch { /* degrade: Org/BL unknown */ }
-  const result = { asOf: new Date().toISOString(), ...computeMobilityFromUsers(enriched, new Date(), orgBlByUser) };
-  cache.value = result;
-  cache.expiresAt = Date.now() + (complete ? MOBILITY_TTL_MS : 60 * 1000); // short cache if index wasn't warm
+  const result = { asOf: new Date().toISOString(), ...computeMobilityFromUsers(enriched, new Date(), orgBlByUser, filters) };
+  if (noFilters) {
+    cache.value = result;
+    cache.expiresAt = Date.now() + (complete ? MOBILITY_TTL_MS : 60 * 1000); // short cache if index wasn't warm
+  }
   return result;
 }

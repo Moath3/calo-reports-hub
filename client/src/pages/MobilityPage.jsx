@@ -59,15 +59,16 @@ export default function MobilityPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [search, setSearch] = useState('');
+  const [filters, setFilters] = useState({ entities: [], orgs: [], businessLines: [], countries: [] });
 
   const load = useCallback((refresh = false) => {
     setLoading(true);
     setError(null);
-    api.zeltMobility(refresh === true)
+    api.zeltMobility(refresh === true, filters)
       .then(r => setData(r))
       .catch(e => setError(e))
       .finally(() => setLoading(false));
-  }, []);
+  }, [filters]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -82,7 +83,7 @@ export default function MobilityPage() {
     );
   }, [data, search]);
 
-  if (loading) {
+  if (loading && !data) {
     return (
       <div style={{ maxWidth: 1180, margin: '0 auto' }}>
         <Header />
@@ -141,6 +142,24 @@ export default function MobilityPage() {
       />
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+        {/* Filter bar — filters the whole dashboard */}
+        {data.filterOptions && (
+          <Card padding={14}>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center' }}>
+              <span style={{ fontSize: 11, fontWeight: 900, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--ink-500)' }}>Filter</span>
+              <FilterSelect label="Entity" opts={data.filterOptions.entities} value={filters.entities[0] || ''} onChange={(v) => setFilters(f => ({ ...f, entities: v ? [v] : [] }))} />
+              <FilterSelect label="Organization" opts={data.filterOptions.organizations} value={filters.orgs[0] || ''} onChange={(v) => setFilters(f => ({ ...f, orgs: v ? [v] : [] }))} />
+              <FilterSelect label="Business Line" opts={data.filterOptions.businessLines} value={filters.businessLines[0] || ''} onChange={(v) => setFilters(f => ({ ...f, businessLines: v ? [v] : [] }))} />
+              <FilterSelect label="Country" opts={data.filterOptions.countries} value={filters.countries[0] || ''} onChange={(v) => setFilters(f => ({ ...f, countries: v ? [v] : [] }))} />
+              {(filters.entities.length || filters.orgs.length || filters.businessLines.length || filters.countries.length) ? (
+                <button onClick={() => setFilters({ entities: [], orgs: [], businessLines: [], countries: [] })}
+                  style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--calo-700)', background: 'none', border: 'none', cursor: 'pointer' }}>Clear</button>
+              ) : null}
+              {loading && <span style={{ fontSize: 12, color: 'var(--ink-400)' }}>updating…</span>}
+            </div>
+          </Card>
+        )}
+
         {/* KPI strip */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 16 }}>
           <KpiTile label="Headcount now" value={fmtInt(totals.headcountNow)} accent />
@@ -301,6 +320,16 @@ export default function MobilityPage() {
         )}
       </div>
     </div>
+  );
+}
+
+function FilterSelect({ label, opts, value, onChange }) {
+  return (
+    <select value={value} onChange={(e) => onChange(e.target.value)}
+      style={{ fontSize: 13, padding: '6px 10px', borderRadius: 8, border: '1px solid var(--ink-200)', background: '#fff', color: 'var(--ink-700)', maxWidth: 220 }}>
+      <option value="">All {label}</option>
+      {(opts || []).map((o) => <option key={o} value={o}>{o}</option>)}
+    </select>
   );
 }
 

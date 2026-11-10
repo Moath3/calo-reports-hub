@@ -347,8 +347,12 @@ class ApiClient {
   async zeltAudit({ force = false } = {}) {
     return this.request('/zelt/audit' + (force ? '?force=1' : ''));
   }
-  async zeltMobility(refresh = false) {
-    return this.request(`/zelt/mobility${refresh ? '?refresh=true' : ''}`);
+  async zeltMobility(refresh = false, filters = null) {
+    const p = new URLSearchParams();
+    if (refresh) p.set('refresh', 'true');
+    if (filters) for (const [k, v] of Object.entries(filters)) if (Array.isArray(v) && v.length) p.set(k, v.join(','));
+    const qs = p.toString();
+    return this.request(`/zelt/mobility${qs ? `?${qs}` : ''}`);
   }
   async zeltWatch() {
     return this.request('/zelt/watch');

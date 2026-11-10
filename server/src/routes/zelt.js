@@ -300,7 +300,12 @@ router.get('/audit', dataLimiter, requireAuth, requireHrOrAdmin, asyncHandler(as
 // Admin-only: mobility & turnover analytics — trailing-12-month joiner/leaver
 // series, tenure buckets, per-entity/dept splits and the leaver list.
 router.get('/mobility', dataLimiter, requireAuth, requireHrOrAdmin, asyncHandler(async (req, res) => {
-  const report = await getMobility(req.query.refresh === 'true').catch(zeltUpstream('Mobility fetch failed'));
+  const list = (v) => (v ? String(v).split(',').map((s) => s.trim()).filter(Boolean) : []);
+  const filters = {
+    entities: list(req.query.entities), orgs: list(req.query.orgs),
+    businessLines: list(req.query.businessLines), countries: list(req.query.countries),
+  };
+  const report = await getMobility(req.query.refresh === 'true', filters).catch(zeltUpstream('Mobility fetch failed'));
   res.json(report);
 }));
 

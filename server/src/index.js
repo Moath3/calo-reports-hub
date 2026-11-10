@@ -12,6 +12,7 @@ import { HttpError } from './utils/httpError.js';
 import { getStatus as getZeltOauthStatus, drainRefresh as drainZeltRefresh } from './services/zeltApi.js';
 import { warmSession as warmZeltSession, getBotStatus as getZeltBotStatus } from './services/zeltBot.js';
 import { startWatcherScheduler } from './services/zeltWatcher.js';
+import { warmIndex } from './services/zeltReport.js';
 import authRoutes from './routes/auth.js';
 import uploadRoutes from './routes/upload.js';
 import aiRoutes from './routes/ai.js';
@@ -196,6 +197,11 @@ initDb().then(() => {
   // Hygiene watcher: hourly check, ~daily audit snapshot, weekly Slack digest.
   // Never fatal — the watcher skips ticks while Zelt is disconnected.
   try { startWatcherScheduler(); } catch (e) { console.warn('[zelt-watcher] start failed:', e.message); }
+
+  // The people index lives in memory, so a deploy wipes it and Mobility/Report
+  // would show blank Org/BL until something rebuilds it. Rebuild shortly after
+  // boot (delayed so it doesn't contend with startup); best-effort, non-fatal.
+  setTimeout(() => { try { warmIndex(); } catch (e) { console.warn('[zelt] boot index warm failed:', e.message); } }, 20000);
 
   app.listen(PORT, () => {
     console.log(`\n  CALO Report AI Platform`);

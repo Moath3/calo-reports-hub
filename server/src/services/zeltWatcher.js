@@ -721,6 +721,10 @@ export async function sendCompDMTest(recipient) {
 let schedulerStarted = false;
 
 async function watcherTick(label) {
+  // Keep the people index warm (warmIndex rebuilds only when >6h stale) so
+  // Mobility/Report never serve blank Org/BL after a restart. Runs every tick,
+  // independent of the ~daily snapshot below.
+  try { warmIndex(); } catch { /* best-effort */ }
   try {
     const latest = lastSnapshots(1)[0] || null;
     if (latest && Date.now() - latest.capturedAt < SNAPSHOT_MIN_AGE_MS) return;

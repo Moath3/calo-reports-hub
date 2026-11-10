@@ -2,6 +2,29 @@ import { useNavigate } from 'react-router-dom';
 import { Card, Pill, Btn, Icon, Eyebrow, PageHeader, Leaf } from '../components/ui';
 import CaloLogo from '../components/CaloLogo';
 
+// Every tool in the Hub, with a one-line "what it does" and who can open it.
+const TOOLS = [
+  { name: 'Reports', icon: 'FileText', to: '/reports', access: 'Everyone',
+    desc: 'Build a clean, shareable people report in minutes — from a file you upload or pulled live from Zelt, with AI doing the heavy lifting.' },
+  { name: 'Leave Balances', icon: 'CalendarCheck', to: '/leave-balances', access: 'Everyone',
+    desc: 'Live annual and compensatory leave balance for every employee from Zelt, filterable by entity and department, with one-click export.' },
+  { name: 'Time & Attendance', icon: 'Clock', to: '/time-attendance', access: 'Everyone',
+    desc: 'Reads the biometric clock-in/out data and calculates each person’s overtime automatically, by each country’s own rules.' },
+  { name: 'Mobility & Turnover', icon: 'TrendingUp', to: '/mobility', access: 'HR + Admin',
+    desc: 'Headcount, joiners, leavers and annualized turnover over the trailing 12 months, broken down by organization, business line and country.' },
+  { name: 'Data Hygiene', icon: 'ShieldCheck', to: '/data-hygiene', access: 'HR + Admin',
+    desc: 'Scans the Zelt HRIS nightly for wrong, missing or mismatched data and flags each issue with its owner, before it causes payroll or compliance errors.' },
+  { name: 'Headcount export', icon: 'Download', to: '/reports?tab=zelt', access: 'HR + Admin',
+    desc: 'One-click Excel of the full, clean employee list — live or for any past month — with test and payroll-ghost accounts stripped out.' },
+  { name: 'Entity Admins', icon: 'Users', to: '/entity-admins', access: 'HR + Admin',
+    desc: 'Set which HR admin owns each entity, so comp-expiry reminders and per-entity reports reach the right person.' },
+  { name: 'Activity Log', icon: 'Activity', to: '/activity', access: 'Admin',
+    desc: 'See who signed up, who signed in, and which tools each person used, with a per-person drill-down.' },
+];
+const accessBadge = (a) => a === 'Admin' ? { bg: '#FEF3E2', fg: '#B45309' }
+  : a === 'HR + Admin' ? { bg: 'var(--calo-50)', fg: 'var(--calo-700)' }
+  : { bg: 'var(--ink-100)', fg: 'var(--ink-600)' };
+
 // ─── Illustrated mockups ─────────────────────────────────────────────────────
 // These mimic the actual UI so users can recognize screens at a glance.
 
@@ -358,8 +381,8 @@ export default function GuidePage() {
     <div className="animate-slide-up" style={{ maxWidth: 960, margin: '0 auto' }}>
       <PageHeader
         eyebrow="GUIDE"
-        title="How Calo Reports works"
-        subtitle="Everything you need to make great reports — from your first prompt to a published, branded deliverable."
+        title="How the CALO Hub works"
+        subtitle="Your HR tools in one place — reports, leave, attendance, turnover, data hygiene and more. Every tool at a glance below, then a full walkthrough of building reports."
         actions={
           <Btn variant="primary" icon="Sparkles" onClick={() => navigate('/new?mode=chat')}>
             Try it now
@@ -367,9 +390,39 @@ export default function GuidePage() {
         }
       />
 
+      {/* ───── The Hub tools ───── */}
+      <section id="tools" style={{ marginBottom: 32 }}>
+        <SectionHeader
+          eyebrow="THE HUB"
+          title="What's in the Hub"
+          desc="One place for the People team's day-to-day tools. Click any card to open it — you only see the ones your role can access."
+        />
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 12 }}>
+          {TOOLS.map((t) => {
+            const ab = accessBadge(t.access);
+            return (
+              <div key={t.name} onClick={() => navigate(t.to)} style={{ cursor: 'pointer', padding: 16, border: '1px solid var(--ink-200)', borderRadius: 12, background: '#fff', display: 'flex', gap: 12, transition: 'all .15s' }}
+                onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'var(--calo-200)'; e.currentTarget.style.boxShadow = 'var(--shadow-sm)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--ink-200)'; e.currentTarget.style.boxShadow = 'none'; }}>
+                <div style={{ width: 38, height: 38, borderRadius: 10, background: 'var(--calo-50)', color: 'var(--calo-700)', display: 'grid', placeItems: 'center', flexShrink: 0 }}>
+                  <Icon name={t.icon} size={18} />
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, justifyContent: 'space-between' }}>
+                    <div style={{ fontSize: 14.5, fontWeight: 900, color: 'var(--ink-900)', letterSpacing: '-0.01em' }}>{t.name}</div>
+                    <span style={{ fontSize: 9.5, fontWeight: 900, letterSpacing: '.06em', textTransform: 'uppercase', padding: '2px 7px', borderRadius: 999, background: ab.bg, color: ab.fg, flexShrink: 0 }}>{t.access}</span>
+                  </div>
+                  <div style={{ fontSize: 12.5, color: 'var(--ink-600)', marginTop: 4, lineHeight: 1.5 }}>{t.desc}</div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </section>
+
       {/* TOC */}
       <Card padding={18} style={{ marginBottom: 28 }}>
-        <Eyebrow>ON THIS PAGE</Eyebrow>
+        <Eyebrow>BUILDING REPORTS — ON THIS PAGE</Eyebrow>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 8, marginTop: 10 }}>
           {[
             { h: '#start',   n: '01', t: 'Start a report' },

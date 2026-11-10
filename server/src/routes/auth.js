@@ -221,6 +221,52 @@ router.get('/activity', requireAuth, requireAdmin, (req, res) => {
   res.json({ events });
 });
 
+// POST /api/auth/activity/track — record a tool open for the signed-in user.
+// Deduped to one event per user+tool per 10 min so navigation doesn't spam it.
+router.post('/activity/track', requireAuth, (req, res) => {
+  const tool = String(req.body?.tool || '').slice(0, 60).trim();
+  if (!tool) return res.json({ ok: false });
+  try {
+    const db = getDb();
+    const recent = db.prepare(
+      `SELECT 1 FROM audit_log WHERE user_id = ? AND action = 'tool.open' AND resource_type = ? AND created_at > datetime('now','-10 minutes') LIMIT 1`
+    ).get(req.user.id, tool);
+    if (!recent) {
+      db.prepare(`INSERT INTO audit_log (user_id, action, resource_type, details, ip_address) VALUES (?, 'tool.open', ?, ?, ?)`)
+        .run(req.user.id, tool, JSON.stringify({ path: req.body?.path || null }), req.ip);
+    }
+  } catch (e) { /* non-fatal */ }
+  res.json({ ok: true });
+});
+
+// GET /api/auth/activity/people — per-person activity summary (admin).
+router.get('/activity/people', requireAuth, requireAdmin, (req, res) => {
+  const db = getDb();
+  const people = db.prepare(`
+    SELECT u.id, u.name, u.email, u.role, u.department, u.created_at, u.last_login, u.is_active,
+      (SELECT COUNT(*) FROM audit_log WHERE user_id = u.id AND action = 'login') AS signins,
+      (SELECT GROUP_CONCAT(DISTINCT resource_type) FROM audit_log WHERE user_id = u.id AND action = 'tool.open') AS tools,
+      (SELECT COUNT(*) FROM ai_usage WHERE user_id = u.id) AS ai_count,
+      (SELECT MAX(created_at) FROM audit_log WHERE user_id = u.id) AS last_event
+    FROM users u
+    ORDER BY (last_event IS NULL), last_event DESC`).all();
+  res.json({ people });
+});
+
+// GET /api/auth/activity/user/:id — one person's merged timeline (admin).
+router.get('/activity/user/:id', requireAuth, requireAdmin, (req, res) => {
+  const db = getDb();
+  const user = db.prepare('SELECT id, name, email, role, department, created_at, last_login FROM users WHERE id = ?').get(req.params.id);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 300, 1), 2000);
+  const events = db.prepare(`
+    SELECT created_at, action, resource_type, resource_id, details, ip_address FROM audit_log WHERE user_id = ?
+    UNION ALL
+    SELECT created_at, 'ai.generate' AS action, request_type AS resource_type, provider AS resource_id, NULL AS details, NULL AS ip_address FROM ai_usage WHERE user_id = ?
+    ORDER BY created_at DESC LIMIT ?`).all(req.params.id, req.params.id, limit);
+  res.json({ user, events });
+});
+
 // GET /api/auth/users-for-share — List active users for sharing UI (any authenticated user)
 router.get('/users-for-share', requireAuth, asyncHandler((req, res) => {
   const db = getDb();

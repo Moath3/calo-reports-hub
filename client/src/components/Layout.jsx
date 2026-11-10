@@ -1,6 +1,16 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Outlet, NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import api from '../utils/api';
+
+// Path → tool name for usage tracking (matched by prefix).
+const TOOL_MAP = [
+  ['/leave-balances', 'Leave Balances'], ['/time-attendance', 'Time & Attendance'],
+  ['/data-hygiene', 'Data Hygiene'], ['/mobility', 'Mobility'], ['/entity-admins', 'Entity Admins'],
+  ['/reports', 'Reports'], ['/zelt-report', 'Report from Zelt'], ['/activity', 'Activity Log'],
+  ['/guide', 'Guide'], ['/settings', 'Settings'],
+];
+const toolForPath = (p) => (TOOL_MAP.find(([pre]) => p === pre || p.startsWith(pre + '/')) || [])[1] || null;
 import CaloLogo from './CaloLogo';
 import { Icon } from './ui';
 import { Menu, X, LogOut, Settings as SettingsIcon } from 'lucide-react';
@@ -97,6 +107,15 @@ export default function Layout() {
   const sidebarWidth = collapsed ? SIDEBAR_WIDTH_COLLAPSED : SIDEBAR_WIDTH;
   const isActive = (to) => to === '/' ? location.pathname === '/' : location.pathname.startsWith(to);
   const reportsTab = new URLSearchParams(location.search).get('tab') || 'list';
+
+  // Record a tool open once per distinct path per session (server dedups per 10m).
+  const trackedRef = useRef(new Set());
+  useEffect(() => {
+    const tool = toolForPath(location.pathname);
+    if (!tool || trackedRef.current.has(location.pathname)) return;
+    trackedRef.current.add(location.pathname);
+    api.trackTool(tool, location.pathname).catch(() => {});
+  }, [location.pathname]);
 
   return (
     <div style={{ display: 'flex', minHeight: '100vh', background: 'var(--ink-50)' }}>

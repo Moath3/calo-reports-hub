@@ -409,6 +409,15 @@ class ApiClient {
   async getActivity(limit = 200) {
     return this.request('/auth/activity' + (limit ? `?limit=${encodeURIComponent(limit)}` : ''));
   }
+  async trackTool(tool, path) {
+    return this.request('/auth/activity/track', { method: 'POST', body: JSON.stringify({ tool, path }) });
+  }
+  async getActivityPeople() {
+    return this.request('/auth/activity/people');
+  }
+  async getActivityUser(id, limit = 300) {
+    return this.request(`/auth/activity/user/${encodeURIComponent(id)}?limit=${limit}`);
+  }
   async zeltVerifyEmail(email) {
     return this.request('/zelt/verify-email?email=' + encodeURIComponent(email));
   }

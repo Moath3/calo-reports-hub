@@ -29,6 +29,7 @@ const MAX_HEARTBEAT_FAILURES = 2; // tolerate one transient 401 before tearing d
 
 let cookieJar = null;        // in-memory cache; backed by DB
 let loginInFlight = null;    // Promise mutex for single-flight login
+let lastLoginAt = 0;         // last successful login (ms) — throttles 403 re-login storms
 let heartbeatTimer = null;
 let heartbeatFailureCount = 0; // consecutive 401s on heartbeat before tearing down
 
@@ -184,6 +185,7 @@ async function login() {
           merged.set(name, c);
         }
         cookieJar = Array.from(merged.values()).join('; ');
+        lastLoginAt = Date.now();
         saveCookieToDb(cookieJar);
         startHeartbeat();
         console.log(`[zelt-bot] logged in (${merged.size} cookies, body=${Object.keys(body).join('+')})`);
@@ -222,12 +224,16 @@ export async function botGet(path, params = {}) {
   };
 
   let resp = await attempt();
-  if (resp.status === 401 || resp.status === 403) {
-    // 401 = dead cookie; 403 = WAF per-session budget exhausted. A fresh login
-    // fixes both (re-login resets the WAF budget). login() is single-flight.
+  if (resp.status === 401) {
     cookieJar = null;
     clearCookieDb();
-    resp = await attempt(true); // re-login + retry
+    resp = await attempt(true); // dead cookie — re-login + retry
+  } else if (resp.status === 403 && Date.now() - lastLoginAt > 20000) {
+    // WAF per-session budget exhausted — a fresh login resets it. Throttled to
+    // once per 20s so a hard-locked account can't trigger a re-login storm.
+    cookieJar = null;
+    clearCookieDb();
+    resp = await attempt(true);
   } else if (resp.status >= 500) {
     await sleep(500 + Math.random() * 500);
     resp = await attempt();

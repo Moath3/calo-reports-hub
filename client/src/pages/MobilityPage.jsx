@@ -136,9 +136,6 @@ export default function MobilityPage() {
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
             {data.asOf && <Pill tone="neutral" size="sm" icon="Clock">as of {fmtDate(data.asOf)}</Pill>}
             <HeadcountButton compact />
-            <Btn variant="secondary" size="sm" icon="RefreshCw" onClick={() => load(true)} disabled={loading}>
-              {loading ? 'Refreshing…' : 'Refresh'}
-            </Btn>
           </div>
         }
       />
@@ -312,7 +309,7 @@ function Header({ actions }) {
     <PageHeader
       eyebrow="HR · Zelt"
       title="Mobility & Turnover"
-      subtitle="Computed live from Zelt — headcount, joiners, leavers and annualized turnover over the trailing 12 months."
+      subtitle="Computed from Zelt over the trailing 12 months. Refreshes automatically: live figures every ~15 min, leaver history every 6h, and a full rebuild nightly."
       actions={actions}
     />
   );

@@ -1546,22 +1546,34 @@ function readEntity(u) {
 
 // Debug helper. Returns FULL raw shape of first user — admin only, HR data
 // is already what this app exposes. Used to map field paths.
-export async function debugSampleUser() {
-  const users = await fetchUsersFirstPages(1);
+export async function debugSampleUser(opts = {}) {
+  const isLeaverish = (x) => {
+    const s = x?.accountStatus || x?.status || x?.lifecycle?.status;
+    const ev = x?.userEvent?.status || x?.lifecycle?.status;
+    return s === 'Deactivated' || s === 'Terminated' || ['Terminated', 'Resigned', 'Offboarded'].includes(ev);
+  };
+  // Sample a leaver (to find where Zelt stores the termination date) or the first user.
+  const users = opts.leaver ? await fetchAllUsersForAudit() : await fetchUsersFirstPages(1);
   if (!users.length) return { error: 'No users returned' };
-  const u = users[0];
-  // Find any keys that mention "id", "allowance", "days", "leave", "employee"
-  // anywhere in the object — case-insensitive — to spot what we're missing.
-  const interesting = findKeysByPattern(u, /id|allowance|days|leave|employee|contract/i);
+  const u = (opts.leaver && users.find(isLeaverish)) || users[0];
+
+  const pat = opts.leaver ? /date|leav|end|term|offboard|depart|exit|resign|start|effective|last/i
+                          : /id|allowance|days|leave|employee|contract/i;
+  const interesting = findKeysByPattern(u, pat);
   return {
-    rawUser: u,
+    isLeaverSample: isLeaverish(u),
     extracted: {
       userId: u.userId || u.id,
       employeeId: readEmployeeId(u),
       name: readName(u),
       entity: readEntity(u),
+      accountStatus: u?.accountStatus ?? null,
+      lifecycleStatus: u?.lifecycle?.status ?? null,
+      userEventStatus: u?.userEvent?.status ?? null,
     },
-    keysContainingIdOrAllowance: interesting,
+    lifecycle: u?.lifecycle ?? null,
+    userEvent: u?.userEvent ?? null,
+    dateLikeKeys: interesting,
   };
 }
 

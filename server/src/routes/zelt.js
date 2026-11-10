@@ -578,7 +578,7 @@ router.get('/headcount', dataLimiter, requireAuth, requireHrOrAdmin, asyncHandle
 // field-name mismatches. No PII shape: only key names are returned, plus
 // our extracted-field results so admin can see what we're reading.
 router.get('/debug/sample', oauthLimiter, requireAuth, requireAdmin, asyncHandler(async (req, res) => {
-  const sample = await debugSampleUser().catch(zeltUpstream('Sample failed'));
+  const sample = await debugSampleUser({ leaver: req.query.leaver === 'true' }).catch(zeltUpstream('Sample failed'));
   res.json(sample);
 }));
 

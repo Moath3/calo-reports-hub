@@ -26,10 +26,13 @@ const LOGIN_URL = `${ZELT_BASE}/apiv2/auth/login`;
 const REQUEST_TIMEOUT_MS = 15_000;
 const HEARTBEAT_INTERVAL_MS = 15 * 60 * 1000; // 15 min — keeps session rolling
 const MAX_HEARTBEAT_FAILURES = 2; // tolerate one transient 401 before tearing down
+const LOGIN_BACKOFF_BASE_MS = 30_000;       // first cooldown after a failed login
+const LOGIN_BACKOFF_MAX_MS = 20 * 60_000;   // cap — repeated WAF 403s space out to 20 min
 
 let cookieJar = null;        // in-memory cache; backed by DB
 let loginInFlight = null;    // Promise mutex for single-flight login
-let lastLoginAt = 0;         // last successful login (ms) — throttles 403 re-login storms
+let login403Count = 0;       // consecutive failed logins — drives exponential backoff
+let loginBackoffUntil = 0;   // ms epoch; no login attempt fires before this
 let heartbeatTimer = null;
 let heartbeatFailureCount = 0; // consecutive 401s on heartbeat before tearing down
 
@@ -120,7 +123,12 @@ function extractXsrfToken(cookieString) {
 
 async function login() {
   if (loginInFlight) return loginInFlight;
+  if (Date.now() < loginBackoffUntil) {
+    const waitS = Math.ceil((loginBackoffUntil - Date.now()) / 1000);
+    throw new Error(`Zelt bot login backing off ${waitS}s after ${login403Count} failed attempt(s)`);
+  }
   loginInFlight = (async () => {
+   try {
     const { email, password } = getCreds();
 
     // Step 1: ssocheck (and any other "warmup" GET) to collect XSRF + session
@@ -185,7 +193,8 @@ async function login() {
           merged.set(name, c);
         }
         cookieJar = Array.from(merged.values()).join('; ');
-        lastLoginAt = Date.now();
+        login403Count = 0;        // healthy session — clear any backoff
+        loginBackoffUntil = 0;
         saveCookieToDb(cookieJar);
         startHeartbeat();
         console.log(`[zelt-bot] logged in (${merged.size} cookies, body=${Object.keys(body).join('+')})`);
@@ -196,6 +205,13 @@ async function login() {
       console.warn(`[zelt-bot] login attempt body=${Object.keys(body).join('+')} → ${resp.status}`);
     }
     throw new Error(`Zelt bot login failed: ${lastErr}`);
+   } catch (err) {
+    // Any failed login (above all a WAF 403 on the login endpoint) escalates the
+    // cooldown so repeated failures back off instead of hammering Zelt.
+    login403Count += 1;
+    loginBackoffUntil = Date.now() + Math.min(LOGIN_BACKOFF_BASE_MS * 2 ** (login403Count - 1), LOGIN_BACKOFF_MAX_MS);
+    throw err;
+   }
   })().finally(() => { loginInFlight = null; });
   return loginInFlight;
 }
@@ -228,9 +244,10 @@ export async function botGet(path, params = {}) {
     cookieJar = null;
     clearCookieDb();
     resp = await attempt(true); // dead cookie — re-login + retry
-  } else if (resp.status === 403 && Date.now() - lastLoginAt > 20000) {
-    // WAF per-session budget exhausted — a fresh login resets it. Throttled to
-    // once per 20s so a hard-locked account can't trigger a re-login storm.
+  } else if (resp.status === 403 && Date.now() >= loginBackoffUntil) {
+    // WAF per-session budget exhausted — a fresh login resets it. login() self-gates
+    // on an exponential cooldown, so within a backoff window we skip the re-login
+    // (don't touch the cookie) and let the 403 surface below.
     cookieJar = null;
     clearCookieDb();
     resp = await attempt(true);
@@ -245,6 +262,7 @@ export async function botGet(path, params = {}) {
     err.status = resp.status;
     throw err;
   }
+  if (login403Count) { login403Count = 0; loginBackoffUntil = 0; } // recovered via cookie
   return resp.json();
 }
 

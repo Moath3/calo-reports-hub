@@ -1040,6 +1040,10 @@ export function summarizeCompExpiry(holders) {
 // days, next expiry) for the HR Slack alert — the HR channel is restricted, so
 // names are intended here. Independent of tryFetchBalances (leave page) so that
 // path stays untouched. Best-effort: returns zeros/available:false on failure.
+// Strip HTML/whitespace and truncate an upstream error so a WAF 403 (which
+// returns a full HTML error page) can't leak into Slack or the watcher UI.
+const cleanErr = (m) => String(m || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 140);
+
 export async function getCompExpiryAggregates(asOfDate = null) {
   const asOf = asOfDate || new Date().toISOString().slice(0, 10);
   if (!botConfigured()) {
@@ -1057,7 +1061,7 @@ export async function getCompExpiryAggregates(asOfDate = null) {
       .map(p => p.id)
       .slice(0, ANNUAL_POLICY_PROBE_LIMIT);
   } catch (err) {
-    return { available: false, reason: `policy lookup failed (${err.status || ''} ${err.message})`, asOf, ...summarizeCompExpiry([]) };
+    return { available: false, reason: `policy lookup failed (${err.status || ''} ${cleanErr(err.message)})`, asOf, ...summarizeCompExpiry([]) };
   }
   if (!compPolicyIds.length) {
     return { available: true, asOf, ...summarizeCompExpiry([]) };

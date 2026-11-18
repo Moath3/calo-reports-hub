@@ -465,12 +465,14 @@ export async function sendWeeklyDigestIfDue({ force = false } = {}) {
 
 const num = (n) => (Math.round((Number(n) || 0) * 10) / 10).toString();
 const emp = (n) => `${n} ${n === 1 ? 'employee' : 'employees'}`;
+// Strip HTML/whitespace + truncate so a WAF 403 HTML page can't reach Slack.
+const cleanErr = (m) => String(m || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 140);
 
 // Pure: build the Slack text from the aggregates object. Includes the named
 // per-employee comp/expiry list (the HR Hub channel is access-restricted).
 export function formatCompExpirySlack(agg) {
   if (!agg || agg.available === false) {
-    return `*HR Hub — compensatory-day expiry*\nCould not compute this week${agg?.reason ? ` — ${agg.reason}` : ''}.`;
+    return `*HR Hub — compensatory-day expiry*\nCould not compute this week${agg?.reason ? ` — ${cleanErr(agg.reason)}` : ''}.`;
   }
   const { all, production: p, nonProduction: n, window: w } = agg;
   const lines = [];
@@ -524,7 +526,12 @@ export async function sendCompExpiryDigestIfDue({ force = false } = {}) {
   try {
     aggregates = await getCompExpiryAggregates();
   } catch (err) {
-    return { sent: false, skipped: `comp aggregates failed: ${err.message}`, preview: null };
+    return { sent: false, skipped: `comp aggregates failed: ${cleanErr(err.message)}`, preview: null };
+  }
+  // Don't post (or start the 6.5-day timer) when the data couldn't be computed —
+  // a transient bot/WAF failure must not spam the channel or mute the real digest.
+  if (!aggregates.available) {
+    return { sent: false, skipped: `comp data unavailable: ${cleanErr(aggregates.reason) || 'unknown'}`, preview: null };
   }
   const text = formatCompExpirySlack(aggregates);
 
@@ -611,7 +618,7 @@ export async function sendCompEntityReportsIfDue({ force = false } = {}) {
     if (!res.available) return { sent: false, skipped: `comp data unavailable: ${res.reason || ''}` };
     byEntity = res.byEntity; asOf = res.asOf;
   } catch (err) {
-    return { sent: false, skipped: `comp fetch failed: ${err.message}` };
+    return { sent: false, skipped: `comp fetch failed: ${cleanErr(err.message)}` };
   }
 
   const results = [];

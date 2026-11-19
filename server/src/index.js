@@ -23,6 +23,7 @@ import dashboardRoutes from './routes/dashboard.js';
 import zeltRoutes from './routes/zelt.js';
 import tnaRoutes from './routes/timeAttendance.js';
 import otRunRoutes from './routes/otRuns.js';
+import assistantRoutes from './routes/assistant.js';
 import diagnosticsRoutes from './routes/diagnostics.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -101,6 +102,7 @@ const makeLimiter = (windowMs, max, message) => rateLimit({
 app.use('/api/',        makeLimiter(RATE_LIMIT_WINDOW_MS, GENERAL_MAX, 'Too many requests, please try again later.'));
 app.use('/api/auth/',   makeLimiter(RATE_LIMIT_WINDOW_MS, AUTH_MAX, 'Too many login attempts, please try again later.'));
 app.use('/api/ai/',     makeLimiter(     MIN, AI_MAX, 'AI rate limit reached. Please wait a moment.'));
+app.use('/api/assistant/', makeLimiter(  MIN, AI_MAX, 'Assistant rate limit reached. Please wait a moment.'));
 app.use('/api/export/', makeLimiter(     MIN, EXPORT_MAX, 'Export rate limit reached. Please wait a moment.'));
 app.use('/api/time-attendance/', makeLimiter(MIN, 10, 'Time & attendance rate limit reached. Please wait a moment.'));
 
@@ -120,6 +122,7 @@ const apiRoutes = [
   ['/api/zelt',      zeltRoutes],
   ['/api/time-attendance', tnaRoutes],
   ['/api/ot-runs',   otRunRoutes],
+  ['/api/assistant', assistantRoutes],
   ['/api/diagnostics', diagnosticsRoutes],
 ];
 for (const [path, router] of apiRoutes) app.use(path, router);

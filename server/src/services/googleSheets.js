@@ -47,3 +47,26 @@ export async function exportMasterfile(sheetIdInput) {
   const buf = Buffer.from(await res.arrayBuffer());
   return { fileName: meta.name ? `${meta.name}.xlsx` : 'masterfile.xlsx', xlsxBase64: buf.toString('base64'), sheetId: id };
 }
+
+// Appends rows to a sheet the service account can edit. Writable scope here, unlike
+// the read path above — share the target sheet (Editor) with the service account.
+const WRITE_SCOPE = 'https://www.googleapis.com/auth/spreadsheets';
+export async function appendToSheet(input, rows2d) {
+  if (!isConfigured()) { const e = new Error('Google service account not configured.'); e.code = 'NO_GOOGLE'; throw e; }
+  const id = extractSheetId(input) || defaultSheetId();
+  if (!id) { const e = new Error('Paste a Google Sheet link to append to.'); e.code = 'BAD_SHEET'; throw e; }
+  const token = await mintAccessToken({ scope: WRITE_SCOPE });
+  const res = await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${id}/values/A1:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`,
+    { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ values: rows2d }) },
+  );
+  if (!res.ok) {
+    const txt = await res.text().catch(() => '');
+    const e = new Error(res.status === 403 || res.status === 404
+      ? `Google denied the write — share the sheet (Editor) with ${serviceAccountEmail()} and make sure the Sheets scope is authorized.`
+      : `Google Sheets append failed (${res.status}): ${txt.slice(0, 160)}`);
+    e.code = 'SHEET_WRITE'; throw e;
+  }
+  const out = await res.json().catch(() => ({}));
+  return { sheetId: id, updatedRange: out.updates?.updatedRange || null, updatedRows: out.updates?.updatedRows || rows2d.length };
+}

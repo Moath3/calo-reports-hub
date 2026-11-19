@@ -208,6 +208,20 @@ class ApiClient {
     });
   }
 
+  async assistantQuery(question, history = [], plan = null) {
+    return this.request('/assistant/query', {
+      method: 'POST',
+      body: JSON.stringify({ question, history, plan }),
+    });
+  }
+
+  async assistantSheetAppend(sheetUrl, columns, rows) {
+    return this.request('/assistant/sheet-append', {
+      method: 'POST',
+      body: JSON.stringify({ sheetUrl, columns, rows }),
+    });
+  }
+
   async updateReport(id, updates) {
     return this.request(`/reports/${id}`, {
       method: 'PUT',

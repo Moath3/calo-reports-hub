@@ -25,6 +25,7 @@ const navGroups = [
     { to: '/',               icon: 'Home',           label: 'Home' },
   ]},
   { label: 'People tools', items: [
+    { to: '/assistant',       icon: 'Sparkles',       label: 'Data Assistant', hrOrAdmin: true },
     { to: '/leave-balances',  icon: 'CalendarCheck',  label: 'Leave Balances' },
     { to: '/time-attendance', icon: 'Clock',          label: 'Time & Attendance' },
     { to: '/data-hygiene',    icon: 'ShieldCheck',    label: 'Data Hygiene', hrOrAdmin: true, beta: true },
